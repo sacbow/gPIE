@@ -1,12 +1,99 @@
+import numpy as np
 from core.uncertain_array import UncertainArray
 
 class Wave:
-    def __init__(self):
-        # Belief is initially None, will be set to an UncertainArray later
+    def __init__(self, shape, dtype=np.complex128):
+        """
+        Initialize a Wave node in the factor graph.
+
+        Args:
+            shape (tuple): Shape of the associated array.
+            dtype (np.dtype): Data type of the wave's values (default: np.complex128).
+        """
+        self.shape = shape
+        self.dtype = dtype
+
+        # Factor graph connections
+        self.parent = None
+        self.parent_message = None
+
+        self.children = []
+        self.child_messages = dict()
+
+        # Belief is computed on demand
         self.belief = None
 
-        # List of factors (e.g., Prior or Propagator objects), initially empty
-        self.factors = []
+        # Generation index for scheduling
+        self.generation = None
 
-        # List of input messages (UncertainArray), one per factor, initially empty
-        self.inputs = []
+    def set_generation(self, generation: int):
+        """Set generation index for inference scheduling."""
+        self.generation = generation
+
+    def add_parent(self, factor, message: UncertainArray):
+        """Register parent factor and its initial message."""
+        self.parent = factor
+        self.parent_message = message
+
+    def add_child(self, factor, message: UncertainArray):
+        """Register a child factor and its initial message."""
+        self.children.append(factor)
+        self.child_messages[factor] = message
+
+    def compute_belief(self):
+        """
+        Explicitly compute and store the current belief
+        by combining all incoming messages.
+        """
+        messages = []
+        if self.parent_message is not None:
+            messages.append(self.parent_message)
+        messages.extend(self.child_messages.values())
+
+        if not messages:
+            raise ValueError("No messages available to compute belief.")
+
+        self.belief = UncertainArray.combine(messages)
+        return self.belief
+
+    def forward(self):
+        """
+        Propagate a message from this wave to each child factor.
+
+        If only one child exists, the message from the parent is
+        passed through directly for efficiency.
+        """
+        if self.parent_message is None:
+            raise RuntimeError("Cannot forward without parent message.")
+
+        if len(self.children) == 1:
+            factor = self.children[0]
+            factor.receive_message(self, self.parent_message)
+            return
+
+        messages = [self.parent_message] + list(self.child_messages.values())
+        belief = UncertainArray.combine(messages)
+
+        for factor in self.children:
+            msg = belief / self.child_messages[factor]
+            factor.receive_message(self, msg)
+
+    def backward(self):
+        """
+        Propagate a message from this wave to the parent factor.
+        If only one child exists, its message is passed through directly.
+        """
+        if self.parent is None:
+            return
+
+        if len(self.child_messages) == 1:
+            msg = next(iter(self.child_messages.values()))
+            self.parent.receive_message(self, msg)
+            return
+        # Combine messages from children
+        msg = UncertainArray.combine(list(self.child_messages.values()))
+        self.parent.receive_message(self, msg)
+
+
+    def __repr__(self):
+        return f"Wave(shape={self.shape}, gen={self.generation})"

@@ -4,7 +4,7 @@ from .linalg_utils import complex_normal_random_array
 class UncertainArray:
     def __init__(self, array, dtype=np.complex128, precision=1.0):
         # Convert input to ndarray with given dtype
-        arr = np.array(array, dtype=dtype)
+        arr = np.asarray(array, dtype=dtype)
         self.data = arr
         # Store precision (can be scalar or array)
         self._set_precision_internal(precision)
@@ -16,12 +16,16 @@ class UncertainArray:
                 raise ValueError("Precision must be positive.")
             self._precision = float(value)
         else:
-            arr = np.array(value, dtype=np.float64)
+            # convert if not already correct dtype
+            if isinstance(value, np.ndarray) and value.dtype == np.float64:
+                arr = value
+            else:
+                arr = np.asarray(value, dtype=np.float64)
+            #check shape
             if arr.shape != self.data.shape:
                 raise ValueError("Precision array must match data shape.")
-            if not np.all(arr > 0):
-                raise ValueError("All precision values must be positive.")
             self._precision = arr
+
 
     def set_precision(self, value):
         """
@@ -34,13 +38,18 @@ class UncertainArray:
     def precision(self):
         """Return precision as array (broadcasted if scalar)."""
         if np.isscalar(self._precision):
-            return np.full(self.data.shape, self._precision, dtype=np.float64)
+            return np.full(self.shape, self._precision, dtype=np.float64)
         return self._precision
 
     @property
     def shape(self):
         """Return the shape of the data array."""
         return self.data.shape
+    
+    @property
+    def ndim(self):
+        """Return the number of dimensions of the data array."""
+        return self.data.ndim
 
     @classmethod
     def random(cls, shape, dtype=np.complex128, precision=1.0):
@@ -49,6 +58,15 @@ class UncertainArray:
         """
         data = complex_normal_random_array(shape, dtype)
         return cls(data, dtype=dtype, precision=precision)
+    
+    @classmethod
+    def zeros(cls, shape, dtype=np.complex128, precision=1.0):
+        """
+        Create an UncertainArray with zero-initialized complex data and default precision.
+        """
+        data = np.zeros(shape, dtype=dtype)
+        return cls(data, dtype=dtype, precision=precision)
+
     
     def __mul__(self, other):
         """Combine two UncertainArrays using additive precision rule."""
@@ -106,14 +124,14 @@ class UncertainArray:
         if not ua_list:
             raise ValueError("UncertainArray.combine() received an empty list.")
 
-        shape = ua_list[0].data.shape
+        shape = ua_list[0].shape
         for ua in ua_list:
-            if ua.data.shape != shape:
+            if ua.shape != shape:
                 raise ValueError("All UncertainArrays must have the same shape.")
 
         all_scalar = all(np.isscalar(ua._precision) for ua in ua_list)
 
-        datas = np.array([ua.data for ua in ua_list])
+        datas = np.stack([ua.data for ua in ua_list], axis=0)
 
         if all_scalar:
             precisions_scalar = np.array([ua._precision for ua in ua_list])
@@ -122,7 +140,7 @@ class UncertainArray:
             result_data = weighted_sum / precision_sum
             return cls(result_data, precision=precision_sum)
 
-        precisions = np.array([ua.precision for ua in ua_list])
+        precisions = np.stack([ua.precision for ua in ua_list], axis=0)
         precision_sum = np.sum(precisions, axis=0)
         weighted_sum = np.sum(precisions * datas, axis=0)
         result_data = weighted_sum / precision_sum
@@ -139,7 +157,6 @@ class UncertainArray:
         precision_array = self._precision
         scalar_precision = 1.0 / np.mean(1.0 / precision_array)
         return scalar_precision
-
-
-
-
+    
+    def __repr__(self):
+        return f"UncertainArray(shape={self.shape}, precision={'scalar' if np.isscalar(self._precision) else 'array'})"
