@@ -1,6 +1,7 @@
 import numpy as np
 from core.uncertain_array import UncertainArray
 
+
 class Wave:
     def __init__(self, shape, dtype=np.complex128):
         """
@@ -30,15 +31,27 @@ class Wave:
         """Set generation index for inference scheduling."""
         self.generation = generation
 
-    def add_parent(self, factor, message: UncertainArray):
-        """Register parent factor and its initial message."""
+    def add_parent(self, factor):
+        """Register parent factor (without message)."""
         self.parent = factor
-        self.parent_message = message
+        self.parent_message = None
 
-    def add_child(self, factor, message: UncertainArray):
-        """Register a child factor and its initial message."""
+    def add_child(self, factor):
+        """Register a child factor (without message)."""
         self.children.append(factor)
-        self.child_messages[factor] = message
+        self.child_messages[factor] = None
+
+    def receive_message(self, factor, message: UncertainArray):
+        """
+        Receive a message from a connected Factor.
+        This updates either parent_message or a child_message depending on source.
+        """
+        if factor == self.parent:
+            self.parent_message = message
+        elif factor in self.child_messages:
+            self.child_messages[factor] = message
+        else:
+            raise ValueError("Received message from unknown factor.")
 
     def compute_belief(self):
         """
@@ -48,7 +61,9 @@ class Wave:
         messages = []
         if self.parent_message is not None:
             messages.append(self.parent_message)
-        messages.extend(self.child_messages.values())
+        messages.extend(
+            msg for msg in self.child_messages.values() if msg is not None
+        )
 
         if not messages:
             raise ValueError("No messages available to compute belief.")
@@ -71,12 +86,15 @@ class Wave:
             factor.receive_message(self, self.parent_message)
             return
 
-        messages = [self.parent_message] + list(self.child_messages.values())
+        messages = [
+            self.parent_message
+        ] + [msg for msg in self.child_messages.values() if msg is not None]
         belief = UncertainArray.combine(messages)
 
         for factor in self.children:
-            msg = belief / self.child_messages[factor]
-            factor.receive_message(self, msg)
+            if self.child_messages[factor] is not None:
+                msg = belief / self.child_messages[factor]
+                factor.receive_message(self, msg)
 
     def backward(self):
         """
@@ -86,14 +104,16 @@ class Wave:
         if self.parent is None:
             return
 
-        if len(self.child_messages) == 1:
-            msg = next(iter(self.child_messages.values()))
-            self.parent.receive_message(self, msg)
+        valid_msgs = [msg for msg in self.child_messages.values() if msg is not None]
+        if len(valid_msgs) == 1:
+            self.parent.receive_message(self, valid_msgs[0])
             return
-        # Combine messages from children
-        msg = UncertainArray.combine(list(self.child_messages.values()))
-        self.parent.receive_message(self, msg)
 
+        if not valid_msgs:
+            raise RuntimeError("No child messages available for backward propagation.")
+
+        msg = UncertainArray.combine(valid_msgs)
+        self.parent.receive_message(self, msg)
 
     def __repr__(self):
         return f"Wave(shape={self.shape}, gen={self.generation})"
