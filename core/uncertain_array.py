@@ -52,12 +52,10 @@ class UncertainArray:
         return self.data.ndim
 
     @classmethod
-    def random(cls, shape, dtype=np.complex128, precision=1.0):
-        """
-        Create an UncertainArray with random complex data and default precision.
-        """
-        data = complex_normal_random_array(shape, dtype)
+    def random(cls, shape, dtype=np.complex128, precision=1.0, seed=None):
+        data = complex_normal_random_array(shape, dtype=dtype, seed=seed)
         return cls(data, dtype=dtype, precision=precision)
+
     
     @classmethod
     def zeros(cls, shape, dtype=np.complex128, precision=1.0):
@@ -146,6 +144,44 @@ class UncertainArray:
         result_data = weighted_sum / precision_sum
         return cls(result_data, precision=precision_sum)
     
+    def damp_with(self, other, alpha: float) -> "UncertainArray":
+        """
+        Return a damped version of self, interpolated with another UA instance.
+        Damping is applied to the mean and standard deviation, not precision.
+        Efficiently handles scalar vs array precision.
+
+        Args:
+            other (UncertainArray): The target array to damp toward.
+            alpha (float): Damping coefficient. 0 = no damping (return self), 1 = full damping (return other).
+
+        Returns:
+            UncertainArray: Damped result.
+        """
+        if not isinstance(other, UncertainArray):
+            raise TypeError("Damping only supported between UncertainArray instances.")
+        if self.shape != other.shape:
+            raise ValueError("UncertainArrays must have the same shape to apply damping.")
+        if not (0.0 <= alpha <= 1.0):
+            raise ValueError("Damping coefficient alpha must be between 0 and 1.")
+
+        # Damped mean (complex data)
+        damped_data = (1 - alpha) * self.data + alpha * other.data
+
+        # Handle scalar precision case
+        if np.isscalar(self._precision) and np.isscalar(other._precision):
+            std1 = np.sqrt(1.0 / self._precision)
+            std2 = np.sqrt(1.0 / other._precision)
+            damped_std = (1 - alpha) * std1 + alpha * std2
+            damped_precision = 1.0 / (damped_std ** 2)
+        else:
+            # Use array-based damping
+            std1 = np.sqrt(1.0 / self.precision)
+            std2 = np.sqrt(1.0 / other.precision)
+            damped_std = (1 - alpha) * std1 + alpha * std2
+            damped_precision = 1.0 / (damped_std ** 2)
+
+        return UncertainArray(damped_data, dtype=self.data.dtype, precision=damped_precision)
+
     def to_scalar_precision(self):
         """
         Reduce precision array to an equivalent scalar precision.

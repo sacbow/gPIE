@@ -1,28 +1,29 @@
 from abc import ABC, abstractmethod
 import numpy as np
 
-from graph.factor import Factor
-from graph.wave import Wave
+from ..factor import Factor
+from ..wave import Wave
 from core.uncertain_array import UncertainArray
 
 
 class Prior(Factor, ABC):
-    def __new__(cls, shape, dtype=np.complex128):
+    def __new__(cls, *args, **kwargs):
         """
         Override instance creation to return the output Wave directly.
-        This enables syntax like: X = GaussianPrior(...)  # X is a Wave
+        Accepts arbitrary arguments to pass to __init__.
         """
         instance = super().__new__(cls)
-        instance.__init__(shape, dtype)
+        instance.__init__(*args, **kwargs)
         return instance.output
 
-    def __init__(self, shape, dtype=np.complex128):
+    def __init__(self, shape, dtype=np.complex128, seed=None):
         """
         Initialize the prior factor and its associated output wave.
         """
         super().__init__()
         self.shape = shape
         self.dtype = dtype
+        self.seed = seed  # Used for deterministic random initialization
 
         # Prior has no inputs
         self.set_generation(0)
@@ -40,11 +41,11 @@ class Prior(Factor, ABC):
     def forward(self):
         """
         Send a message to the output wave.
-        - On the first call, use a random initialization.
+        - On the first call, use a random initialization (with optional seed).
         - On subsequent calls, compute message from previous state.
         """
         if self.output_message is None:
-            msg = UncertainArray.random(self.shape, dtype=self.dtype)
+            msg = UncertainArray.random(self.shape, dtype=self.dtype, seed=self.seed)
         else:
             msg = self._compute_message(self.output_message)
 
