@@ -35,9 +35,6 @@ class Prior(Factor, ABC):
         # Register this factor as parent of the output wave (structure only)
         self.output.add_parent(self)
 
-        # Store the most recent output message
-        self.output_message = None
-
     def forward(self):
         """
         Send a message to the output wave.

@@ -18,6 +18,19 @@ class Factor(ABC):
     def set_generation(self, gen: int):
         """Assign generation index for scheduling."""
         self.generation = gen
+    
+    def add_input(self, name: str, wave: Wave):
+        """
+        Connect a wave as input to this factor.
+
+        Args:
+            name (str): Name/key for this input (e.g., "input", "a", "b", etc.)
+            wave (Wave): The Wave instance to connect.
+        """
+        self.inputs[name] = wave
+        self.input_messages[wave] = None
+        wave.add_child(self)
+
 
     def receive_message(self, wave: Wave, message: UncertainArray):
         """
