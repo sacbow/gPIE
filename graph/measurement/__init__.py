@@ -1,1 +1,3 @@
+from .base import Measurement
 from .gaussian_measurement import GaussianMeasurement
+from .masked_gaussian_measurement import MaskedGaussianMeasurement

@@ -19,3 +19,20 @@ def complex_normal_random_array(shape, dtype=np.complex128, seed=None):
     imag = rng.normal(loc=0.0, scale=np.sqrt(0.5), size=shape)
     return (real + 1j * imag).astype(dtype)
 
+def random_binary_mask(shape, subsampling_rate, seed=None):
+    """
+    Generate a random boolean mask with given shape and subsampling rate.
+    """
+    if not (0.0 <= subsampling_rate <= 1.0):
+        raise ValueError("subsampling_rate must be between 0.0 and 1.0")
+
+    rng = np.random.default_rng(seed)
+    total = np.prod(shape)
+    num_true = int(total * subsampling_rate)
+
+    flat_mask = np.zeros(total, dtype=bool)
+    flat_mask[:num_true] = True
+    rng.shuffle(flat_mask)
+
+    return flat_mask.reshape(shape)
+

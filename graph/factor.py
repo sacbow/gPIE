@@ -30,6 +30,17 @@ class Factor(ABC):
         self.inputs[name] = wave
         self.input_messages[wave] = None
         wave.add_child(self)
+    
+    def set_output(self, wave: Wave):
+        """
+        Connect a wave as output from this factor.
+        Sets generation based on max of all input wave generations.
+        """
+        self.output = wave
+        max_gen = max((w.generation for w in self.inputs.values() if w is not None), default=0)
+        self.set_generation(max_gen + 1)
+        wave.set_generation(self.generation + 1)
+        wave.add_parent(self)
 
 
     def receive_message(self, wave: Wave, message: UncertainArray):

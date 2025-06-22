@@ -99,21 +99,29 @@ class Wave:
     def backward(self):
         """
         Propagate a message from this wave to the parent factor.
-        If only one child exists, its message is passed through directly.
+        If only one child exists and its message is available, it is passed directly.
+        Otherwise, combine all valid messages.
         """
         if self.parent is None:
             return
 
-        valid_msgs = [msg for msg in self.child_messages.values() if msg is not None]
-        if len(valid_msgs) == 1:
-            self.parent.receive_message(self, valid_msgs[0])
-            return
+        if len(self.children) == 1:
+            factor = self.children[0]
+            msg = self.child_messages.get(factor)
+            if msg is not None:
+                self.parent.receive_message(self, msg)
+                return
+            else:
+                raise RuntimeError("Single child message is missing.")
 
+        # For multiple children
+        valid_msgs = [msg for msg in self.child_messages.values() if msg is not None]
         if not valid_msgs:
             raise RuntimeError("No child messages available for backward propagation.")
 
         msg = UncertainArray.combine(valid_msgs)
         self.parent.receive_message(self, msg)
+
 
     def __repr__(self):
         return f"Wave(shape={self.shape}, gen={self.generation})"
