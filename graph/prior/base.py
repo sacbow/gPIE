@@ -23,17 +23,11 @@ class Prior(Factor, ABC):
         super().__init__()
         self.shape = shape
         self.dtype = dtype
-        self.seed = seed  # Used for deterministic random initialization
+        self.seed = seed  # Optional deterministic random init
 
-        # Prior has no inputs
-        self.set_generation(0)
-
-        # Create output wave and assign generation
-        self.output = Wave(shape, dtype)
-        self.output.set_generation(self.generation + 1)
-
-        # Register this factor as parent of the output wave (structure only)
-        self.output.add_parent(self)
+        # Create and connect output wave via unified method
+        wave = Wave(shape, dtype)
+        self.connect_output(wave)
 
     def forward(self):
         """

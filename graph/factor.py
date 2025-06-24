@@ -31,17 +31,28 @@ class Factor(ABC):
         self.input_messages[wave] = None
         wave.add_child(self)
     
-    def set_output(self, wave: Wave):
+    def connect_output(self, wave: Wave):
         """
-        Connect a wave as output from this factor.
-        Sets generation based on max of all input wave generations.
-        """
-        self.output = wave
-        max_gen = max((w.generation for w in self.inputs.values() if w is not None), default=0)
-        self.set_generation(max_gen + 1)
-        wave.set_generation(self.generation + 1)
-        wave.add_parent(self)
+        Connect a Wave as the output of this factor.
+        Handles bidirectional linking and generation scheduling.
 
+        Args:
+            wave (Wave): The Wave object to connect as output.
+        """
+        # Set as this factor's output
+        self.output = wave
+
+        # Determine generation index: max of all input generations + 1
+        max_gen = max((w.generation for w in self.inputs.values()
+               if w is not None and w.generation is not None), default=0)
+
+        self.set_generation(max_gen + 1)
+
+        # Set wave's generation accordingly
+        wave.set_generation(self.generation + 1)
+
+        # Register this factor as the parent of the wave
+        wave.set_parent(self)
 
     def receive_message(self, wave: Wave, message: UncertainArray):
         """

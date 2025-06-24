@@ -6,7 +6,7 @@ class MaskedGaussianMeasurement(Measurement):
     def __init__(self, input_wave, observed_data, var, mask, dtype=np.complex128):
         """
         Gaussian measurement with missing data (masked observation).
-        
+
         Args:
             input_wave (Wave): Observed wave variable.
             observed_data (ndarray): Complex-valued measurement data.
@@ -26,6 +26,11 @@ class MaskedGaussianMeasurement(Measurement):
 
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Return the masked observation as message.
+        Combine observation and incoming message into a belief,
+        remove the incoming message to isolate the observation effect,
+        then stabilize the result by converting to scalar precision.
         """
-        return self.observed
+        belief = self.observed * incoming
+        message = belief.as_scalar_precision() / incoming
+        return message
+

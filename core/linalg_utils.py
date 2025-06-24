@@ -19,6 +19,24 @@ def complex_normal_random_array(shape, dtype=np.complex128, seed=None):
     imag = rng.normal(loc=0.0, scale=np.sqrt(0.5), size=shape)
     return (real + 1j * imag).astype(dtype)
 
+def random_unitary_matrix(n, seed=None, dtype=np.complex128):
+    """
+    Generate a random unitary matrix of shape (n, n) using SVD
+    of a circularly-symmetric complex Gaussian matrix.
+
+    Args:
+        n (int): Size of the square matrix.
+        seed (int or None): Seed for reproducibility.
+        dtype (np.dtype): Complex data type (default: complex128).
+
+    Returns:
+        np.ndarray: Unitary matrix of shape (n, n).
+    """
+    A = complex_normal_random_array((n, n), dtype=dtype, seed=seed)
+    U, _, _ = np.linalg.svd(A)
+    return U
+
+
 def random_binary_mask(shape, subsampling_rate, seed=None):
     """
     Generate a random boolean mask with given shape and subsampling rate.

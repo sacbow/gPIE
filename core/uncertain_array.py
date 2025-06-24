@@ -194,5 +194,13 @@ class UncertainArray:
         scalar_precision = 1.0 / np.mean(1.0 / precision_array)
         return scalar_precision
     
+    def as_scalar_precision(self) -> "UncertainArray":
+        """
+        Return a copy of the current UA with precision replaced by scalar equivalent.
+        """
+        scalar_prec = self.to_scalar_precision()
+        return UncertainArray(self.data, dtype=self.data.dtype, precision=scalar_prec)
+
+    
     def __repr__(self):
         return f"UncertainArray(shape={self.shape}, precision={'scalar' if np.isscalar(self._precision) else 'array'})"

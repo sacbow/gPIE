@@ -31,8 +31,10 @@ class Wave:
         """Set generation index for inference scheduling."""
         self.generation = generation
 
-    def add_parent(self, factor):
-        """Register parent factor (without message)."""
+    def set_parent(self, factor):
+        """Set the parent factor. Only one parent is allowed."""
+        if self.parent is not None:
+            raise RuntimeError("Parent factor is already set for this Wave.")
         self.parent = factor
         self.parent_message = None
 
@@ -121,6 +123,11 @@ class Wave:
 
         msg = UncertainArray.combine(valid_msgs)
         self.parent.receive_message(self, msg)
+
+    @property
+    def ndim(self) -> int:
+        """Return the number of dimensions of the wave (i.e., shape length)."""
+        return len(self.shape)
 
 
     def __repr__(self):

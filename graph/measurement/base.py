@@ -8,22 +8,15 @@ from core.uncertain_array import UncertainArray
 
 class Measurement(Factor, ABC):
     def __init__(self, input_wave: Wave, observed: UncertainArray):
-        """
-        Initialize a measurement factor.
-
-        Args:
-            input_wave (Wave): The wave variable being observed.
-            observed (UncertainArray): Observed data, including precision.
-        """
         super().__init__()
         self.observed = observed
 
-        # Register the input wave using the unified helper
+        # Connect input wave
         self.add_input("input", input_wave)
-        self.input = input_wave  # for convenience access
+        self.input = input_wave  # Optional shortcut
 
-        # Set generation after input's generation
-        self.set_generation(self.input.generation + 1)
+        # Generation is one step after input's generation
+        self.set_generation(input_wave.generation + 1)
 
     def forward(self):
         """

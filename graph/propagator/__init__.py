@@ -1,1 +1,1 @@
-from .matrix_propagator import MatrixPropagator
+from .unitary_propagator import UnitaryPropagator
