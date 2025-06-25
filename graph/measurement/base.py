@@ -16,7 +16,7 @@ class Measurement(Factor, ABC):
         self.input = input_wave  # Optional shortcut
 
         # Generation is one step after input's generation
-        self.set_generation(input_wave.generation + 1)
+        self._set_generation(input_wave._generation + 1)
 
     def forward(self):
         """

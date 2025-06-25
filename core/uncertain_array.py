@@ -1,5 +1,5 @@
 import numpy as np
-from .linalg_utils import complex_normal_random_array
+from .linalg_utils import complex_normal_random_array, reduce_precision_to_scalar
 
 class UncertainArray:
     def __init__(self, array, dtype=np.complex128, precision=1.0):
@@ -184,15 +184,13 @@ class UncertainArray:
 
     def to_scalar_precision(self):
         """
-        Reduce precision array to an equivalent scalar precision.
-        Uses the harmonic mean of per-element variances.
+        Reduce precision (scalar or array) to a single scalar value.
+        If already scalar, returns it directly.
+        Otherwise uses harmonic mean of variances via reduce_precision_to_scalar.
         """
         if np.isscalar(self._precision):
             return self._precision
-
-        precision_array = self._precision
-        scalar_precision = 1.0 / np.mean(1.0 / precision_array)
-        return scalar_precision
+        return reduce_precision_to_scalar(self._precision)
     
     def as_scalar_precision(self) -> "UncertainArray":
         """
@@ -201,6 +199,5 @@ class UncertainArray:
         scalar_prec = self.to_scalar_precision()
         return UncertainArray(self.data, dtype=self.data.dtype, precision=scalar_prec)
 
-    
     def __repr__(self):
         return f"UncertainArray(shape={self.shape}, precision={'scalar' if np.isscalar(self._precision) else 'array'})"

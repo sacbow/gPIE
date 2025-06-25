@@ -2,20 +2,11 @@ import numpy as np
 from .base import Propagator
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray as UA
-from core.linalg_utils import random_unitary_matrix
+from core.linalg_utils import random_unitary_matrix, reduce_precision_to_scalar
 
 
 class UnitaryPropagator(Propagator):
     def __init__(self, U=None, shape=None, dtype=np.complex128, seed=None):
-        """
-        Unitary linear propagator y = Ux.
-
-        Args:
-            U (np.ndarray): Unitary matrix of shape (n, n). If None, random unitary will be generated.
-            shape (tuple): Shape of input/output wave (used if U is None).
-            dtype (np.dtype): Complex data type.
-            seed (int): Optional random seed for generating U.
-        """
         super().__init__(input_names=("input",), dtype=dtype)
 
         if U is not None:
@@ -29,68 +20,71 @@ class UnitaryPropagator(Propagator):
         if self.U.ndim != 2 or self.U.shape[0] != self.U.shape[1]:
             raise ValueError("U must be a square 2D unitary matrix.")
 
-        self.shape = (self.U.shape[0],)  # Ensure 1D wave shape
-
-        # Create and connect input/output waves
+        self.shape = (self.U.shape[0],)
         self.add_input("input", Wave(self.shape, dtype=dtype))
-        self.connect_output(Wave(self.shape, dtype=dtype))
 
-    def _compute_forward(self, messages):
-        ua_x = messages["input"]
-        r = ua_x.data
-        gamma = ua_x.to_scalar_precision()
+        self.x_belief = None
+        self.y_belief = None
 
-        y_mean = self.U @ r
-        return UA(y_mean, precision=gamma)
+    def compute_belief(self):
+        x_wave = self.inputs["input"]
+        msg_x = self.input_messages.get(x_wave)
+        msg_y = self.output_message
 
-    def _compute_backward(self, messages):
-        ua_y = messages["output"]
-        p = ua_y.data
-        tau = ua_y.to_scalar_precision()
+        if msg_x is None or msg_y is None:
+            raise RuntimeError("Both input and output messages are required to compute belief.")
 
-        x_mean = self.U.conj().T @ p
-        return UA(x_mean, precision=tau)
+        r = msg_x.data
+        gamma = msg_x.to_scalar_precision()
+
+        p = msg_y.data
+        tau = msg_y.precision
+
+        Ur = self.U @ r
+        denom = gamma + tau
+        y_mean = (gamma / denom) * Ur + (tau / denom) * p
+
+        scalar_prec = reduce_precision_to_scalar(denom)
+        self.y_belief = UA(y_mean, dtype=self.dtype, precision=scalar_prec)
+
+        x_mean = self.U.conj().T @ y_mean
+        self.x_belief = UA(x_mean, dtype=self.dtype, precision=scalar_prec)
 
     def forward(self):
-        input_wave = self.inputs["input"]
-        msg_in = self.input_messages.get(input_wave)
-
-        if msg_in is None:
-            raise RuntimeError("Input message not available for forward propagation.")
-
-        messages = {"input": msg_in}
-        msg_out = self._compute_forward(messages)
-        self.output.receive_message(self, msg_out)
+        if self.y_belief is None or self.output_message is None:
+            msg = UA.random(self.shape, dtype=self.dtype)
+        else:
+            msg = self.y_belief / self.output_message
+        self.output.receive_message(self, msg)
 
     def backward(self):
-        msg_out = self.output_message
-        if msg_out is None:
+        x_wave = self.inputs["input"]
+        if self.output_message is None:
             raise RuntimeError("Output message not available for backward propagation.")
 
-        messages = {"output": msg_out}
-        msg_in = self._compute_backward(messages)
-
-        input_wave = self.inputs["input"]
-        self.input_messages[input_wave] = msg_in
-        input_wave.receive_message(self, msg_in)
+        self.compute_belief()
+        msg_in = self.x_belief / self.input_messages[x_wave]
+        x_wave.receive_message(self, msg_in)
 
     def __matmul__(self, wave: Wave) -> Wave:
-        """
-        Enables syntax: Y = UnitaryPropagator(U) @ X
-
-        This registers the input wave and returns the output wave.
-        """
         if wave.ndim != 1:
             raise ValueError(f"UnitaryPropagator only supports 1D wave input. Got: {wave.shape}")
 
         self.add_input("input", wave)
 
-        input_gen = wave.generation if wave.generation is not None else 0
-        self.set_generation(input_gen + 1)
+        input_gen = wave._generation 
+        self._set_generation(input_gen + 1)
 
         out_wave = Wave(self.shape, dtype=self.dtype)
-        out_wave.set_generation(self.generation + 1)
+        out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
 
         return self.output
+    
+    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+        raise NotImplementedError("UnitaryPropagator uses custom forward().")
+
+    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+        raise NotImplementedError("UnitaryPropagator uses custom backward().")
+

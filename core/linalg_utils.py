@@ -1,5 +1,21 @@
 import numpy as np
 
+def reduce_precision_to_scalar(precision_array):
+    """
+    Reduce a precision array to an equivalent scalar precision
+    using harmonic mean of variances.
+
+    Args:
+        precision_array (np.ndarray): Elementwise precision (positive)
+
+    Returns:
+        float: Scalar precision value
+    """
+    precision_array = np.asarray(precision_array, dtype=np.float64)
+    if np.any(precision_array <= 0):
+        raise ValueError("Precision values must be positive.")
+    return 1.0 / np.mean(1.0 / precision_array)
+
 def complex_normal_random_array(shape, dtype=np.complex128, seed=None):
     """
     Generate a complex-valued random array with standard normal distribution.
@@ -47,10 +63,8 @@ def random_binary_mask(shape, subsampling_rate, seed=None):
     rng = np.random.default_rng(seed)
     total = np.prod(shape)
     num_true = int(total * subsampling_rate)
-
     flat_mask = np.zeros(total, dtype=bool)
     flat_mask[:num_true] = True
     rng.shuffle(flat_mask)
-
     return flat_mask.reshape(shape)
 

@@ -13,11 +13,11 @@ class Factor(ABC):
         self.output_message = None         # UncertainArray or None
 
         # Optional scheduling index
-        self.generation = None
+        self._generation = None
 
-    def set_generation(self, gen: int):
+    def _set_generation(self, gen: int):
         """Assign generation index for scheduling."""
-        self.generation = gen
+        self._generation = gen
     
     def add_input(self, name: str, wave: Wave):
         """
@@ -43,13 +43,13 @@ class Factor(ABC):
         self.output = wave
 
         # Determine generation index: max of all input generations + 1
-        max_gen = max((w.generation for w in self.inputs.values()
-               if w is not None and w.generation is not None), default=0)
+        max_gen = max((w._generation for w in self.inputs.values()
+               if w is not None and w._generation is not None), default=0)
 
-        self.set_generation(max_gen + 1)
+        self._set_generation(max_gen + 1)
 
         # Set wave's generation accordingly
-        wave.set_generation(self.generation + 1)
+        wave._set_generation(self._generation + 1)
 
         # Register this factor as the parent of the wave
         wave.set_parent(self)
@@ -65,6 +65,10 @@ class Factor(ABC):
             self.output_message = message
         else:
             raise ValueError("Received message from unconnected Wave.")
+    
+    @property
+    def generation(self):
+        return self._generation
 
     @abstractmethod
     def forward(self):

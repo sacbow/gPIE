@@ -25,11 +25,12 @@ class Wave:
         self.belief = None
 
         # Generation index for scheduling
-        self.generation = None
+        self._generation = 0
 
-    def set_generation(self, generation: int):
-        """Set generation index for inference scheduling."""
-        self.generation = generation
+    def _set_generation(self, generation: int):
+        """Internal method to assign generation index for inference scheduling."""
+        self._generation = generation
+
 
     def set_parent(self, factor):
         """Set the parent factor. Only one parent is allowed."""
@@ -128,7 +129,10 @@ class Wave:
     def ndim(self) -> int:
         """Return the number of dimensions of the wave (i.e., shape length)."""
         return len(self.shape)
-
+    
+    @property
+    def generation(self):
+        return self._generation
 
     def __repr__(self):
-        return f"Wave(shape={self.shape}, gen={self.generation})"
+        return f"Wave(shape={self.shape}, gen={self._generation})"

@@ -26,11 +26,11 @@ class MaskedGaussianMeasurement(Measurement):
 
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Combine observation and incoming message into a belief,
-        remove the incoming message to isolate the observation effect,
-        then stabilize the result by converting to scalar precision.
+        Return the masked observation directly as message.
+
+        The observation has precision=1/var at observed entries and 0 elsewhere.
+        This message expresses the likelihood function CN(y | x, var) (masked).
         """
-        belief = self.observed * incoming
-        message = belief.as_scalar_precision() / incoming
-        return message
+        return self.observed
+
 
