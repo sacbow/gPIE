@@ -148,7 +148,6 @@ class UncertainArray:
         """
         Return a damped version of self, interpolated with another UA instance.
         Damping is applied to the mean and standard deviation, not precision.
-        Efficiently handles scalar vs array precision.
 
         Args:
             other (UncertainArray): The target array to damp toward.
@@ -164,23 +163,17 @@ class UncertainArray:
         if not (0.0 <= alpha <= 1.0):
             raise ValueError("Damping coefficient alpha must be between 0 and 1.")
 
-        # Damped mean (complex data)
+        # Damped mean (complex-valued)
         damped_data = (1 - alpha) * self.data + alpha * other.data
 
-        # Handle scalar precision case
-        if np.isscalar(self._precision) and np.isscalar(other._precision):
-            std1 = np.sqrt(1.0 / self._precision)
-            std2 = np.sqrt(1.0 / other._precision)
-            damped_std = (1 - alpha) * std1 + alpha * std2
-            damped_precision = 1.0 / (damped_std ** 2)
-        else:
-            # Use array-based damping
-            std1 = np.sqrt(1.0 / self.precision)
-            std2 = np.sqrt(1.0 / other.precision)
-            damped_std = (1 - alpha) * std1 + alpha * std2
-            damped_precision = 1.0 / (damped_std ** 2)
+        # Damped standard deviation and precision using NumPy broadcasting
+        std1 = np.sqrt(1.0 / self.precision)
+        std2 = np.sqrt(1.0 / other.precision)
+        damped_std = (1 - alpha) * std1 + alpha * std2
+        damped_precision = 1.0 / (damped_std ** 2)
 
         return UncertainArray(damped_data, dtype=self.data.dtype, precision=damped_precision)
+
 
     def to_scalar_precision(self):
         """

@@ -1,6 +1,7 @@
 import numpy as np
 from .base import Prior
 from core.uncertain_array import UncertainArray as UA
+from core.linalg_utils import reduce_precision_to_scalar
 
 class SparsePrior(Prior):
     def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0, seed=None):
@@ -39,7 +40,6 @@ class SparsePrior(Prior):
         else:
             msg = self._compute_message(self.output_message)
 
-        self.output_message = msg
         self.output.receive_message(self, msg)
 
     def approximate_posterior(self, incoming: UA) -> UA:
@@ -48,14 +48,14 @@ class SparsePrior(Prior):
         This uses elementwise moment matching.
         """
         m = incoming.data
-        v = 1.0 / incoming.precision
+        v = 1.0 / incoming._precision
 
         prec_post = 1.0 + 1.0 / v
         v_post = 1.0 / prec_post
         m_post = v_post * (m / v)
 
-        slab_likelihood = self.rho * np.exp(-np.abs(m)**2 / (1.0 + v)) / (np.pi * (1.0 + v))
-        spike_likelihood = (1 - self.rho) * np.exp(-np.abs(m)**2 / v) / (np.pi * v)
+        slab_likelihood = self.rho * np.exp(-np.abs(m)**2 / (1.0 + v)) / (1.0 + v)
+        spike_likelihood = (1 - self.rho) * np.exp(-np.abs(m)**2 / v) / v
         Z = slab_likelihood + spike_likelihood + 1e-12  # avoid divide-by-zero
 
         mu = (slab_likelihood / Z) * m_post
@@ -64,4 +64,4 @@ class SparsePrior(Prior):
         var = np.maximum(var, 1e-12)
 
         precision = 1.0 / var
-        return UA(mu, dtype=self.dtype, precision=precision)
+        return UA(mu, dtype=self.dtype, precision=reduce_precision_to_scalar(precision))

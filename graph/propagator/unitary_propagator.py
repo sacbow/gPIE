@@ -63,7 +63,7 @@ class UnitaryPropagator(Propagator):
             raise RuntimeError("Output message not available for backward propagation.")
 
         self.compute_belief()
-        msg_in = self.x_belief / self.input_messages[x_wave]
+        msg_in = self.x_belief / UA.as_scalar_precision(self.input_messages[x_wave])
         x_wave.receive_message(self, msg_in)
 
     def __matmul__(self, wave: Wave) -> Wave:
