@@ -27,6 +27,9 @@ class Wave:
         # Generation index for scheduling
         self._generation = 0
 
+        #random sample from probabilistic model
+        self._sample = None
+
     def _set_generation(self, generation: int):
         """Internal method to assign generation index for inference scheduling."""
         self._generation = generation
@@ -133,6 +136,21 @@ class Wave:
     @property
     def generation(self):
         return self._generation
+    
+    #sampling-related methods
+    def get_sample(self):
+        """Return the stored sample value (if any)."""
+        return self._sample
+    
+    def set_sample(self, sample):
+        """Set the sample value explicitly."""
+        if sample.shape != self.shape:
+            raise ValueError(f"Sample shape mismatch: expected {self.shape}, got {sample.shape}")
+        self._sample = sample
+    
+    def clear_sample(self):
+        """Clear the stored sample (set to None)."""
+        self._sample = None
 
     def __repr__(self):
         return f"Wave(gen={self._generation})"

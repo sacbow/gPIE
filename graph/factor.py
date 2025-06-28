@@ -66,6 +66,13 @@ class Factor(ABC):
         else:
             raise ValueError("Received message from unconnected Wave.")
     
+    def generate_sample(self):
+        """
+        Generate and set sample on the output Wave.
+        Should be overridden by Prior and Propagator subclasses.
+        """
+        raise NotImplementedError("generate_sample not implemented for this Factor")
+    
     @property
     def generation(self):
         return self._generation

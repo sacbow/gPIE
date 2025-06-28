@@ -66,6 +66,24 @@ class SparsePrior(Prior):
         precision = 1.0 / var
         return UA(mu, dtype=self.dtype, precision=reduce_precision_to_scalar(precision))
     
+    def generate_sample(self, rng):
+        """
+        Sample from spike-and-slab prior:
+        With probability rho: CN(0, 1)
+        With probability 1-rho: 0
+        """
+        N = np.prod(self.shape)
+        num_nonzero = int(self.rho * N)
+
+        sample = np.zeros(self.shape, dtype=self.dtype)
+        idx = rng.choice(N, size=num_nonzero, replace=False)
+        sample.flat[idx] = (
+            rng.normal(0.0, np.sqrt(0.5), num_nonzero)
+            + 1j * rng.normal(0.0, np.sqrt(0.5), num_nonzero)
+        )
+
+        self.output.set_sample(sample)
+    
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
         return f"SPrior(gen={gen})"

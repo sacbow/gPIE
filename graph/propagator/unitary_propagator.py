@@ -82,6 +82,19 @@ class UnitaryPropagator(Propagator):
 
         return self.output
     
+    def generate_sample(self, rng):
+        """
+        Propagate sample from input through U to output.
+        Assumes input sample is already set.
+        """
+        x_wave = self.inputs["input"]
+        x = x_wave.get_sample()
+        if x is None:
+            raise RuntimeError("Input sample not set before propagating.")
+
+        y = self.U @ x
+        self.output.set_sample(y)
+
     def _compute_forward(self, inputs: dict[str, UA]) -> UA:
         raise NotImplementedError("UnitaryPropagator uses custom forward().")
 

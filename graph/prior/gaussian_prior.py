@@ -20,6 +20,18 @@ class GaussianPrior(Prior):
         """
         return UA.zeros(self.shape, dtype=self.dtype, precision=self.precision)
     
+    def generate_sample(self, rng):
+        """
+        Generate a sample from CN(mean, var) and set it to the output Wave.
+        """
+        std = np.sqrt(self.var)
+        sample = std * (
+            rng.normal(0.0, np.sqrt(0.5), self.shape) +
+            1j * rng.normal(0.0, np.sqrt(0.5), self.shape)
+        )
+        sample += self.mean
+        self.output.set_sample(sample.astype(self.dtype))
+    
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
         return f"GPrior(gen={gen})"
