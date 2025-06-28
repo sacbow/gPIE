@@ -87,4 +87,7 @@ class UnitaryPropagator(Propagator):
 
     def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
         raise NotImplementedError("UnitaryPropagator uses custom backward().")
-
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"UProp(gen={gen})"

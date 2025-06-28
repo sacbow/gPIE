@@ -19,3 +19,7 @@ class GaussianPrior(Prior):
         Return constant prior message with fixed precision.
         """
         return UA.zeros(self.shape, dtype=self.dtype, precision=self.precision)
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"GPrior(gen={gen})"

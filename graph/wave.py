@@ -135,4 +135,5 @@ class Wave:
         return self._generation
 
     def __repr__(self):
-        return f"Wave(shape={self.shape}, gen={self._generation})"
+        return f"Wave(gen={self._generation})"
+

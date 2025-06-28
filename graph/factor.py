@@ -85,3 +85,13 @@ class Factor(ABC):
         Should call input.receive_message(self, message).
         """
         pass
+
+    def __repr__(self):
+        """
+        Return a concise string representation for visualization and debugging.
+        Example: SparsePrior(gen=1)
+        """
+        cls = type(self).__name__
+        gen = self._generation if self._generation is not None else "-"
+        return f"{cls}(gen={gen})"
+

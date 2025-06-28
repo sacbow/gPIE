@@ -65,3 +65,8 @@ class SparsePrior(Prior):
 
         precision = 1.0 / var
         return UA(mu, dtype=self.dtype, precision=reduce_precision_to_scalar(precision))
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"SPrior(gen={gen})"
+

@@ -23,3 +23,8 @@ class GaussianMeasurement(Measurement):
         Return the observed distribution as the message (fixed Gaussian).
         """
         return self.observed
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"GMeas(gen={gen})"
+

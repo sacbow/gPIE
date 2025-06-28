@@ -32,5 +32,10 @@ class MaskedGaussianMeasurement(Measurement):
         This message expresses the likelihood function CN(y | x, var) (masked).
         """
         return self.observed
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"MaskedMeas(gen={gen})"
+
 
 
