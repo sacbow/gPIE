@@ -1,9 +1,10 @@
 import numpy as np
 from .base import Prior
 from core.uncertain_array import UncertainArray as UA
+from core.linalg_utils import complex_normal_random_array
 
 class GaussianPrior(Prior):
-    def __init__(self, mean=0.0, var=1.0, shape=(1,), dtype=np.complex128, seed=None):
+    def __init__(self, mean=0.0, var=1.0, shape=(1,), dtype=np.complex128):
         """
         Gaussian prior: each variable follows CN(mean, var) independently.
         For simplicity, only precision is used internally.
@@ -12,7 +13,7 @@ class GaussianPrior(Prior):
         self.var = var
         self.precision = 1.0 / var
 
-        super().__init__(shape=shape, dtype=dtype, seed=seed)
+        super().__init__(shape=shape, dtype=dtype)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
@@ -24,13 +25,9 @@ class GaussianPrior(Prior):
         """
         Generate a sample from CN(mean, var) and set it to the output Wave.
         """
-        std = np.sqrt(self.var)
-        sample = std * (
-            rng.normal(0.0, np.sqrt(0.5), self.shape) +
-            1j * rng.normal(0.0, np.sqrt(0.5), self.shape)
-        )
-        sample += self.mean
-        self.output.set_sample(sample.astype(self.dtype))
+        sample = complex_normal_random_array(self.shape, dtype=self.dtype, rng=rng)
+        sample = np.sqrt(self.var) * sample + self.mean
+        self.output.set_sample(sample)
     
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

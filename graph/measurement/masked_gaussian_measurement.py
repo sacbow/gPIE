@@ -1,5 +1,6 @@
 from .base import Measurement
 from core.uncertain_array import UncertainArray as UA
+from core.linalg_utils import complex_normal_random_array
 import numpy as np
 
 class MaskedGaussianMeasurement(Measurement):
@@ -43,10 +44,12 @@ class MaskedGaussianMeasurement(Measurement):
             raise RuntimeError("Input sample not available.")
 
         noise = np.zeros_like(x)
-        noise[self._mask] = (
-            rng.normal(0.0, np.sqrt(self._var / 2), size=np.sum(self._mask)) +
-            1j * rng.normal(0.0, np.sqrt(self._var / 2), size=np.sum(self._mask))
+        masked_noise = complex_normal_random_array(
+            shape=(np.sum(self._mask),),
+            dtype=self._dtype,
+            rng=rng
         )
+        noise[self._mask] = masked_noise * np.sqrt(self._var)
 
         y = x + noise
         self._sample = y

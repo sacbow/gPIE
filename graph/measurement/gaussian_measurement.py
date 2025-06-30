@@ -1,6 +1,7 @@
 import numpy as np
 from .base import Measurement
 from core.uncertain_array import UncertainArray as UA
+from core.linalg_utils import complex_normal_random_array
 from graph.wave import Wave
 
 
@@ -30,12 +31,11 @@ class GaussianMeasurement(Measurement):
         if x is None:
             raise RuntimeError("Input sample not available.")
 
-        noise = (
-            rng.normal(0.0, np.sqrt(self._var / 2), size=x.shape) +
-            1j * rng.normal(0.0, np.sqrt(self._var / 2), size=x.shape)
-        )
+        noise = complex_normal_random_array(x.shape, dtype=self._dtype, rng=rng)
+        noise *= np.sqrt(self._var)  # Scale to match variance
         y = x + noise
-        self._sample = y  # Store for later use
+        self._sample = y
+
 
     def set_observed(self, data):
         """

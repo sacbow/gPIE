@@ -16,31 +16,36 @@ class Prior(Factor, ABC):
         instance.__init__(*args, **kwargs)
         return instance.output
 
-    def __init__(self, shape, dtype=np.complex128, seed=None):
+    def __init__(self, shape, dtype=np.complex128):
         """
         Initialize the prior factor and its associated output wave.
         """
         super().__init__()
         self.shape = shape
         self.dtype = dtype
-        self.seed = seed  # Optional deterministic random init
+        self._init_rng = None  # will be set by Graph if needed
 
-        # Create and connect output wave via unified method
         wave = Wave(shape, dtype)
         self.connect_output(wave)
+
+    def set_init_rng(self, rng):
+        """
+        Set the initial RNG used for message initialization.
+        This method allows external control (e.g., from Graph).
+        """
+        self._init_rng = rng
 
     def forward(self):
         """
         Send a message to the output wave.
-        - On the first call, use a random initialization (with optional seed).
-        - On subsequent calls, compute message from previous state.
         """
         if self.output_message is None:
-            msg = UncertainArray.random(self.shape, dtype=self.dtype, seed=self.seed)
+            if self._init_rng is None:
+                raise RuntimeError("Initial RNG not configured for Prior.")
+            msg = UncertainArray.random(self.shape, dtype=self.dtype, rng=self._init_rng)
         else:
             msg = self._compute_message(self.output_message)
 
-        self.output_message = msg
         self.output.receive_message(self, msg)
 
     def backward(self):

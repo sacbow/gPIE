@@ -1,5 +1,7 @@
 from graph.wave import Wave
 from graph.factor import Factor
+import numpy as np
+
 
 class Graph:
     def __init__(self):
@@ -8,6 +10,8 @@ class Graph:
         self._factors = set()
         self._nodes_sorted = None
         self._nodes_sorted_reverse = None
+
+        self._rng = np.random.default_rng()  # default RNG for sampling
 
     def register_wave(self, wave):
         """Register a Wave node and its parent Factor (if present)."""
@@ -51,30 +55,48 @@ class Graph:
         for node in self._nodes_sorted_reverse:
             node.backward()
 
-    def run(self, n_iter=10, callback=None):
+    def run(self, n_iter=10, callback=None, rng=None):
         """
         Run multiple rounds of belief propagation.
 
         Args:
             n_iter (int): Number of forward-backward iterations.
             callback (callable): Optional function called with (graph, t) at each step.
+            rng (np.random.Generator or None): RNG used for initialization, defaults to internal.
         """
+        rng = rng or self._rng
         for t in range(n_iter):
             self.forward()
             self.backward()
             if callback is not None:
                 callback(self, t)
 
-    def generate_sample(self, rng):
+    def generate_sample(self, rng=None):
         """
         Generate a forward sample from the graphical model using all registered factors.
         Each factor's `generate_sample(rng)` is called in generation order.
+
+        Args:
+            rng (np.random.Generator or None): RNG used for sampling, defaults to internal.
         """
+        rng = rng or self._rng
         factors = sorted(self._factors, key=lambda f: f.generation)
         for f in factors:
             f.generate_sample(rng)
             if hasattr(f, "update_observed_from_sample"):
                 f.update_observed_from_sample()
+
+    def set_init_rng(self, rng):
+        """
+        Propagate RNG to all factors that support message initialization.
+        This is separate from sample RNG, and is used for initial message setup.
+
+        Args:
+            rng (np.random.Generator): RNG to be used for initializing messages.
+        """
+        for factor in self._factors:
+            if hasattr(factor, "set_init_rng"):
+                factor.set_init_rng(rng)
 
     def clear_sample(self):
         """

@@ -52,9 +52,24 @@ class UncertainArray:
         return self.data.ndim
 
     @classmethod
-    def random(cls, shape, dtype=np.complex128, precision=1.0, seed=None):
-        data = complex_normal_random_array(shape, dtype=dtype, seed=seed)
+    def random(cls, shape, dtype=np.complex128, precision=1.0, rng=None):
+        """
+        Generate a random UncertainArray from complex normal distribution.
+
+        Args:
+            shape (tuple): Shape of the output array.
+            dtype (np.dtype): Complex dtype of data.
+            precision (float or array): Initial precision.
+            rng (np.random.Generator): Required random number generator.
+
+        Returns:
+            UncertainArray
+        """
+        if rng is None:
+            raise ValueError("rng must be provided to UncertainArray.random()")
+        data = complex_normal_random_array(shape, dtype=dtype, rng=rng)
         return cls(data, dtype=dtype, precision=precision)
+
 
     
     @classmethod

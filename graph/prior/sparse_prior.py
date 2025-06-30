@@ -1,10 +1,10 @@
 import numpy as np
 from .base import Prior
 from core.uncertain_array import UncertainArray as UA
-from core.linalg_utils import reduce_precision_to_scalar
+from core.linalg_utils import reduce_precision_to_scalar, sparse_complex_array
 
 class SparsePrior(Prior):
-    def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0, seed=None):
+    def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0):
         """
         Spike-and-slab prior with sparsity level `rho`.
         Message damping is applied to outgoing messages, not beliefs.
@@ -12,7 +12,7 @@ class SparsePrior(Prior):
         self.rho = rho
         self.damping = damping
         self.old_msg = None  # Keep track of last message sent
-        super().__init__(shape=shape, dtype=dtype, seed=seed)
+        super().__init__(shape=shape, dtype=dtype)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
@@ -35,7 +35,7 @@ class SparsePrior(Prior):
         Send message to output wave, possibly using previous message.
         """
         if self.output_message is None:
-            msg = UA.random(self.shape, dtype=self.dtype, seed=self.seed)
+            msg = UA.random(self.shape, dtype=self.dtype, rng = self._init_rng)
             self.old_msg = msg
         else:
             msg = self._compute_message(self.output_message)
@@ -68,20 +68,9 @@ class SparsePrior(Prior):
     
     def generate_sample(self, rng):
         """
-        Sample from spike-and-slab prior:
-        With probability rho: CN(0, 1)
-        With probability 1-rho: 0
+        Generate and set a sparse sample from spike-and-slab prior.
         """
-        N = np.prod(self.shape)
-        num_nonzero = int(self.rho * N)
-
-        sample = np.zeros(self.shape, dtype=self.dtype)
-        idx = rng.choice(N, size=num_nonzero, replace=False)
-        sample.flat[idx] = (
-            rng.normal(0.0, np.sqrt(0.5), num_nonzero)
-            + 1j * rng.normal(0.0, np.sqrt(0.5), num_nonzero)
-        )
-
+        sample = sparse_complex_array(self.shape, sparsity=self.rho, dtype=self.dtype, rng=rng)
         self.output.set_sample(sample)
     
     def __repr__(self):
