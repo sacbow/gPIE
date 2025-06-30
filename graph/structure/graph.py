@@ -1,12 +1,13 @@
 from graph.wave import Wave
 from graph.factor import Factor
 
-
 class Graph:
     def __init__(self):
         self._nodes = set()
         self._waves = set()
         self._factors = set()
+        self._nodes_sorted = None
+        self._nodes_sorted_reverse = None
 
     def register_wave(self, wave):
         """Register a Wave node and its parent Factor (if present)."""
@@ -36,14 +37,18 @@ class Graph:
             elif isinstance(obj, Factor) and obj.output is None:
                 self.register_measurement(obj)
 
+        # Cache sorted node lists
+        self._nodes_sorted = sorted(self._nodes, key=lambda x: x.generation)
+        self._nodes_sorted_reverse = list(reversed(self._nodes_sorted))
+
     def forward(self):
-        """Execute forward message passing in generation order."""
-        for node in sorted(self._nodes, key=lambda x: x.generation):
+        """Execute forward message passing in cached generation order."""
+        for node in self._nodes_sorted:
             node.forward()
 
     def backward(self):
-        """Execute backward message passing in reverse generation order."""
-        for node in sorted(self._nodes, key=lambda x: -x.generation):
+        """Execute backward message passing in reverse cached order."""
+        for node in self._nodes_sorted_reverse:
             node.backward()
 
     def run(self, n_iter=10, callback=None):
@@ -60,12 +65,30 @@ class Graph:
             if callback is not None:
                 callback(self, t)
 
+    def generate_sample(self, rng):
+        """
+        Generate a forward sample from the graphical model using all registered factors.
+        Each factor's `generate_sample(rng)` is called in generation order.
+        """
+        factors = sorted(self._factors, key=lambda f: f.generation)
+        for f in factors:
+            f.generate_sample(rng)
+            if hasattr(f, "update_observed_from_sample"):
+                f.update_observed_from_sample()
+
+    def clear_sample(self):
+        """
+        Clear all sample values stored in Wave nodes in the graph.
+        """
+        for wave in self._waves:
+            wave.clear_sample()
+
     def summary(self):
         """Print a summary of the graph structure."""
         print("Graph Summary:")
         print(f"- {len(self._waves)} Wave nodes")
         print(f"- {len(self._factors)} Factor nodes")
-    
+
     def visualize(self, with_labels=True, layout="kamada_kawai", font_size=6, scale=1.0):
         """
         Visualize the graph structure as a directed computational graph.
@@ -96,7 +119,7 @@ class Graph:
             if factor.output is not None:
                 G.add_edge(factor, factor.output)
 
-        # Select layout
+        # Layout selection
         if layout == "spring":
             pos = nx.spring_layout(G, seed=42, k=scale)
         elif layout == "shell":
@@ -108,24 +131,19 @@ class Graph:
         else:  # default to kamada_kawai
             pos = nx.kamada_kawai_layout(G, scale=scale)
 
-        # Separate node types
+        # Draw nodes by shape
         node_shapes = {'circle': [], 'square': []}
         for node in G.nodes:
             shape = G.nodes[node]['shape']
             node_shapes[shape].append(node)
 
-        # Draw nodes
         nx.draw_networkx_nodes(G, pos,
-                           nodelist=node_shapes['circle'],
-                           node_shape='o', node_color='skyblue', label='Wave')
+            nodelist=node_shapes['circle'], node_shape='o', node_color='skyblue')
         nx.draw_networkx_nodes(G, pos,
-                           nodelist=node_shapes['square'],
-                           node_shape='s', node_color='lightgreen', label='Factor')
+            nodelist=node_shapes['square'], node_shape='s', node_color='lightgreen')
 
-        # Draw edges
         nx.draw_networkx_edges(G, pos, arrows=True)
 
-        # Draw labels
         if with_labels:
             labels = {n: G.nodes[n]['label'] for n in G.nodes}
             nx.draw_networkx_labels(G, pos, labels, font_size=font_size)
