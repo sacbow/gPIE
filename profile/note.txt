@@ -1,0 +1,104 @@
+7/1
+・UnitaryPropagatorのcompute_belief関数が確かにボトルネック。（0.054秒）
+ところが、compute_belief内で1回呼び出される{method 'conj' of 'numpy.ndarray'}が占める実行時間が0.024秒。これは衝撃的。
+「つまり、UnitaryPropagator.backward → compute_belief → U.conj().T @ y_mean のパスが支配的」
+
+行列積とほぼ同じだけの時間を共役転置に費やしていた！（2倍の高速化）
+
+・UncertainArray.combine：0.003秒
+
+SparsePrior.approximate_posterior: 0.003秒
+
+Wave.compute_belief: 0.003秒
+
+→ これらはすべて非常に軽く、問題なし。　combineはcompute_beliefで呼び出されていて、これは特にBPと関係ない。SparsePrior.approximate_posteriorはめちゃくちゃ速いらしい。Numpyしゅごい！
+
+n = 1024, 2048とサイズを大きくしていくと、以下のような結果に。
+
+| n    | `compute_belief` 合計時間 | `U.conj()` 時間 | 実行時間総計 |
+| ---- | --------------------- | ------------- | ------ |
+| 512  | 0.054s                | 0.024s        | 0.065s |
+| 1024 | 0.141s                | 0.094s        | 0.152s |
+| 2048 | 0.541s                | 0.392s        | 0.569s |
+
+n = 2048ではU.conj()の計算時間が全体の69%。かねがねO(n^2)のオペレーションである。U.conj()はlazy ビューだから軽いと思ったら大間違い。
+
+・そこで、self.UH = self.U.conj().T  # キャッシュ
+のように修正する。
+
+出力例：7573 function calls (7563 primitive calls) in 0.023 seconds
+
+   Ordered by: cumulative time
+   List reduced from 114 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.023    0.023 {built-in method builtins.exec}
+        1    0.000    0.000    0.023    0.023 <string>:1(<module>)
+        1    0.000    0.000    0.023    0.023 graph.py:58(run)
+       30    0.000    0.000    0.017    0.001 graph.py:53(backward)
+       30    0.000    0.000    0.017    0.001 unitary_propagator.py:64(backward)
+       30    0.015    0.000    0.016    0.001 unitary_propagator.py:30(compute_belief)
+       30    0.000    0.000    0.003    0.000 graph.py:48(forward)
+       30    0.000    0.000    0.003    0.000 2752585334.py:2(monitor)
+（以下略）
+
+| 項目                  | キャッシュ前     | キャッシュ後     | 改善効果         |
+| ------------------- | ---------- | ---------- | ------------ |
+| 総実行時間               | 0.065秒     | **0.023秒** | 約 **65% 短縮** |
+| `compute_belief` 時間 | 0.054秒     | **0.016秒** | 約 **70% 短縮** |
+| `U.conj()` 時間       | **0.024秒** | **ほぼ消失**   | ✅ 完全キャッシュ成功  |
+
+という状況に。一つには U.conj()を生成しているということがあるが、共役を計算することそのものよりも、毎回新しい配列をメモリ上に生成してはCPUと通信していることが問題。
+.Tはビューなので通常問題にならないが、C-contiguousという観点で言えば、左側のオペランドが.Tされるのはよろしくない。（@を実行するときに内部コピーが発生しうる）
+
+・FFT2DPropagatorを実装した。64 * 64の2次元画像で圧縮センシングを実験してみる。
+
+| 項目                                        | 実行時間（累積）   | コメント         |
+| ----------------------------------------- | ---------- | ------------ |
+| `g.run()` 全体                              | 0.026s     | 非常に高速        |
+| `fft_2d_propagator.py:23(compute_belief)` | 0.008s     | 軽量（全体の30%未満） |
+| `_raw_fftnd`（FFTコア）                       | **0.004s** | たったの15%程度    |
+| `fftshift / ifftshift`（`roll`内部）          | 0.002s程度   | 無視できるレベル     |
+
+なんと律速はfftではない！
+uncertain_array.py:131(combine)     ← 0.008s（Wave.compute_beliefから）
+sparse_prior.py:45(approximate_posterior) ← 0.005s
+
+combineはBPのコアではないのでそんなに重要ではない。
+
+128 * 128にサイズを増やすと、
+| 観点    | 64×64    | 128×128  | 倍率     |
+| ----- | -------- | -------- | ------ |
+| 総実行時間 | \~0.026s | \~0.056s | ≒2.15倍 |
+| 要素数   | 4096     | 16384    | 4倍     |
+
+
+これは非常に良好なスケーリング。
+
+| 関数                     | cumtime  | 備考                               |
+| ---------------------- | -------- | -------------------------------- |
+| `_raw_fftnd`           | 0.009s   | FFTの中核                           |
+| `_raw_fft` + `execute` | \~0.016s | 合計で総時間の約29%                      |
+| `tensordot`            | 0.009s   | `approximate_posterior()` 内のコア演算 |
+| `__truediv__`          | 0.010s   | 精度付き加重差分演算（メッセージ差）               |
+
+
+いまだにfftは実行時間の1/3くらい。SparsePrior内で利用しているtensordotやと__trudiv__のコストを合わせるとfftを少し上回る。結論としては、最適化の引き際としては適切な判断フェーズ。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

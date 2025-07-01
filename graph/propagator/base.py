@@ -52,10 +52,8 @@ class Propagator(Factor, ABC):
             self.input_messages[wave] = msg
             wave.receive_message(self, msg)
 
-    @abstractmethod
     def _compute_forward(self, inputs: dict[str, UA]) -> UA:
-        pass
+        raise NotImplementedError("This propagator does not use _compute_forward.")
 
-    @abstractmethod
     def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
-        pass
+        raise NotImplementedError("This propagator does not use _compute_forward.")
