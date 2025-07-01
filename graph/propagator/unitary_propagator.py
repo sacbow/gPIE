@@ -12,6 +12,7 @@ class UnitaryPropagator(Propagator):
         if U is None:
             raise ValueError("Unitary matrix U must be explicitly provided.")
         self.U = np.asarray(U)
+        self.Uh = U.conj().T
 
         if self.U.ndim != 2 or self.U.shape[0] != self.U.shape[1]:
             raise ValueError("U must be a square 2D unitary matrix.")
@@ -47,7 +48,7 @@ class UnitaryPropagator(Propagator):
         scalar_prec = reduce_precision_to_scalar(denom)
         self.y_belief = UA(y_mean, dtype=self.dtype, precision=scalar_prec)
 
-        x_mean = self.U.conj().T @ y_mean
+        x_mean = self.Uh @ y_mean
         self.x_belief = UA(x_mean, dtype=self.dtype, precision=scalar_prec)
 
     def forward(self):
