@@ -6,6 +6,7 @@ class UncertainArray:
         # Convert input to ndarray with given dtype
         arr = np.asarray(array, dtype=dtype)
         self.data = arr
+        self.dtype = arr.dtype
         # Store precision (can be scalar or array)
         self._set_precision_internal(precision)
 

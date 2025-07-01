@@ -106,3 +106,20 @@ def random_binary_mask(shape, subsampling_rate, rng=None):
     flat_mask[:num_true] = True
     rng.shuffle(flat_mask)
     return flat_mask.reshape(shape)
+
+def random_phase_mask(shape, dtype=np.complex128, rng=None):
+    """
+    Generate a complex-valued random phase mask with unit magnitude.
+
+    Args:
+        shape (tuple): Shape of the mask.
+        dtype (np.dtype): Complex dtype.
+        rng (np.random.Generator or None): Random generator.
+
+    Returns:
+        ndarray: Complex array with unit modulus (e.g., exp(1j * theta)).
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    theta = rng.uniform(0, 2 * np.pi, size=shape)
+    return np.exp(1j * theta).astype(dtype)

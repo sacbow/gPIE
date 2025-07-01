@@ -85,7 +85,19 @@ combineはBPのコアではないのでそんなに重要ではない。
 
 いまだにfftは実行時間の1/3くらい。SparsePrior内で利用しているtensordotやと__trudiv__のコストを合わせるとfftを少し上回る。結論としては、最適化の引き際としては適切な判断フェーズ。
 
+dampingを設定すると以下のようなことが起こる
 
+| 関数名                                     | cumtime (s) | コメント                       |
+| --------------------------------------- | ----------- | -------------------------- |
+| `sparse_prior.py:_compute_message`      | 0.023       | メッセージ生成コア、BPの本体            |
+| `sparse_prior.py:approximate_posterior` | 0.015       | damping を反映する箇所（後段）        |
+| `uncertain_array.py:damp_with`          | 0.003       | **新規に出現**。確かに呼ばれているが律速ではない |
+| `fft_2d_propagator.py:compute_belief`   | 0.020       | FFT中心部（合成）                 |
+| `fft_2d_propagator.py:backward`         | 0.025       | 合成された推定を戻す                 |
+| `__truediv__`（全体）                       | 0.011       | UA同士の分割（推論の基本演算）           |
+
+
+つまり、dampingは律速ではない。全体の5%くらい。
 
 
 
