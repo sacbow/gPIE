@@ -164,3 +164,76 @@ def random_phase_mask(shape, dtype=np.complex128, rng=None):
         rng = np.random.default_rng()
     theta = rng.uniform(0, 2 * np.pi, size=shape)
     return np.exp(1j * theta).astype(dtype)
+
+def circular_aperture(shape, radius, center=None):
+    """
+    Generate a circular binary mask (True inside the circle).
+
+    Args:
+        shape (tuple): 2D shape (H, W)
+        radius (float): Normalized radius (0 < r < 0.5), min_dim = 1
+        center (tuple or None): Normalized coordinates (cy, cx), origin at center, unit=min_dim
+
+    Returns:
+        np.ndarray: Boolean mask with circular region True
+    """
+    H, W = shape
+    if not (0.0 < radius < 0.5):
+        raise ValueError("radius must be between 0 and 0.5")
+
+    min_dim = min(H, W)
+    abs_radius = radius * min_dim
+
+    cy_pix = H // 2
+    cx_pix = W // 2
+    if center is not None:
+        dx = center[0] * min_dim
+        dy = -center[1] * min_dim  
+        cx_pix = int(round(W // 2 + dx))  
+        cy_pix = int(round(H // 2 + dy))  
+
+    if not (0 <= cy_pix < H and 0 <= cx_pix < W):
+        raise ValueError("center out of bounds")
+
+    yy, xx = np.ogrid[:H, :W]
+    dist2 = (yy - cy_pix) ** 2 + (xx - cx_pix) ** 2
+    return dist2 <= abs_radius ** 2
+
+
+def square_aperture(shape, radius, center=None):
+    """
+    Generate a square binary mask (True inside the square).
+
+    Args:
+        shape (tuple): 2D shape (H, W)
+        radius (float): Normalized half-side (0 < r < 0.5), min_dim = 1
+        center (tuple or None): Normalized coordinates (cy, cx), origin at center, unit=min_dim
+
+    Returns:
+        np.ndarray: Boolean mask with square region True
+    """
+    H, W = shape
+    if not (0.0 < radius < 0.5):
+        raise ValueError("radius must be between 0 and 0.5")
+
+    min_dim = min(H, W)
+    half = int(radius * min_dim)
+
+    cy_pix = H // 2
+    cx_pix = W // 2
+    if center is not None:
+        dx = center[0] * min_dim
+        dy = -center[1] * min_dim  
+        cx_pix = int(round(W // 2 + dx))  
+        cy_pix = int(round(H // 2 + dy))  
+
+
+    y0, y1 = cy_pix - half, cy_pix + half
+    x0, x1 = cx_pix - half, cx_pix + half
+
+    if y0 < 0 or y1 >= H or x0 < 0 or x1 >= W:
+        raise ValueError("square aperture goes out of bounds")
+
+    mask = np.zeros((H, W), dtype=bool)
+    mask[y0:y1 + 1, x0:x1 + 1] = True
+    return mask

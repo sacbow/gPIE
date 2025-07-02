@@ -1,10 +1,15 @@
+import numpy as np
 from .base import Measurement
 from core.uncertain_array import UncertainArray as UA
-from core.linalg_utils import complex_normal_random_array
-import numpy as np
+from core.linalg_utils import random_normal_array
+from graph.wave import Wave
+
 
 class MaskedGaussianMeasurement(Measurement):
-    def __init__(self, input_wave, observed_data=None, var=1.0, mask=None, dtype=np.complex128):
+    input_dtype = np.complex128
+    expected_observed_dtype = np.complex128
+
+    def __init__(self, input_wave: Wave, observed_data=None, var=1.0, mask=None):
         """
         Gaussian measurement with missing data (masked observation).
 
@@ -13,26 +18,24 @@ class MaskedGaussianMeasurement(Measurement):
             observed_data (ndarray or None): Complex-valued measurement data.
             var (float): Noise variance for observed entries.
             mask (ndarray of bool): True where observation is available.
-            dtype (np.dtype): Data type (default: complex128).
         """
         if mask is None:
             raise ValueError("mask must be provided.")
         if not np.issubdtype(mask.dtype, np.bool_):
             raise ValueError("mask must be of boolean dtype.")
 
+        self._var = var
+        self._mask = mask
+
         if observed_data is not None:
             if observed_data.shape != mask.shape:
                 raise ValueError("observed_data and mask must have the same shape.")
             precision = np.where(mask, 1.0 / var, 0.0)
-            observed = UA(observed_data, dtype=dtype, precision=precision)
+            observed = UA(observed_data, dtype=self.expected_observed_dtype, precision=precision)
         else:
             observed = None
 
-        super().__init__(input_wave, observed)
-
-        self._mask = mask
-        self._var = var
-        self._dtype = dtype
+        super().__init__(input_wave=input_wave, observed=observed)
 
     def generate_sample(self, rng):
         """
@@ -44,15 +47,13 @@ class MaskedGaussianMeasurement(Measurement):
             raise RuntimeError("Input sample not available.")
 
         noise = np.zeros_like(x)
-        masked_noise = complex_normal_random_array(
+        masked_noise = random_normal_array(
             shape=(np.sum(self._mask),),
-            dtype=self._dtype,
+            dtype=self.input_dtype,
             rng=rng
         )
         noise[self._mask] = masked_noise * np.sqrt(self._var)
-
-        y = x + noise
-        self._sample = y
+        self._sample = x + noise
 
     def update_observed_from_sample(self):
         """
@@ -61,24 +62,29 @@ class MaskedGaussianMeasurement(Measurement):
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
         precision = np.where(self._mask, 1.0 / self._var, 0.0)
-        self.observed = UA(self._sample, dtype=self._dtype, precision=precision)
+        self.observed = UA(self._sample, dtype=self.expected_observed_dtype, precision=precision)
 
-    def set_observed(self, data, var, mask):
+    def set_observed(self, data, var=None, mask=None):
         """
-        Set observed data manually with mask and noise variance.
+        Set observed data manually with mask and optional noise variance.
+        If var or mask is not provided, uses stored self._var and self._mask.
         """
+        var = var if var is not None else self._var
+        mask = mask if mask is not None else self._mask
+
         if data.shape != mask.shape:
             raise ValueError("Shape mismatch between data and mask.")
         if not np.issubdtype(mask.dtype, np.bool_):
             raise ValueError("Mask must be of boolean dtype.")
 
         precision = np.where(mask, 1.0 / var, 0.0)
-        self.observed = UA(data, dtype=self._dtype, precision=precision)
+        self.observed = UA(data, dtype=self.expected_observed_dtype, precision=precision)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
         Return the masked observation directly as message.
         """
+        self._check_observed()
         return self.observed
 
     def __repr__(self):
