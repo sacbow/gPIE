@@ -1,14 +1,28 @@
 import numpy as np
-from .linalg_utils import complex_normal_random_array, reduce_precision_to_scalar
+from .linalg_utils import complex_normal_random_array, reduce_precision_to_scalar, random_normal_array
 
 class UncertainArray:
-    def __init__(self, array, dtype=np.complex128, precision=1.0):
-        # Convert input to ndarray with given dtype
-        arr = np.asarray(array, dtype=dtype)
-        self.data = arr
-        self.dtype = arr.dtype
-        # Store precision (can be scalar or array)
+    def __init__(self, array, dtype=np.complex128, precision=1.0): 
+        self.data = np.asarray(array, dtype=dtype)
+        self.dtype = self.data.dtype
         self._set_precision_internal(precision)
+    
+    def is_real(self):
+        return np.issubdtype(self.dtype, np.floating)
+
+    def is_complex(self):
+        return np.issubdtype(self.dtype, np.complexfloating)
+
+    def astype(self, dtype):
+        if np.issubdtype(dtype, np.floating) and self.is_complex():
+            if not np.allclose(self.data.imag, 0):
+                import warnings
+                warnings.warn("Casting complex array to real will discard imaginary part.")
+        return UncertainArray(
+            array=self.data.astype(dtype),
+            dtype=dtype,
+            precision=self._precision
+        )
 
     def _set_precision_internal(self, value):
         """Internal method to set precision as scalar or array."""
@@ -53,25 +67,10 @@ class UncertainArray:
         return self.data.ndim
 
     @classmethod
-    def random(cls, shape, dtype=np.complex128, precision=1.0, rng=None):
-        """
-        Generate a random UncertainArray from complex normal distribution.
-
-        Args:
-            shape (tuple): Shape of the output array.
-            dtype (np.dtype): Complex dtype of data.
-            precision (float or array): Initial precision.
-            rng (np.random.Generator): Required random number generator.
-
-        Returns:
-            UncertainArray
-        """
-        if rng is None:
-            raise ValueError("rng must be provided to UncertainArray.random()")
-        data = complex_normal_random_array(shape, dtype=dtype, rng=rng)
+    def random(cls, shape, dtype=np.complex128, rng=None, precision=1.0):
+        rng = np.random.default_rng() if rng is None else rng
+        data = random_normal_array(shape, dtype=dtype, rng=rng)
         return cls(data, dtype=dtype, precision=precision)
-
-
     
     @classmethod
     def zeros(cls, shape, dtype=np.complex128, precision=1.0):
@@ -83,51 +82,67 @@ class UncertainArray:
 
     
     def __mul__(self, other):
-        """Combine two UncertainArrays using additive precision rule."""
+        """
+        Combine two UncertainArrays using additive precision rule.
+
+        This operation corresponds to fusing two independent Gaussian beliefs.
+        The resulting data is the weighted average, and the precision is summed.
+
+        Returns:
+            UncertainArray: The fused belief.
+        """
         if not isinstance(other, UncertainArray):
             raise TypeError("Multiplication only supported between UncertainArrays.")
-        p1 = self._precision
-        p2 = other._precision
-        d1 = self.data
-        d2 = other.data
+        if self.dtype != other.dtype:
+            raise TypeError(f"Dtype mismatch: {self.dtype} vs {other.dtype}")
+
+        d1, d2 = self.data, other.data
+        p1, p2 = self._precision, other._precision
+
         if np.isscalar(p1) and np.isscalar(p2):
             precision_sum = p1 + p2
             result_data = (p1 * d1 + p2 * d2) / precision_sum
-            return UncertainArray(result_data, precision=precision_sum)
-        p1_arr = self.precision
-        p2_arr = other.precision
-        precision_sum = p1_arr + p2_arr
-        result_data = (p1_arr * d1 + p2_arr * d2) / precision_sum
-        return UncertainArray(result_data, precision=precision_sum)
+        else:
+            # Broadcast to arrays and perform elementwise operation
+            p1_arr = self.precision
+            p2_arr = other.precision
+            precision_sum = p1_arr + p2_arr
+            result_data = (p1_arr * d1 + p2_arr * d2) / precision_sum
 
-    
+        return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum)
+
+
     def __truediv__(self, other):
         """
         Compute the 'difference' between two UncertainArrays under
-        the additive precision model. Used in contexts such as belief / input
-        to compute messages to factors.
+        the additive precision model.
+
+        This corresponds to computing the residual message in belief propagation.
+        It "removes" the contribution of `other` from `self`.
+
+        Returns:
+            UncertainArray: The residual message.
         """
         if not isinstance(other, UncertainArray):
             raise TypeError("Division only supported between UncertainArrays.")
+        if self.dtype != other.dtype:
+            raise TypeError(f"Dtype mismatch: {self.dtype} vs {other.dtype}")
 
-        p1 = self._precision
-        p2 = other._precision
-        d1 = self.data
-        d2 = other.data
+        d1, d2 = self.data, other.data
+        p1, p2 = self._precision, other._precision
 
         if np.isscalar(p1) and np.isscalar(p2):
             precision_diff = p1 - p2
             precision_safe = max(precision_diff, 1.0)
             result_data = (p1 * d1 - p2 * d2) / precision_safe
-            return UncertainArray(result_data, precision=precision_safe)
+        else:
+            p1_arr = self.precision
+            p2_arr = other.precision
+            precision_diff = p1_arr - p2_arr
+            precision_safe = np.clip(precision_diff, 1.0, None)
+            result_data = (p1_arr * d1 - p2_arr * d2) / precision_safe
 
-        p1_arr = self.precision
-        p2_arr = other.precision
-        precision_diff = p1_arr - p2_arr
-        precision_safe = np.clip(precision_diff, 1.0, None)
-        result_data = (p1_arr * d1 - p2_arr * d2) / precision_safe
-        return UncertainArray(result_data, precision=precision_safe)
-
+        return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)
     
     @classmethod
     def combine(cls, ua_list):

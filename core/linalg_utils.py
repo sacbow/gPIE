@@ -1,9 +1,13 @@
 import numpy as np
+import warnings
 
 def reduce_precision_to_scalar(precision_array):
     """
     Reduce a precision array to an equivalent scalar precision
     using harmonic mean of variances.
+
+    This is used to summarize spatially varying precision into a single scalar value,
+    often needed when combining messages in approximate inference.
 
     Args:
         precision_array (np.ndarray): Elementwise precision (positive)
@@ -19,23 +23,54 @@ def reduce_precision_to_scalar(precision_array):
 
 def complex_normal_random_array(shape, dtype=np.complex128, rng=None):
     """
-    Generate a complex-valued random array with standard normal distribution.
-    Each element follows a circular complex Gaussian distribution with variance 1,
-    meaning the real and imaginary parts are N(0, 0.5) independently.
+    (Deprecated) Generate complex Gaussian random array from CN(0,1).
+
+    This function is retained for backward compatibility. Use random_normal_array instead.
 
     Args:
-        shape (tuple): Shape of the output array.
-        dtype (np.dtype): Output complex data type.
-        rng (np.random.Generator): Random number generator (required)
+        shape (tuple): Output shape.
+        dtype (np.dtype): Complex dtype (default: complex128)
+        rng (np.random.Generator): Random number generator
 
     Returns:
-        np.ndarray: Complex-valued random array.
+        np.ndarray: Complex-valued array
     """
-    if rng is None:
-        raise ValueError("rng must be provided for random sampling.")
-    real = rng.normal(loc=0.0, scale=np.sqrt(0.5), size=shape)
-    imag = rng.normal(loc=0.0, scale=np.sqrt(0.5), size=shape)
+    warnings.warn(
+        "complex_normal_random_array is deprecated. Use random_normal_array instead.",
+        DeprecationWarning
+    )
+    rng = np.random.default_rng() if rng is None else rng
+    real = rng.normal(size=shape)
+    imag = rng.normal(size=shape)
     return (real + 1j * imag).astype(dtype)
+
+
+def random_normal_array(shape, dtype=np.complex128, rng=None):
+    """
+    Generate random array from standard normal distribution with given dtype.
+
+    Supports both real and complex outputs depending on dtype:
+        - real: N(0,1)
+        - complex: CN(0,1), i.e., real and imag ~ N(0,1)
+
+    Args:
+        shape (tuple): Output shape.
+        dtype (np.dtype): Desired dtype (real or complex).
+        rng (np.random.Generator or None): Random generator.
+
+    Returns:
+        np.ndarray: Random array with specified dtype.
+    """
+    rng = np.random.default_rng() if rng is None else rng
+    if np.issubdtype(dtype, np.complexfloating):
+        real = rng.normal(size=shape)
+        imag = rng.normal(size=shape)
+        return (real + 1j * imag).astype(dtype)
+    elif np.issubdtype(dtype, np.floating):
+        return rng.normal(size=shape).astype(dtype)
+    else:
+        raise ValueError(f"Unsupported dtype: {dtype}")
+
 
 def sparse_complex_array(shape, sparsity, dtype=np.complex128, rng=None):
     """
@@ -44,7 +79,7 @@ def sparse_complex_array(shape, sparsity, dtype=np.complex128, rng=None):
 
     Args:
         shape (tuple): Desired shape of the output array.
-        sparsity (float): Fraction (0 < rho <= 1) of non-zero entries.
+        sparsity (float): Fraction (0 < sparsity <= 1) of non-zero entries.
         dtype (np.dtype): Complex data type (default: complex128).
         rng (np.random.Generator): Random number generator.
 
@@ -65,10 +100,13 @@ def sparse_complex_array(shape, sparsity, dtype=np.complex128, rng=None):
 
     return sample.reshape(shape)
 
+
 def random_unitary_matrix(n, dtype=np.complex128, rng=None):
     """
     Generate a random unitary matrix of shape (n, n) using SVD
     of a circularly-symmetric complex Gaussian matrix.
+
+    Useful for constructing sensing matrices or unitary propagators.
 
     Args:
         n (int): Size of the square matrix.
@@ -107,9 +145,12 @@ def random_binary_mask(shape, subsampling_rate, rng=None):
     rng.shuffle(flat_mask)
     return flat_mask.reshape(shape)
 
+
 def random_phase_mask(shape, dtype=np.complex128, rng=None):
     """
     Generate a complex-valued random phase mask with unit magnitude.
+
+    Each entry is drawn as exp(1j * theta) with theta ~ Uniform[0, 2π].
 
     Args:
         shape (tuple): Shape of the mask.

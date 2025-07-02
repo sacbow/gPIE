@@ -51,13 +51,23 @@ class Wave:
         """
         Receive a message from a connected Factor.
         This updates either parent_message or a child_message depending on source.
+
+        Ensures that the dtype of the incoming message matches the Wave's dtype.
         """
+        if message.dtype != self.dtype:
+            raise TypeError(
+                f"UncertainArray dtype {message.dtype} does not match Wave dtype {self.dtype}."
+            )
+
         if factor == self.parent:
             self.parent_message = message
         elif factor in self.child_messages:
             self.child_messages[factor] = message
         else:
-            raise ValueError("Received message from unknown factor.")
+            raise ValueError(
+                f"Received message from unregistered factor: {factor}. "
+                f"Expected parent: {self.parent}, or one of children: {list(self.child_messages)}"
+            )
 
     def compute_belief(self):
         """
