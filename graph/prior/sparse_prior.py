@@ -4,38 +4,40 @@ from core.uncertain_array import UncertainArray as UA
 from core.linalg_utils import reduce_precision_to_scalar, sparse_complex_array
 
 class SparsePrior(Prior):
-    def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0):
+    def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0, scalar_precision=True):
         """
         Spike-and-slab prior with sparsity level `rho`.
-        Message damping is applied to outgoing messages, not beliefs.
+
+        Args:
+            rho (float): Probability of non-zero component.
+            damping (float): Damping factor for message updates.
+            scalar_precision (bool): Whether to convert posterior precision to scalar.
         """
         self.rho = rho
         self.damping = damping
-        self.old_msg = None  # Keep track of last message sent
-        super().__init__(shape=shape, dtype=dtype)
+        self.old_msg = None
+        super().__init__(shape=shape, dtype=dtype, scalar_precision=scalar_precision)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Compute posterior under spike-and-slab model, convert to message,
-        apply damping against previous message if needed.
+        Compute posterior under spike-and-slab model and convert to message.
+        Apply damping if previous message exists and damping > 0.
         """
         posterior = self.approximate_posterior(incoming)
         new_msg = posterior / incoming
 
         if self.old_msg is not None and self.damping > 0:
-            msg_to_send = new_msg.damp_with(self.old_msg, alpha=self.damping)
-        else:
-            msg_to_send = new_msg
+            new_msg = new_msg.damp_with(self.old_msg, alpha=self.damping)
 
-        self.old_msg = msg_to_send
-        return msg_to_send
+        self.old_msg = new_msg
+        return new_msg
 
     def forward(self):
         """
-        Send message to output wave, possibly using previous message.
+        Send message to output wave. If uninitialized, sample a random message.
         """
         if self.output_message is None:
-            msg = UA.random(self.shape, dtype=self.dtype, rng = self._init_rng)
+            msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
             self.old_msg = msg
         else:
             msg = self._compute_message(self.output_message)
@@ -44,8 +46,11 @@ class SparsePrior(Prior):
 
     def approximate_posterior(self, incoming: UA) -> UA:
         """
-        Compute approximate posterior using spike-and-slab prior.
-        This uses elementwise moment matching.
+        Compute approximate posterior using spike-and-slab prior
+        with elementwise moment matching.
+
+        Returns:
+            UncertainArray: belief-like object representing posterior.
         """
         m = incoming.data
         v = 1.0 / incoming._precision
@@ -64,16 +69,18 @@ class SparsePrior(Prior):
         var = np.maximum(var, 1e-12)
 
         precision = 1.0 / var
-        return UA(mu, dtype=self.dtype, precision=reduce_precision_to_scalar(precision))
-    
+        if self.scalar_precision:
+            precision = reduce_precision_to_scalar(precision)
+
+        return UA(mu, dtype=self.dtype, precision=precision)
+
     def generate_sample(self, rng):
         """
-        Generate and set a sparse sample from spike-and-slab prior.
+        Generate a sparse sample from spike-and-slab prior.
         """
         sample = sparse_complex_array(self.shape, sparsity=self.rho, dtype=self.dtype, rng=rng)
         self.output.set_sample(sample)
-    
+
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
         return f"SPrior(gen={gen})"
-

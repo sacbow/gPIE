@@ -28,13 +28,13 @@ class PhaseMaskPropagator(Propagator):
         Forward message: multiply input by phase mask (component-wise).
         """
         ua = incoming["input"]
-        return UA(ua.data * self.phase_mask, dtype=ua.dtype, precision=ua.precision)
+        return UA(ua.data * self.phase_mask, dtype=ua.dtype, precision=ua._precision)
 
     def _compute_backward(self, outgoing: UA, exclude: str = None) -> UA:
         """
         Backward message: divide by phase mask (component-wise inverse).
         """
-        return UA(outgoing.data / self.phase_mask, dtype=outgoing.dtype, precision=outgoing.precision)
+        return UA(outgoing.data / self.phase_mask, dtype=outgoing.dtype, precision=outgoing._precision)
 
     def __matmul__(self, wave: Wave) -> Wave:
         """

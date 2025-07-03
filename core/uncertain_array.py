@@ -48,6 +48,12 @@ class UncertainArray:
         Accepts either a positive scalar or a positive array with same shape as data.
         """
         self._set_precision_internal(value)
+    
+    def is_scalar_precision(self) -> bool:
+        """
+        Return True if the internal precision is a scalar.
+        """
+        return np.isscalar(self._precision)
 
     @property
     def precision(self):
@@ -179,13 +185,6 @@ class UncertainArray:
         """
         Return a damped version of self, interpolated with another UA instance.
         Damping is applied to the mean and standard deviation, not precision.
-
-        Args:
-            other (UncertainArray): The target array to damp toward.
-            alpha (float): Damping coefficient. 0 = no damping (return self), 1 = full damping (return other).
-
-        Returns:
-            UncertainArray: Damped result.
         """
         if not isinstance(other, UncertainArray):
             raise TypeError("Damping only supported between UncertainArray instances.")
@@ -194,16 +193,18 @@ class UncertainArray:
         if not (0.0 <= alpha <= 1.0):
             raise ValueError("Damping coefficient alpha must be between 0 and 1.")
 
-        # Damped mean (complex-valued)
         damped_data = (1 - alpha) * self.data + alpha * other.data
 
-        # Damped standard deviation and precision using NumPy broadcasting
-        std1 = np.sqrt(1.0 / self.precision)
-        std2 = np.sqrt(1.0 / other.precision)
+        p1 = self._precision
+        p2 = other._precision
+
+        std1 = np.sqrt(1.0 / p1)
+        std2 = np.sqrt(1.0 / p2)
         damped_std = (1 - alpha) * std1 + alpha * std2
         damped_precision = 1.0 / (damped_std ** 2)
 
         return UncertainArray(damped_data, dtype=self.data.dtype, precision=damped_precision)
+
 
 
     def to_scalar_precision(self):

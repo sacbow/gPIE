@@ -13,7 +13,7 @@ class GaussianPrior(Prior):
         self.var = var
         self.precision = 1.0 / var
 
-        super().__init__(shape=shape, dtype=dtype)
+        super().__init__(shape=shape, dtype=dtype, scalar_precision=True)
 
     def _compute_message(self, incoming: UA) -> UA:
         """

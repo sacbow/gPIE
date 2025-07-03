@@ -18,13 +18,12 @@ class UnitaryPropagator(Propagator):
             raise ValueError("U must be a square 2D unitary matrix.")
 
         self.shape = (self.U.shape[0],)
-        self._init_rng = None  # for forward message init
+        self._init_rng = None
 
         self.x_belief = None
         self.y_belief = None
 
     def set_init_rng(self, rng):
-        """Externally set the RNG for message initialization."""
         self._init_rng = rng
 
     def compute_belief(self):
@@ -36,20 +35,48 @@ class UnitaryPropagator(Propagator):
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
         r = msg_x.data
-        gamma = msg_x.to_scalar_precision()
-
         p = msg_y.data
-        tau = msg_y.precision
+        gamma = msg_x._precision
+        tau = msg_y._precision
 
-        Ur = self.U @ r
-        denom = gamma + tau
-        y_mean = (gamma / denom) * Ur + (tau / denom) * p
+        gamma_scalar = np.isscalar(gamma)
+        tau_scalar = np.isscalar(tau)
 
-        scalar_prec = reduce_precision_to_scalar(denom)
-        self.y_belief = UA(y_mean, dtype=self.dtype, precision=scalar_prec)
+        if gamma_scalar and tau_scalar:
+            # Case 1: both scalar
+            Ur = self.U @ r
+            denom = gamma + tau
+            y_mean = (gamma * Ur + tau * p) / denom
 
-        x_mean = self.Uh @ y_mean
-        self.x_belief = UA(x_mean, dtype=self.dtype, precision=scalar_prec)
+            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
+            self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=denom)
+
+        elif gamma_scalar and not tau_scalar:
+            # Case 2: gamma scalar, tau array → y_mean first
+            Ur = self.U @ r
+            denom = gamma + tau
+            y_mean = (gamma / denom) * Ur + (tau / denom) * p
+
+            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
+            scalar_prec = reduce_precision_to_scalar(denom)
+            self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=scalar_prec)
+
+        elif not gamma_scalar and tau_scalar:
+            # Case 3: gamma array, tau scalar → x_mean first
+            Uh_p = self.Uh @ p
+            denom = gamma + tau
+            x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
+
+            self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
+            scalar_prec = reduce_precision_to_scalar(denom)
+            self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=scalar_prec)
+
+        else:
+            raise ValueError(
+                "Both input and output messages have array-valued precision. "
+                "At least one must be scalar for tractable belief computation."
+            )
+
 
     def forward(self):
         if self.output_message is None or self.y_belief is None:
@@ -67,7 +94,8 @@ class UnitaryPropagator(Propagator):
             raise RuntimeError("Output message not available for backward propagation.")
 
         self.compute_belief()
-        msg_in = self.x_belief / UA.as_scalar_precision(self.input_messages[x_wave])
+        incoming = self.input_messages[x_wave]
+        msg_in = self.x_belief / incoming
         x_wave.receive_message(self, msg_in)
 
     def __matmul__(self, wave: Wave) -> Wave:
@@ -89,7 +117,6 @@ class UnitaryPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set before propagating.")
-
         y = self.U @ x
         self.output.set_sample(y)
 

@@ -16,13 +16,14 @@ class Prior(Factor, ABC):
         instance.__init__(*args, **kwargs)
         return instance.output
 
-    def __init__(self, shape, dtype=np.complex128):
+    def __init__(self, shape, dtype=np.complex128, scalar_precision=True):
         """
         Initialize the prior factor and its associated output wave.
         """
         super().__init__()
         self.shape = shape
         self.dtype = dtype
+        self.scalar_precision = scalar_precision
         self._init_rng = None  # will be set by Graph if needed
 
         wave = Wave(shape, dtype)
