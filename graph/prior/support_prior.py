@@ -2,78 +2,50 @@ import numpy as np
 from .base import Prior
 from core.uncertain_array import UncertainArray as UA
 
-
 class SupportPrior(Prior):
-    def __init__(self, support: np.ndarray, damping: float = 0.0, dtype=np.complex128):
+    def __init__(self, support: np.ndarray, dtype=np.complex128, scalar_precision=False):
         """
-        Prior that enforces a support constraint via a binary mask.
+        Support-based prior. CN(0,1) on support=True, delta(0) on support=False.
 
         Args:
-            support (ndarray): Boolean array indicating support region (True = allowed).
-            damping (float): Optional damping factor [0.0, 1.0].
-            dtype (np.dtype): Data type of the wave (complex or real).
+            support (np.ndarray): Boolean mask indicating support region.
+            dtype (np.dtype): Data type of the prior (default: complex128).
+            scalar_precision (bool): Whether to enforce scalar precision in output.
         """
-        if not np.issubdtype(support.dtype, np.bool_):
-            raise ValueError("Support must be a boolean array.")
-        if not np.any(support):
-            raise RuntimeError("Support mask is entirely False; posterior undefined.")
-
-        super().__init__(shape=support.shape, dtype=dtype)
-
+        if support.dtype != bool:
+            raise ValueError("Support must be a boolean numpy array.")
         self.support = support
-        self.damping = damping
-        self.old_msg = None
+        self.large_value = 1e6  # Used to approximate infinite precision
+        self.scalar_precision = scalar_precision
+        super().__init__(shape=support.shape, dtype=dtype, scalar_precision=scalar_precision)
+
+        # Precompute fixed message (used when scalar_precision is False)
+        mean = np.zeros_like(support, dtype=dtype)
+        precision_array = np.where(support, 1.0, self.large_value)
+        self.fixed_message = UA(mean, dtype=dtype, precision=precision_array)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Compute message from prior to wave based on support-constrained posterior.
-        Applies damping against previous message if configured.
+        Return prior message. If scalar_precision=False, always return fixed array.
+        If scalar_precision=True, compute belief from incoming and combine, then reduce.
         """
-        belief = self._approximate_posterior(incoming)
-        new_msg = belief / incoming
-
-        if self.old_msg is not None and self.damping > 0:
-            msg_to_send = new_msg.damp_with(self.old_msg, alpha=self.damping)
+        if not self.scalar_precision:
+            return self.fixed_message
         else:
-            msg_to_send = new_msg
-
-        self.old_msg = msg_to_send
-        return msg_to_send
-
-    def _approximate_posterior(self, incoming: UA) -> UA:
-        """
-        Apply support constraint to posterior distribution:
-        - Inside support: posterior from CN(0,1) prior.
-        - Outside support: mean forced to zero.
-        Returns posterior with scalar precision (averaged over all pixels).
-        """
-        m = incoming.data
-        v = 1.0 / incoming.precision
-
-        post_var_in = 1.0 / (1.0 + 1.0 / v)
-        post_mean_in = post_var_in * (m / v)
-
-        post_mean = np.where(self.support, post_mean_in, 0.0)
-        post_var = np.where(self.support, post_var_in, 0.0)
-        eps = 1e-12
-        avg_var = np.maximum(np.mean(post_var), eps)
-        scalar_precision = 1.0 / avg_var
-
-        return UA(post_mean, dtype=self.dtype, precision=scalar_precision)
+            # Combine prior with incoming
+            belief = self.fixed_message * incoming
+            belief_scalar = belief.as_scalar_precision()
+            return belief_scalar / incoming
 
     def generate_sample(self, rng):
         """
-        Generate a sample that is nonzero only within the support region.
-        Values inside support are drawn from CN(0,1), outside set to zero.
+        Generate a sample with zeros outside support, and CN(0,1) inside.
         """
-        sample = np.zeros(self.shape, dtype=self.dtype)
-
-        num_active = np.count_nonzero(self.support)
-        real = rng.normal(size=num_active)
-        imag = rng.normal(size=num_active)
-        values = (real + 1j * imag).astype(self.dtype)
-
-        sample[self.support] = values
+        shape = self.support.shape
+        sample = np.zeros(shape, dtype=self.dtype)
+        num_nonzero = np.count_nonzero(self.support)
+        values = rng.normal(size=num_nonzero) + 1j * rng.normal(size=num_nonzero)
+        sample[self.support] = values / np.sqrt(2)
         self.output.set_sample(sample)
 
     def __repr__(self):
