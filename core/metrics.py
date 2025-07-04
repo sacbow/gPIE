@@ -36,3 +36,37 @@ def support_error(x_est, x_true, threshold=1e-3):
     true_support = np.abs(x_true) > threshold
     mismatch = np.logical_xor(est_support, true_support)
     return np.sum(mismatch) / len(x_true)
+
+def phase_align(x_est, x_true):
+    """
+    Align global phase of x_est to match x_true.
+    Returns e^{jθ} x_est where θ minimizes MSE to x_true.
+    """
+    inner_product = np.vdot(x_true, x_est)  # complex conjugate dot
+    phase = np.angle(inner_product)
+    return x_est * np.exp(-1j * phase)
+
+
+def pmse(x_est, x_true):
+    """
+    Phase-aligned Mean Squared Error (PMSE).
+    Removes global phase before computing MSE.
+    """
+    aligned = phase_align(x_est, x_true)
+    return mse(aligned, x_true)
+
+
+def pnmse(x_est, x_true):
+    """
+    Phase-aligned Normalized MSE.
+    """
+    aligned = phase_align(x_est, x_true)
+    return nmse(aligned, x_true)
+
+
+def ppsnr(x_est, x_true, max_val=1.0):
+    """
+    Phase-aligned PSNR.
+    """
+    aligned = phase_align(x_est, x_true)
+    return psnr(aligned, x_true, max_val=max_val)
