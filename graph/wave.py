@@ -13,6 +13,7 @@ class Wave:
         """
         self.shape = shape
         self.dtype = dtype
+        self._init_rng = None  # Will be set externally by Graph
 
         # Factor graph connections
         self.parent = None
@@ -90,27 +91,25 @@ class Wave:
     def forward(self):
         """
         Propagate a message from this wave to each child factor.
-
-        If only one child exists, the message from the parent is
-        passed through directly for efficiency.
+        If any child message is None (i.e. first iteration), send random messages to all children.
+        Otherwise, use standard BP update rule: belief / message_from_child.
         """
         if self.parent_message is None:
             raise RuntimeError("Cannot forward without parent message.")
 
-        if len(self.children) == 1:
-            factor = self.children[0]
-            factor.receive_message(self, self.parent_message)
+        if any(msg is None for msg in self.child_messages.values()):
+            for factor in self.children:
+                msg = UncertainArray.random(self.shape, dtype=self.dtype, rng=self._init_rng)
+                factor.receive_message(self, msg)
             return
 
-        messages = [
-            self.parent_message
-        ] + [msg for msg in self.child_messages.values() if msg is not None]
+        messages = [self.parent_message] + list(self.child_messages.values())
         belief = UncertainArray.combine(messages)
 
         for factor in self.children:
-            if self.child_messages[factor] is not None:
-                msg = belief / self.child_messages[factor]
-                factor.receive_message(self, msg)
+            msg = belief / self.child_messages[factor]
+            factor.receive_message(self, msg)
+
 
     def backward(self):
         """
@@ -137,6 +136,13 @@ class Wave:
 
         msg = UncertainArray.combine(valid_msgs)
         self.parent.receive_message(self, msg)
+    
+    def set_init_rng(self, rng):
+        """
+        Set RNG for forward message initialization (random message at t=0).
+        """
+        self._init_rng = rng
+
 
     @property
     def ndim(self) -> int:

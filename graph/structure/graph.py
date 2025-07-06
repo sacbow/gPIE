@@ -98,6 +98,10 @@ class Graph:
             if hasattr(factor, "set_init_rng"):
                 factor.set_init_rng(rng)
 
+        for wave in self._waves:
+            if hasattr(wave, "set_init_rng"):
+                wave.set_init_rng(rng)
+
     def clear_sample(self):
         """
         Clear all sample values stored in Wave nodes in the graph.
