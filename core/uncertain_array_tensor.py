@@ -55,10 +55,17 @@ class UncertainArrayTensor:
 
     def combine(self):
         """
-        Combine along batch axis using UncertainArray.combine.
+        Vectorized combination of batch UncertainArrays.
         Returns a single UncertainArray.
         """
-        return UncertainArray.combine(self.to_list())
+        total_precision = np.sum(self.precision, axis=0)
+        # Avoid divide-by-zero
+        total_precision_safe = np.clip(total_precision, 1e-12, np.inf)
+
+        weighted_sum = np.sum(self.precision * self.data, axis=0)
+        mean = weighted_sum / total_precision_safe
+
+        return UncertainArray(mean, dtype=self.dtype, precision=total_precision_safe)
 
     def __getitem__(self, idx):
         """
