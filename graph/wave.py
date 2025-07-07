@@ -1,5 +1,7 @@
 import numpy as np
+from core.linalg_utils import random_normal_array
 from core.uncertain_array import UncertainArray
+from core.uncertain_array_tensor import UncertainArrayTensor
 
 
 class Wave:
@@ -20,7 +22,6 @@ class Wave:
         self.parent_message = None
 
         self.children = []
-        self.child_messages = dict()
 
         # Belief is computed on demand
         self.belief = None
@@ -44,9 +45,22 @@ class Wave:
         self.parent_message = None
 
     def add_child(self, factor):
-        """Register a child factor (without message)."""
+        """Register a child factor and remember its index."""
+        idx = len(self.children)
         self.children.append(factor)
-        self.child_messages[factor] = None
+        factor._child_index = idx  # optional: assign index to factor
+
+    
+    def finalize_structure(self):
+        """
+        After all children are added, initialize the child message tensor
+        with random values and unit precision.
+        """
+        n_child = len(self.children)
+        shape = (n_child,) + self.shape
+        data = random_normal_array(shape, dtype=self.dtype, rng=self._init_rng)
+        precision = np.ones(shape, dtype=np.float64)
+        self.child_messages_tensor = UncertainArrayTensor(data, precision, dtype=self.dtype)
 
     def receive_message(self, factor, message: UncertainArray):
         """
@@ -62,8 +76,10 @@ class Wave:
 
         if factor == self.parent:
             self.parent_message = message
-        elif factor in self.child_messages:
-            self.child_messages[factor] = message
+        elif factor in self.children:
+            idx = self.children.index(factor)
+            self.child_messages_tensor.data[idx] = message.data
+            self.child_messages_tensor.precision[idx] = message.precision
         else:
             raise ValueError(
                 f"Received message from unregistered factor: {factor}. "
@@ -71,71 +87,36 @@ class Wave:
             )
 
     def compute_belief(self):
-        """
-        Explicitly compute and store the current belief
-        by combining all incoming messages.
-        """
-        messages = []
         if self.parent_message is not None:
-            messages.append(self.parent_message)
-        messages.extend(
-            msg for msg in self.child_messages.values() if msg is not None
-        )
+            combined = self.parent_message * self.child_messages_tensor.combine()
+        else:
+            combined = self.child_messages_tensor.combine()
 
-        if not messages:
-            raise ValueError("No messages available to compute belief.")
-
-        self.belief = UncertainArray.combine(messages)
+        self.belief = combined
         return self.belief
 
+
     def forward(self):
-        """
-        Propagate a message from this wave to each child factor.
-        If any child message is None (i.e. first iteration), send random messages to all children.
-        Otherwise, use standard BP update rule: belief / message_from_child.
-        """
         if self.parent_message is None:
             raise RuntimeError("Cannot forward without parent message.")
 
-        if any(msg is None for msg in self.child_messages.values()):
-            for factor in self.children:
-                msg = UncertainArray.random(self.shape, dtype=self.dtype, rng=self._init_rng)
-                factor.receive_message(self, msg)
-            return
+        belief = self.compute_belief()
 
-        messages = [self.parent_message] + list(self.child_messages.values())
-        belief = UncertainArray.combine(messages)
-
-        for factor in self.children:
-            msg = belief / self.child_messages[factor]
+        for i, factor in enumerate(self.children):
+            msg = belief / self.child_messages_tensor[i]
             factor.receive_message(self, msg)
 
-
     def backward(self):
-        """
-        Propagate a message from this wave to the parent factor.
-        If only one child exists and its message is available, it is passed directly.
-        Otherwise, combine all valid messages.
-        """
         if self.parent is None:
             return
 
         if len(self.children) == 1:
-            factor = self.children[0]
-            msg = self.child_messages.get(factor)
-            if msg is not None:
-                self.parent.receive_message(self, msg)
-                return
-            else:
-                raise RuntimeError("Single child message is missing.")
+            msg = self.child_messages_tensor[0]
+        else:
+            msg = self.child_messages_tensor.combine()
 
-        # For multiple children
-        valid_msgs = [msg for msg in self.child_messages.values() if msg is not None]
-        if not valid_msgs:
-            raise RuntimeError("No child messages available for backward propagation.")
-
-        msg = UncertainArray.combine(valid_msgs)
         self.parent.receive_message(self, msg)
+
     
     def set_init_rng(self, rng):
         """

@@ -63,16 +63,17 @@ class AmplitudeMeasurement(Measurement):
 
         abs_z0 = np.abs(z0)
         abs_z0_safe = np.maximum(abs_z0, 1e-12)
-        angle_z0 = np.angle(z0)
+        unit_phase = z0 / abs_z0_safe  # safer and faster than exp(1j * angle(z0))
 
         # Posterior mean
-        z_hat = (v0 * y + 2 * v * abs_z0_safe) / (v0 + 2 * v) * np.exp(1j * angle_z0)
+        z_hat = (v0 * y + 2 * v * abs_z0_safe) / (v0 + 2 * v) * unit_phase
 
         # Posterior variance
         v_hat = (v0 * (v0 * y + 4 * v * abs_z0_safe)) / (2 * abs_z0_safe * (v0 + 2 * v))
         v_hat = np.maximum(v_hat, 1e-12)
 
         return UA(z_hat, dtype=self.input_dtype, precision=1.0 / v_hat)
+
 
     def _compute_message(self, incoming: UA) -> UA:
         """

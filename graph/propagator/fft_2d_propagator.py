@@ -5,12 +5,13 @@ from core.linalg_utils import reduce_precision_to_scalar
 from graph.wave import Wave
 
 class FFT2DPropagator(Propagator):
-    def __init__(self, shape, dtype=np.complex128):
+    def __init__(self, shape, scalar_precision="output", dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype)
         self.shape = shape
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
+        self.scalar_precision = scalar_precision
 
     def set_init_rng(self, rng):
         self._init_rng = rng
@@ -31,20 +32,10 @@ class FFT2DPropagator(Propagator):
 
         r = msg_x.data
         p = msg_y.data
-        gamma = msg_x._precision
-        tau = msg_y._precision
+        gamma = msg_x.precision
+        tau = msg_y.precision
 
-        gamma_scalar = np.isscalar(gamma)
-        tau_scalar = np.isscalar(tau)
-
-        if gamma_scalar and tau_scalar:
-            Ur = self._fft2_centered(r)
-            denom = gamma + tau
-            y_mean = (gamma * Ur + tau * p) / denom
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
-            self.x_belief = UA(self._ifft2_centered(y_mean), dtype=self.dtype, precision=denom)
-
-        elif gamma_scalar and not tau_scalar:
+        if self.scalar_precision == "input":
             Ur = self._fft2_centered(r)
             denom = gamma + tau
             y_mean = (gamma / denom) * Ur + (tau / denom) * p
@@ -52,7 +43,7 @@ class FFT2DPropagator(Propagator):
             scalar_prec = reduce_precision_to_scalar(denom)
             self.x_belief = UA(self._ifft2_centered(y_mean), dtype=self.dtype, precision=scalar_prec)
 
-        elif not gamma_scalar and tau_scalar:
+        elif self.scalar_precision == "output":
             Uh_p = self._ifft2_centered(p)
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
@@ -61,8 +52,7 @@ class FFT2DPropagator(Propagator):
             self.y_belief = UA(self._fft2_centered(x_mean), dtype=self.dtype, precision=scalar_prec)
 
         else:
-            raise ValueError("Both input and output precisions are array-valued. "
-                             "At least one must be scalar for tractable inference.")
+            raise ValueError("Unknown scalar_precision mode")
 
     def forward(self):
         if self.output_message is None or self.y_belief is None:

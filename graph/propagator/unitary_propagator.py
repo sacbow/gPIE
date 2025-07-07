@@ -6,7 +6,7 @@ from core.linalg_utils import reduce_precision_to_scalar
 
 
 class UnitaryPropagator(Propagator):
-    def __init__(self, U, dtype=np.complex128):
+    def __init__(self, U, scalar_precision="output", dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype)
 
         if U is None:
@@ -22,6 +22,8 @@ class UnitaryPropagator(Propagator):
 
         self.x_belief = None
         self.y_belief = None
+
+        self.scalar_precision = scalar_precision
 
     def set_init_rng(self, rng):
         self._init_rng = rng
@@ -39,20 +41,7 @@ class UnitaryPropagator(Propagator):
         gamma = msg_x._precision
         tau = msg_y._precision
 
-        gamma_scalar = np.isscalar(gamma)
-        tau_scalar = np.isscalar(tau)
-
-        if gamma_scalar and tau_scalar:
-            # Case 1: both scalar
-            Ur = self.U @ r
-            denom = gamma + tau
-            y_mean = (gamma * Ur + tau * p) / denom
-
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
-            self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=denom)
-
-        elif gamma_scalar and not tau_scalar:
-            # Case 2: gamma scalar, tau array → y_mean first
+        if self.scalar_precision == "input":
             Ur = self.U @ r
             denom = gamma + tau
             y_mean = (gamma / denom) * Ur + (tau / denom) * p
@@ -61,8 +50,7 @@ class UnitaryPropagator(Propagator):
             scalar_prec = reduce_precision_to_scalar(denom)
             self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=scalar_prec)
 
-        elif not gamma_scalar and tau_scalar:
-            # Case 3: gamma array, tau scalar → x_mean first
+        elif self.scalar_precision == "output":
             Uh_p = self.Uh @ p
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
@@ -72,11 +60,7 @@ class UnitaryPropagator(Propagator):
             self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=scalar_prec)
 
         else:
-            raise ValueError(
-                "Both input and output messages have array-valued precision. "
-                "At least one must be scalar for tractable belief computation."
-            )
-
+            raise ValueError("Unknown scalar_precision mode")
 
     def forward(self):
         if self.output_message is None or self.y_belief is None:

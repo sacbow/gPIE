@@ -45,6 +45,10 @@ class Graph:
         self._nodes_sorted = sorted(self._nodes, key=lambda x: x.generation)
         self._nodes_sorted_reverse = list(reversed(self._nodes_sorted))
 
+        for wave in self._waves:
+            if hasattr(wave, "finalize_structure"):
+                wave.finalize_structure()
+
     def forward(self):
         """Execute forward message passing in cached generation order."""
         for node in self._nodes_sorted:
