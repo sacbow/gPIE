@@ -5,7 +5,7 @@ from core.uncertain_array_tensor import UncertainArrayTensor
 
 
 class Wave:
-    def __init__(self, shape, dtype=np.complex128):
+    def __init__(self, shape, dtype=np.complex128, precision_mode: str = "array"):
         """
         Initialize a Wave node in the factor graph.
 
@@ -15,6 +15,7 @@ class Wave:
         """
         self.shape = shape
         self.dtype = dtype
+        self._precision_mode = precision_mode  # "scalar" or "array"
         self._init_rng = None  # Will be set externally by Graph
 
         # Factor graph connections
@@ -35,7 +36,17 @@ class Wave:
     def _set_generation(self, generation: int):
         """Internal method to assign generation index for inference scheduling."""
         self._generation = generation
+    
+    @property
+    def precision_mode(self) -> str:
+        """Precision mode of the wave: 'scalar' or 'array'."""
+        return self._precision_mode
 
+    def set_precision_mode(self, mode: str):
+        """Set precision mode explicitly (used by graph.compile)."""
+        if mode not in ("scalar", "array"):
+            raise ValueError(f"Invalid precision mode: {mode}")
+        self._precision_mode = mode
 
     def set_parent(self, factor):
         """Set the parent factor. Only one parent is allowed."""
@@ -54,13 +65,22 @@ class Wave:
     def finalize_structure(self):
         """
         After all children are added, initialize the child message tensor
-        with random values and unit precision.
+        with random values and unit precision. The shape of precision is
+        determined by this Wave's precision_mode.
         """
         n_child = len(self.children)
         shape = (n_child,) + self.shape
         data = random_normal_array(shape, dtype=self.dtype, rng=self._init_rng)
-        precision = np.ones(shape, dtype=np.float64)
+
+        if self._precision_mode == "scalar":
+            # One scalar precision per message
+            precision = np.ones(n_child, dtype=np.float64)  # shape (B,)
+        else:
+            # Elementwise precision per message
+            precision = np.ones(shape, dtype=np.float64)    # shape (B, ...)
+
         self.child_messages_tensor = UncertainArrayTensor(data, precision, dtype=self.dtype)
+
 
     def receive_message(self, factor, message: UncertainArray):
         """
@@ -87,6 +107,16 @@ class Wave:
             )
 
     def compute_belief(self):
+        """
+        Compute the current belief (posterior) at this Wave node.
+
+        The belief is computed by fusing the incoming parent message
+        (if present) with the combined message from all child factors.
+        This uses additive precision combination (Gaussian fusion).
+
+        Returns:
+            UncertainArray: The updated belief of the node.
+        """
         if self.parent_message is not None:
             combined = self.parent_message * self.child_messages_tensor.combine()
         else:
@@ -97,6 +127,12 @@ class Wave:
 
 
     def forward(self):
+        """
+        Send forward messages to all child factors.
+
+        This computes the current belief, removes the message from each child,
+        and sends the resulting message to that child factor.
+        """
         if self.parent_message is None:
             raise RuntimeError("Cannot forward without parent message.")
 
@@ -107,6 +143,12 @@ class Wave:
             factor.receive_message(self, msg)
 
     def backward(self):
+        """
+        Send backward message to the parent factor.
+
+        If there is only one child, its message is reused.
+        Otherwise, all child messages are combined into one.
+        """
         if self.parent is None:
             return
 

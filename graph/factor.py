@@ -4,6 +4,14 @@ from core.uncertain_array import UncertainArray
 
 class Factor(ABC):
     def __init__(self):
+        """
+        Initialize an abstract Factor node in the factor graph.
+
+        Each factor connects one or more input Waves to an optional output Wave,
+        and passes messages between them during belief propagation.
+        Subclasses (e.g., Prior, Propagator, Measurement) must implement forward/backward logic.
+        """
+
         # Connected wave nodes
         self.inputs = dict()               # str -> Wave
         self.output = None                 # Single output wave or None
