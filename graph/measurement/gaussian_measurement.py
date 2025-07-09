@@ -9,15 +9,27 @@ class GaussianMeasurement(Measurement):
     input_dtype = np.complex128
     expected_observed_dtype = np.complex128
 
-    def __init__(self, input_wave: Wave, observed_array=None, var=1.0):
+    def __init__(self, input_wave: Wave, observed_array=None, var=1.0, precision_mode=None):
         """
         Gaussian measurement model: y ~ CN(x, var)
         `observed_array` may be set later via set_observed or update_observed_from_sample.
+
+        Args:
+            input_wave (Wave): Connected input wave.
+            observed_array (ndarray): Optional observed data array.
+            var (float): Observation noise variance.
+            precision_mode (str or None): "scalar" or "array", or None for inference.
         """
         self._var = var
+        self._precision_value = 1.0 / var
+        self.precision_mode = precision_mode
 
         if observed_array is not None:
-            precision = np.ones_like(observed_array, dtype=np.float64) / var
+            precision = (
+                self._precision_value
+                if precision_mode == "scalar"
+                else np.ones_like(observed_array, dtype=np.float64) * self._precision_value
+            )
             observed = UA(observed_array, dtype=self.expected_observed_dtype, precision=precision)
         else:
             observed = None
@@ -27,7 +39,6 @@ class GaussianMeasurement(Measurement):
     def generate_sample(self, rng):
         """
         Generate noisy observation y = x + noise, and store it in self._sample.
-        Does not automatically update self.observed.
         """
         x = self.input.get_sample()
         if x is None:
@@ -39,9 +50,13 @@ class GaussianMeasurement(Measurement):
 
     def set_observed(self, data):
         """
-        Set observed data explicitly.
+        Set observed data explicitly. Precision shape depends on self.precision_mode.
         """
-        precision = np.ones_like(data, dtype=np.float64) / self._var
+        if self.precision_mode == "scalar":
+            precision = self._precision_value
+        else:
+            precision = np.ones_like(data, dtype=np.float64) * self._precision_value
+
         super().set_observed(data, precision=precision, dtype=self.expected_observed_dtype)
 
     def _compute_message(self, incoming: UA) -> UA:

@@ -22,6 +22,46 @@ class PhaseMaskPropagator(Propagator):
 
         self.phase_mask = phase_mask
         self.shape = phase_mask.shape
+        self.precision_mode = None
+
+    def _set_precision_mode(self, mode: str):
+        """
+        Internal setter with consistency checking.
+        """
+        if mode not in ("scalar", "array"):
+            raise ValueError(f"Invalid precision mode for PhaseMaskPropagator: {mode}")
+        if self.precision_mode is not None and self.precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict for PhaseMaskPropagator: "
+                f"existing='{self.precision_mode}', requested='{mode}'"
+            )
+        self.precision_mode = mode
+
+    def get_input_precision_mode(self, wave: Wave):
+        return self.precision_mode
+
+    def get_output_precision_mode(self):
+        return self.precision_mode
+
+    def set_precision_mode_forward(self):
+        """
+        Propagate input wave's mode to output wave and to self.
+        """
+        input_wave = self.inputs["input"]
+        mode = input_wave.precision_mode
+        if mode is not None:
+            self._set_precision_mode(mode)
+            self.output._set_precision_mode(mode)
+
+    def set_precision_mode_backward(self):
+        """
+        Propagate output wave's mode to input wave and to self.
+        """
+        output_wave = self.output
+        mode = output_wave.precision_mode
+        if mode is not None:
+            self._set_precision_mode(mode)
+            self.inputs["input"]._set_precision_mode(mode)
 
     def _compute_forward(self, incoming: dict[str, UA]) -> UA:
         """
@@ -65,4 +105,4 @@ class PhaseMaskPropagator(Propagator):
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
-        return f"PhaseMaskProp(gen={gen})"
+        return f"PhaseMaskProp(gen={gen}, mode={self.precision_mode})"

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray
 
@@ -23,9 +24,36 @@ class Factor(ABC):
         # Optional scheduling index
         self._generation = None
 
+        #precision mode
+        self.precision_mode = None
+
     def _set_generation(self, gen: int):
         """Assign generation index for scheduling."""
         self._generation = gen
+    
+    def _set_precision_mode(self, mode: str):
+        """Internal setter for precision_mode. Called by Graph or propagation."""
+        if mode not in ("scalar", "array"):
+            raise ValueError(f"Invalid precision mode for Factor: {mode}")
+        self.precision_mode = mode
+
+    
+    def get_output_precision_mode(self) -> Optional[str]:
+        """Return precision mode of the output Wave based on this factor's constraints."""
+        return None  # override in subclass
+
+    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
+        """Return required mode for a specific input Wave."""
+        return None  # override in subclass
+
+    def set_precision_mode_forward(self):
+        """Propagate from input to output (default: no-op)."""
+        pass  # override in subclass
+
+    def set_precision_mode_backward(self):
+        """Propagate from output to input (default: no-op)."""
+        pass  # override in subclass
+
     
     def add_input(self, name: str, wave: Wave):
         """

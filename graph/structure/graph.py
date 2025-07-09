@@ -33,7 +33,9 @@ class Graph:
         """
         Automatically register all Wave and Measurement objects
         defined as attributes of this Graph instance.
+        Then resolve precision modes and finalize structure.
         """
+        # --- Register waves and measurements ---
         for name in dir(self):
             obj = getattr(self, name)
             if isinstance(obj, Wave):
@@ -41,13 +43,33 @@ class Graph:
             elif isinstance(obj, Factor) and obj.output is None:
                 self.register_measurement(obj)
 
-        # Cache sorted node lists
+        # --- Topological sort by generation ---
         self._nodes_sorted = sorted(self._nodes, key=lambda x: x.generation)
         self._nodes_sorted_reverse = list(reversed(self._nodes_sorted))
 
+        # --- Precision mode propagation ---
+        for node in self._nodes_sorted:
+            if hasattr(node, "set_precision_mode_forward"):
+                node.set_precision_mode_forward()
+
+        for node in self._nodes_sorted_reverse:
+            if hasattr(node, "set_precision_mode_backward"):
+                node.set_precision_mode_backward()
+
+        # --- Default assignment for unresolved modes ---
+        for wave in self._waves:
+            if wave.precision_mode is None:
+                wave._set_precision_mode("scalar")
+
+        for factor in self._factors:
+            if factor.precision_mode is None:
+                factor._set_precision_mode("scalar")
+
+        # --- Finalize wave structures ---
         for wave in self._waves:
             if hasattr(wave, "finalize_structure"):
                 wave.finalize_structure()
+
 
     def forward(self):
         """Execute forward message passing in cached generation order."""

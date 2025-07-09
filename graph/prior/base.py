@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from typing import Literal, Optional
 
 from ..factor import Factor
 from ..wave import Wave
@@ -9,36 +10,55 @@ from core.uncertain_array import UncertainArray
 class Prior(Factor, ABC):
     def __new__(cls, *args, **kwargs):
         """
-        Override instance creation to return the output Wave directly.
-        Accepts arbitrary arguments to pass to __init__.
+        When instantiated, immediately return the associated output Wave.
         """
         instance = super().__new__(cls)
         instance.__init__(*args, **kwargs)
         return instance.output
 
-    def __init__(self, shape, dtype=np.complex128, scalar_precision=True):
+    def __init__(
+        self,
+        shape,
+        dtype=np.complex128,
+        precision_mode: Optional[Literal["scalar", "array"]] = None,
+    ):
         """
-        Initialize the prior factor and its associated output wave.
+        Initialize the Prior and its output Wave.
+
+        Args:
+            shape (tuple): Shape of the latent variable.
+            dtype (np.dtype): Data type of the variable.
+            precision_mode (str or None): "scalar", "array", or None.
         """
         super().__init__()
         self.shape = shape
         self.dtype = dtype
-        self.scalar_precision = scalar_precision
-        self._init_rng = None  # will be set by Graph if needed
+        self._init_rng = None
+        self.precision_mode = precision_mode  # This affects the wave
 
-        wave = Wave(shape, dtype)
+        # Create Wave (may propagate mode later)
+        wave = Wave(shape, dtype=dtype, precision_mode=precision_mode)
         self.connect_output(wave)
 
+    def set_precision_mode_forward(self):
+        """
+        Propagate precision mode forward from the prior to its output wave.
+        """
+        if self.precision_mode is not None:
+            self.output._set_precision_mode(self.precision_mode)
+
+    def get_output_precision_mode(self) -> Optional[str]:
+        """
+        Return the preferred mode for the output wave.
+        """
+        return self.precision_mode
+
     def set_init_rng(self, rng):
-        """
-        Set the initial RNG used for message initialization.
-        This method allows external control (e.g., from Graph).
-        """
         self._init_rng = rng
 
     def forward(self):
         """
-        Send a message to the output wave.
+        Send message to the output wave (initial message or updated).
         """
         if self.output_message is None:
             if self._init_rng is None:
@@ -51,14 +71,10 @@ class Prior(Factor, ABC):
 
     def backward(self):
         """
-        Prior does not process backward messages.
+        No backward message from Prior.
         """
         pass
 
     @abstractmethod
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
-        """
-        Compute the outgoing message to the output wave.
-        Must be implemented by subclass (e.g., GaussianPrior).
-        """
         pass

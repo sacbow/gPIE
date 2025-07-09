@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 import numpy as np
 
 from ..factor import Factor
@@ -8,7 +9,7 @@ from core.uncertain_array import UncertainArray
 
 class Measurement(Factor, ABC):
     input_dtype: np.dtype  # Must be set in subclass
-    expected_observed_dtype: np.dtype = None  # Optionally set in subclass
+    expected_observed_dtype: Optional[np.dtype] = None  # Optionally set in subclass
 
     def __init__(self, input_wave: Wave, observed: UncertainArray = None):
         # Ensure input_dtype is defined in subclass
@@ -41,7 +42,26 @@ class Measurement(Factor, ABC):
             self.expected_observed_dtype or self.input_dtype
         )
 
+        self.precision_mode: Optional[str] = None  # 'scalar' or 'array'
+
         self._set_generation(input_wave.generation + 1)
+
+    def _set_precision_mode(self, mode: str):
+        """Internal setter for measurement's precision mode."""
+        if mode not in ("scalar", "array"):
+            raise ValueError(f"Invalid precision mode for Measurement: {mode}")
+        self.precision_mode = mode
+
+    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
+        """Return required mode for the input Wave based on measurement mode."""
+        if wave != self.input:
+            return None
+        return self.precision_mode
+
+    def set_precision_mode_backward(self):
+        """Propagate measurement's mode to input wave."""
+        if self.precision_mode is not None:
+            self.input._set_precision_mode(self.precision_mode)
 
     def forward(self):
         """Measurement nodes do not send messages forward."""

@@ -2,21 +2,31 @@ import numpy as np
 from .base import Prior
 from core.uncertain_array import UncertainArray as UA
 from core.linalg_utils import reduce_precision_to_scalar, sparse_complex_array
+from typing import Optional
+
 
 class SparsePrior(Prior):
-    def __init__(self, rho=0.5, shape=(1,), dtype=np.complex128, damping=0.0, scalar_precision=True):
+    def __init__(
+        self,
+        rho=0.5,
+        shape=(1,),
+        dtype=np.complex128,
+        damping=0.0,
+        precision_mode: Optional[str] = None,
+    ):
         """
         Spike-and-slab prior with sparsity level `rho`.
 
         Args:
             rho (float): Probability of non-zero component.
             damping (float): Damping factor for message updates.
-            scalar_precision (bool): Whether to convert posterior precision to scalar.
+            precision_mode (str or None): "scalar", "array", or None
         """
         self.rho = rho
         self.damping = damping
         self.old_msg = None
-        super().__init__(shape=shape, dtype=dtype, scalar_precision=scalar_precision)
+
+        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode)
 
     def _compute_message(self, incoming: UA) -> UA:
         """
@@ -32,18 +42,6 @@ class SparsePrior(Prior):
         self.old_msg = new_msg
         return new_msg
 
-    def forward(self):
-        """
-        Send message to output wave. If uninitialized, sample a random message.
-        """
-        if self.output_message is None:
-            msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
-            self.old_msg = msg
-        else:
-            msg = self._compute_message(self.output_message)
-
-        self.output.receive_message(self, msg)
-
     def approximate_posterior(self, incoming: UA) -> UA:
         """
         Compute approximate posterior using spike-and-slab prior
@@ -53,23 +51,22 @@ class SparsePrior(Prior):
             UncertainArray: belief-like object representing posterior.
         """
         m = incoming.data
-        v = 1.0 / incoming._precision
+        v = 1.0 / incoming._precision  # Note: precision may be scalar or array
 
         prec_post = 1.0 + 1.0 / v
         v_post = 1.0 / prec_post
         m_post = v_post * (m / v)
 
-        slab_likelihood = self.rho * np.exp(-np.abs(m)**2 / (1.0 + v)) / (1.0 + v)
-        spike_likelihood = (1 - self.rho) * np.exp(-np.abs(m)**2 / v) / v
-        Z = slab_likelihood + spike_likelihood + 1e-12  # avoid divide-by-zero
+        slab_likelihood = self.rho * np.exp(-np.abs(m) ** 2 / (1.0 + v)) / (1.0 + v)
+        spike_likelihood = (1 - self.rho) * np.exp(-np.abs(m) ** 2 / v) / v
+        Z = slab_likelihood + spike_likelihood + 1e-12
 
         mu = (slab_likelihood / Z) * m_post
-        e_x2 = (slab_likelihood / Z) * (np.abs(m_post)**2 + v_post)
-        var = e_x2 - np.abs(mu)**2
-        var = np.maximum(var, 1e-12)
+        e_x2 = (slab_likelihood / Z) * (np.abs(m_post) ** 2 + v_post)
+        var = np.maximum(e_x2 - np.abs(mu) ** 2, 1e-12)
 
         precision = 1.0 / var
-        if self.scalar_precision:
+        if self.output.precision_mode == "scalar":
             precision = reduce_precision_to_scalar(precision)
 
         return UA(mu, dtype=self.dtype, precision=precision)
@@ -83,4 +80,4 @@ class SparsePrior(Prior):
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
-        return f"SPrior(gen={gen})"
+        return f"SPrior(gen={gen}, mode={self.precision_mode})"

@@ -87,20 +87,25 @@ class UncertainArrayTensor:
             UncertainArray: The fused belief across the batch.
         """
         if self._scalar_precision:
-            # self.precision shape: (B,)
-            # Compute scalar precision sum
+            # self.precision: shape (B,)
             precision_sum = np.sum(self.precision)  # scalar
-            # Broadcast for weighted sum
-            weights = self.precision[:, np.newaxis]
+
+            # Compute broadcastable shape: (B, 1, 1, ..., 1)
+            broadcast_shape = (self.batch_size,) + (1,) * (self.data.ndim - 1)
+            weights = self.precision.reshape(broadcast_shape)
+
             weighted_sum = np.sum(weights * self.data, axis=0)
             mean = weighted_sum / precision_sum
+
             return UncertainArray(mean, dtype=self.dtype, precision=precision_sum)
+    
         else:
             total_precision = np.sum(self.precision, axis=0)
             total_precision_safe = np.clip(total_precision, 1e-12, np.inf)
             weighted_sum = np.sum(self.precision * self.data, axis=0)
             mean = weighted_sum / total_precision_safe
             return UncertainArray(mean, dtype=self.dtype, precision=total_precision_safe)
+
 
     def __getitem__(self, idx):
         """

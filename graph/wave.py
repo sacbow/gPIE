@@ -1,3 +1,4 @@
+from typing import Optional
 import numpy as np
 from core.linalg_utils import random_normal_array
 from core.uncertain_array import UncertainArray
@@ -5,7 +6,7 @@ from core.uncertain_array_tensor import UncertainArrayTensor
 
 
 class Wave:
-    def __init__(self, shape, dtype=np.complex128, precision_mode: str = "array"):
+    def __init__(self, shape, dtype=np.complex128, precision_mode: Optional[str] = None):
         """
         Initialize a Wave node in the factor graph.
 
@@ -38,15 +39,42 @@ class Wave:
         self._generation = generation
     
     @property
-    def precision_mode(self) -> str:
+    def precision_mode(self) -> Optional[str]:
         """Precision mode of the wave: 'scalar' or 'array'."""
         return self._precision_mode
 
-    def set_precision_mode(self, mode: str):
-        """Set precision mode explicitly (used by graph.compile)."""
+    def _set_precision_mode(self, mode: str):
+        """Set precision mode, and ensure consistency if already set."""
         if mode not in ("scalar", "array"):
             raise ValueError(f"Invalid precision mode: {mode}")
+
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict for Wave: existing='{self._precision_mode}', requested='{mode}'"
+            )
         self._precision_mode = mode
+
+    
+    def set_precision_mode_forward(self):
+        """Forward precision propagation based on parent factor."""
+        if self._precision_mode is not None:
+            return  # already set
+
+        if self.parent is not None:
+            parent_mode = self.parent.get_output_precision_mode()
+            if parent_mode is not None:
+                self._set_precision_mode(parent_mode)
+
+    def set_precision_mode_backward(self):
+        """Backward precision propagation based on child factors."""
+        if self._precision_mode is not None:
+            return  # already set
+
+        for factor in self.children:
+            child_mode = factor.get_input_precision_mode(self)
+            if child_mode is not None:
+                self._set_precision_mode(child_mode)
+
 
     def set_parent(self, factor):
         """Set the parent factor. Only one parent is allowed."""
@@ -99,7 +127,7 @@ class Wave:
         elif factor in self.children:
             idx = self.children.index(factor)
             self.child_messages_tensor.data[idx] = message.data
-            self.child_messages_tensor.precision[idx] = message.precision
+            self.child_messages_tensor.precision[idx] = message._precision
         else:
             raise ValueError(
                 f"Received message from unregistered factor: {factor}. "
@@ -192,5 +220,6 @@ class Wave:
         self._sample = None
 
     def __repr__(self):
-        return f"Wave(gen={self._generation})"
+        return f"Wave(gen={self._generation}, mode={self._precision_mode})"
+
 
