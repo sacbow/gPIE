@@ -192,7 +192,7 @@ class UncertainArray:
             p1_arr = self.precision
             p2_arr = other.precision
             precision_diff = p1_arr - p2_arr
-            precision_safe = np.clip(precision_diff, 1.0, None)
+            precision_safe = np.maximum(precision_diff, 1.0)
             result_data = (p1_arr * d1 - p2_arr * d2) / precision_safe
 
         return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)

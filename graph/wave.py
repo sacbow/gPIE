@@ -163,12 +163,18 @@ class Wave:
         """
         if self.parent_message is None:
             raise RuntimeError("Cannot forward without parent message.")
+    
+        if len(self.children) == 1:
+            # Special case: single child — no need for belief computation or division
+            factor = self.children[0]
+            factor.receive_message(self, self.parent_message)
+    
+        else:
+            belief = self.compute_belief()
+            for i, factor in enumerate(self.children):
+                msg = belief / self.child_messages_tensor[i]
+                factor.receive_message(self, msg)
 
-        belief = self.compute_belief()
-
-        for i, factor in enumerate(self.children):
-            msg = belief / self.child_messages_tensor[i]
-            factor.receive_message(self, msg)
 
     def backward(self):
         """
