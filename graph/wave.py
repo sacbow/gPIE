@@ -57,9 +57,6 @@ class Wave:
     
     def set_precision_mode_forward(self):
         """Forward precision propagation based on parent factor."""
-        if self._precision_mode is not None:
-            return  # already set
-
         if self.parent is not None:
             parent_mode = self.parent.get_output_precision_mode()
             if parent_mode is not None:
@@ -67,9 +64,6 @@ class Wave:
 
     def set_precision_mode_backward(self):
         """Backward precision propagation based on child factors."""
-        if self._precision_mode is not None:
-            return  # already set
-
         for factor in self.children:
             child_mode = factor.get_input_precision_mode(self)
             if child_mode is not None:

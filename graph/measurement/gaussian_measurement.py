@@ -9,32 +9,46 @@ class GaussianMeasurement(Measurement):
     input_dtype = np.complex128
     expected_observed_dtype = np.complex128
 
-    def __init__(self, input_wave: Wave, observed_array=None, var=1.0, precision_mode=None):
+    def __init__(self,
+                 input_wave: Wave,
+                 observed_array=None,
+                 var=1.0,
+                 precision_mode=None,
+                 mask=None):
         """
         Gaussian measurement model: y ~ CN(x, var)
-        `observed_array` may be set later via set_observed or update_observed_from_sample.
 
         Args:
             input_wave (Wave): Connected input wave.
-            observed_array (ndarray): Optional observed data array.
+            observed_array (ndarray or None): Optional observed data.
             var (float): Observation noise variance.
-            precision_mode (str or None): "scalar" or "array", or None for inference.
+            precision_mode (str or None): "scalar", "array", or None.
+            mask (ndarray of bool or None): Optional mask indicating valid observations.
         """
         self._var = var
         self._precision_value = 1.0 / var
-        self.precision_mode = precision_mode
 
         if observed_array is not None:
-            precision = (
-                self._precision_value
-                if precision_mode == "scalar"
-                else np.ones_like(observed_array, dtype=np.float64) * self._precision_value
-            )
+            if mask is not None:
+                if observed_array.shape != mask.shape:
+                    raise ValueError("observed_array and mask must have the same shape.")
+                precision = np.where(mask, self._precision_value, 0.0)
+            elif precision_mode == "scalar" or precision_mode is None:
+                # 明示的に scalar またはデフォルト（通常はこちら）
+                precision = self._precision_value
+            else:
+                precision = np.full_like(observed_array, self._precision_value, dtype=np.float64)
+
             observed = UA(observed_array, dtype=self.expected_observed_dtype, precision=precision)
         else:
             observed = None
 
-        super().__init__(input_wave=input_wave, observed=observed)
+        super().__init__(
+            input_wave=input_wave,
+            observed=observed,
+            precision_mode=precision_mode,
+            mask=mask
+        )
 
     def generate_sample(self, rng):
         """
@@ -48,23 +62,13 @@ class GaussianMeasurement(Measurement):
         y = x + noise * np.sqrt(self._var)
         self._sample = y
 
-    def set_observed(self, data):
-        """
-        Set observed data explicitly. Precision shape depends on self.precision_mode.
-        """
-        if self.precision_mode == "scalar":
-            precision = self._precision_value
-        else:
-            precision = np.ones_like(data, dtype=np.float64) * self._precision_value
-
-        super().set_observed(data, precision=precision, dtype=self.expected_observed_dtype)
-
     def _compute_message(self, incoming: UA) -> UA:
-        """
-        Return the observed distribution as the message (fixed Gaussian).
-        """
         self._check_observed()
-        return self.observed
+        if self.precision_mode == "scalar":
+            return self.observed.as_scalar_precision()
+        else:
+            return self.observed
+
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Literal, Optional
 import numpy as np
 
 from ..factor import Factor
@@ -19,11 +20,17 @@ class Propagator(Factor, ABC):
         super().__init__()
         self.dtype = dtype
         self.input_names = input_names
-        self.precision_mode = precision_mode
+        if precision_mode is not None:
+            self._set_precision_mode(precision_mode)
+
+    @property
+    def precision_mode(self) -> Optional[str]:
+        return self._precision_mode
 
     def _set_precision_mode(self, mode: str):
         """
-        Override precision setter to accept all four propagator modes.
+        Internal setter for precision_mode.
+        Supports extended propagator-specific modes with consistency check.
         """
         valid_modes = (
             "scalar",
@@ -33,7 +40,13 @@ class Propagator(Factor, ABC):
         )
         if mode not in valid_modes:
             raise ValueError(f"Invalid precision mode for Propagator: {mode}")
-        self.precision_mode = mode
+
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict for Propagator: existing='{self._precision_mode}', requested='{mode}'"
+            )
+
+        self._precision_mode = mode
 
     @abstractmethod
     def set_precision_mode_forward(self):

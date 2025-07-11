@@ -1,7 +1,9 @@
 import numpy as np
+from typing import Optional
 from .base import Propagator
-from core.uncertain_array import UncertainArray as UA
 from graph.wave import Wave
+from core.uncertain_array import UncertainArray as UA
+
 
 class PhaseMaskPropagator(Propagator):
     """
@@ -22,7 +24,6 @@ class PhaseMaskPropagator(Propagator):
 
         self.phase_mask = phase_mask
         self.shape = phase_mask.shape
-        self.precision_mode = None
 
     def _set_precision_mode(self, mode: str):
         """
@@ -30,38 +31,34 @@ class PhaseMaskPropagator(Propagator):
         """
         if mode not in ("scalar", "array"):
             raise ValueError(f"Invalid precision mode for PhaseMaskPropagator: {mode}")
-        if self.precision_mode is not None and self.precision_mode != mode:
+        if self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
                 f"Precision mode conflict for PhaseMaskPropagator: "
-                f"existing='{self.precision_mode}', requested='{mode}'"
+                f"existing='{self._precision_mode}', requested='{mode}'"
             )
-        self.precision_mode = mode
+        self._precision_mode = mode
 
-    def get_input_precision_mode(self, wave: Wave):
+    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
         return self.precision_mode
 
-    def get_output_precision_mode(self):
+    def get_output_precision_mode(self) -> Optional[str]:
         return self.precision_mode
 
     def set_precision_mode_forward(self):
         """
-        Propagate input wave's mode to output wave and to self.
+        Propagate precision from input wave to self.
         """
-        input_wave = self.inputs["input"]
-        mode = input_wave.precision_mode
+        mode = self.inputs["input"].precision_mode
         if mode is not None:
             self._set_precision_mode(mode)
-            self.output._set_precision_mode(mode)
 
     def set_precision_mode_backward(self):
         """
-        Propagate output wave's mode to input wave and to self.
+        Propagate precision from output wave to self.
         """
-        output_wave = self.output
-        mode = output_wave.precision_mode
+        mode = self.output.precision_mode
         if mode is not None:
             self._set_precision_mode(mode)
-            self.inputs["input"]._set_precision_mode(mode)
 
     def _compute_forward(self, incoming: dict[str, UA]) -> UA:
         """
@@ -96,12 +93,10 @@ class PhaseMaskPropagator(Propagator):
         """
         Generate output sample by applying the phase mask to input sample.
         """
-        x_wave = self.inputs["input"]
-        x = x_wave.get_sample()
+        x = self.inputs["input"].get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        y = x * self.phase_mask
-        self.output.set_sample(y)
+        self.output.set_sample(x * self.phase_mask)
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

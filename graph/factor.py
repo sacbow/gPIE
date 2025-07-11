@@ -25,17 +25,33 @@ class Factor(ABC):
         self._generation = None
 
         #precision mode
-        self.precision_mode = None
+        self._precision_mode: Optional[str] = None  # 'scalar' or 'array'
 
     def _set_generation(self, gen: int):
         """Assign generation index for scheduling."""
         self._generation = gen
     
+    @property
+    def precision_mode(self) -> Optional[str]:
+        """Public accessor for precision mode."""
+        return self._precision_mode
+    
+    # Subclasses (e.g. Propagator) may override this method to allow additional modes.
     def _set_precision_mode(self, mode: str):
-        """Internal setter for precision_mode. Called by Graph or propagation."""
+        """
+        Internal setter for precision_mode with consistency check.
+        Called by Graph or propagation logic.
+        """
         if mode not in ("scalar", "array"):
             raise ValueError(f"Invalid precision mode for Factor: {mode}")
-        self.precision_mode = mode
+
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict for {type(self).__name__}: "
+                f"existing='{self._precision_mode}', requested='{mode}'"
+            )
+
+        self._precision_mode = mode
 
     
     def get_output_precision_mode(self) -> Optional[str]:

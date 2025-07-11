@@ -11,19 +11,29 @@ class Measurement(Factor, ABC):
     input_dtype: np.dtype  # Must be set in subclass
     expected_observed_dtype: Optional[np.dtype] = None  # Optionally set in subclass
 
-    def __init__(self, input_wave: Wave, observed: UncertainArray = None):
-        # Ensure input_dtype is defined in subclass
+    def __init__(self,
+                 input_wave: Wave,
+                 observed: Optional[UncertainArray] = None,
+                 precision_mode: Optional[str] = None,
+                 mask: Optional[np.ndarray] = None):
+        """
+        Initialize the Measurement base class.
+
+        Args:
+            input_wave (Wave): The Wave being measured.
+            observed (UncertainArray or None): Optional observed data.
+            precision_mode (str or None): "scalar", "array", or None.
+            mask (ndarray of bool or None): Optional mask indicating valid observations.
+        """
         if not hasattr(self, "input_dtype"):
             raise NotImplementedError("Subclasses must define input_dtype")
 
-        # Validate input wave dtype
         if input_wave.dtype != self.input_dtype:
             raise TypeError(
                 f"{type(self).__name__} expects input dtype {self.input_dtype}, "
                 f"but received {input_wave.dtype}"
             )
 
-        # Validate observed dtype if available
         if observed is not None and self.expected_observed_dtype is not None:
             if observed.dtype != self.expected_observed_dtype:
                 raise TypeError(
@@ -36,70 +46,64 @@ class Measurement(Factor, ABC):
         self.add_input("input", input_wave)
         self._sample = None
         self.observed = observed
+        self._mask = mask
+
+        # Automatically infer precision_mode if mask is given
+        if precision_mode is None and mask is not None:
+            precision_mode = "array"
+
+        if precision_mode is not None:
+            self._set_precision_mode(precision_mode)
 
         self.observed_dtype = (
             observed.dtype if observed is not None else
             self.expected_observed_dtype or self.input_dtype
         )
 
-        self.precision_mode: Optional[str] = None  # 'scalar' or 'array'
-
         self._set_generation(input_wave.generation + 1)
 
-    def _set_precision_mode(self, mode: str):
-        """Internal setter for measurement's precision mode."""
-        if mode not in ("scalar", "array"):
-            raise ValueError(f"Invalid precision mode for Measurement: {mode}")
-        self.precision_mode = mode
+    @property
+    def mask(self) -> Optional[np.ndarray]:
+        return self._mask
+    
+    def set_precision_mode_forward(self):
+        """
+        Forward precision propagation:
+        Set this factor's precision_mode based on the connected input Wave.
+        """
+        if self.input.precision_mode is not None:
+            self._set_precision_mode(self.input.precision_mode)
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
-        """Return required mode for the input Wave based on measurement mode."""
         if wave != self.input:
             return None
         return self.precision_mode
 
-    def set_precision_mode_backward(self):
-        """Propagate measurement's mode to input wave."""
-        if self.precision_mode is not None:
-            self.input._set_precision_mode(self.precision_mode)
-
     def forward(self):
-        """Measurement nodes do not send messages forward."""
-        pass
+        pass  # Measurement does not send forward messages
 
     def backward(self):
-        """Send message to input wave based on observed data and incoming message."""
         self._check_observed()
         incoming = self.input_messages[self.input]
         msg = self._compute_message(incoming)
         self.input.receive_message(self, msg)
 
     def _check_observed(self):
-        """Raise error if observed data is not set."""
         if self.observed is None:
             raise RuntimeError("Observed data is not set for this measurement.")
 
-    # === Sampling-related methods ===
-
     def get_sample(self):
-        """Return stored raw sample (used to generate observation)."""
         return self._sample
 
     def set_sample(self, sample):
-        """Manually set raw sample used to create observations."""
         if sample.shape != self.input.shape:
             raise ValueError(f"Sample shape mismatch: expected {self.input.shape}, got {sample.shape}")
         self._sample = sample
 
     def clear_sample(self):
-        """Clear stored sample."""
         self._sample = None
 
     def set_observed(self, data, precision, dtype=None):
-        """
-        Set the observed UncertainArray manually.
-        dtype defaults to `self.observed_dtype` if not specified.
-        """
         dtype = dtype or self.observed_dtype
 
         if self.expected_observed_dtype is not None and dtype != self.expected_observed_dtype:
@@ -111,27 +115,27 @@ class Measurement(Factor, ABC):
         if data.shape != self.input.shape or precision.shape != data.shape:
             raise ValueError("Observed data and precision must match input shape.")
 
+        if self._mask is not None and self._mask.shape != data.shape:
+            raise ValueError("Mask shape must match observed data shape.")
+
         self.observed = UncertainArray(data, dtype=dtype, precision=precision)
-        self.observed_dtype = dtype  # Update to ensure consistency
+        self.observed_dtype = dtype
 
     def update_observed_from_sample(self):
-        """
-        Generate `self.observed` from stored sample and variance.
-        Falls back to attributes `_var` and `expected_observed_dtype`.
-        """
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
 
         var = getattr(self, "_var", 1.0)
-        precision = 1.0 / var
         dtype = self.expected_observed_dtype or self.input_dtype
+
+        if self._mask is not None:
+            precision = np.where(self._mask, 1.0 / var, 0.0)
+        else:
+            precision = 1.0 / var
+
         self.observed = UncertainArray(self._sample, dtype=dtype, precision=precision)
         self.observed_dtype = dtype
 
     @abstractmethod
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
-        """
-        Compute the backward message from measurement to input wave.
-        Must be implemented in subclasses.
-        """
         pass

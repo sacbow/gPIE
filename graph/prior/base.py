@@ -34,18 +34,20 @@ class Prior(Factor, ABC):
         self.shape = shape
         self.dtype = dtype
         self._init_rng = None
-        self.precision_mode = precision_mode  # This affects the wave
+        if precision_mode is not None:
+            self._set_precision_mode(precision_mode)
 
         # Create Wave (may propagate mode later)
         wave = Wave(shape, dtype=dtype, precision_mode=precision_mode)
         self.connect_output(wave)
 
-    def set_precision_mode_forward(self):
+    def set_precision_mode_backward(self):
         """
-        Propagate precision mode forward from the prior to its output wave.
+        If the output wave's mode is set externally (e.g., by children),
+        adopt that mode into the prior factor.
         """
-        if self.precision_mode is not None:
-            self.output._set_precision_mode(self.precision_mode)
+        if self.output.precision_mode is not None:
+            self._set_precision_mode(self.output.precision_mode)
 
     def get_output_precision_mode(self) -> Optional[str]:
         """

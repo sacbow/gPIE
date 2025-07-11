@@ -27,9 +27,9 @@ class UnitaryPropagator(Propagator):
         allowed = ("scalar", "scalar to array", "array to scalar")
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for UnitaryPropagator: {mode}")
-        if self.precision_mode is not None and self.precision_mode != mode:
-            raise ValueError(f"Precision mode conflict: existing='{self.precision_mode}', new='{mode}'")
-        self.precision_mode = mode
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'")
+        self._precision_mode = mode
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
         if self.precision_mode == "scalar":
@@ -56,9 +56,6 @@ class UnitaryPropagator(Propagator):
         y_wave = self.output
         if y_wave.precision_mode == "array":
             self._set_precision_mode("scalar to array")
-        elif y_wave.precision_mode == "scalar":
-            if self.precision_mode is None:
-                self._set_precision_mode("scalar")
 
     def compute_belief(self):
         x_wave = self.inputs["input"]

@@ -237,3 +237,15 @@ def square_aperture(shape, radius, center=None):
     mask = np.zeros((H, W), dtype=bool)
     mask[y0:y1 + 1, x0:x1 + 1] = True
     return mask
+
+def fft2_centered(x: np.ndarray) -> np.ndarray:
+    """
+    Centered 2D FFT (with fftshift and ifftshift).
+    """
+    return np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(x), norm="ortho"))
+
+def ifft2_centered(x: np.ndarray) -> np.ndarray:
+    """
+    Centered 2D inverse FFT (with fftshift and ifftshift).
+    """
+    return np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(x), norm="ortho"))
