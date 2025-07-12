@@ -13,41 +13,45 @@ class Graph:
 
         self._rng = np.random.default_rng()  # default RNG for sampling
 
-    def register_wave(self, wave):
-        """Register a Wave node and its parent Factor (if present)."""
-        if wave not in self._waves:
-            self._waves.add(wave)
-            self._nodes.add(wave)
-
-            if wave.parent is not None:
-                self._factors.add(wave.parent)
-                self._nodes.add(wave.parent)
-
-    def register_measurement(self, measurement):
-        """Register a measurement factor that has no output wave."""
-        if measurement not in self._factors:
-            self._factors.add(measurement)
-            self._nodes.add(measurement)
-
     def compile(self):
         """
-        Automatically register all Wave and Measurement objects
-        defined as attributes of this Graph instance.
-        Then resolve precision modes and finalize structure.
+        Automatically discover and register all nodes in the computational factor graph,
+        starting from Measurement objects defined on this Graph.
         """
-        # --- Register waves and measurements ---
+        self._nodes.clear()
+        self._waves.clear()
+        self._factors.clear()
+
+        # --- Step 1: Initialize unseen set with Measurement objects ---
+        unseen = set()
         for name in dir(self):
             obj = getattr(self, name)
-            if isinstance(obj, Wave):
-                self.register_wave(obj)
-            elif isinstance(obj, Factor) and obj.output is None:
-                self.register_measurement(obj)
+            if isinstance(obj, Factor) and obj.output is None:
+                unseen.add(obj)
 
-        # --- Topological sort by generation ---
+        # --- Step 2: Recursively traverse the graph in reverse ---
+        while unseen:
+            factor = unseen.pop()
+            if factor in self._factors:
+                continue  # already processed
+
+            self._factors.add(factor)
+            self._nodes.add(factor)
+
+            for wave in factor.inputs.values():
+                if wave not in self._waves:
+                    self._waves.add(wave)
+                    self._nodes.add(wave)
+
+                parent = wave.parent
+                if parent is not None and parent not in self._factors:
+                    unseen.add(parent)
+
+        # --- Step 3: Topological sort by generation ---
         self._nodes_sorted = sorted(self._nodes, key=lambda x: x.generation)
         self._nodes_sorted_reverse = list(reversed(self._nodes_sorted))
 
-        # --- Precision mode propagation ---
+        # --- Step 4: Precision mode propagation ---
         for node in self._nodes_sorted:
             if hasattr(node, "set_precision_mode_forward"):
                 node.set_precision_mode_forward()
@@ -56,7 +60,7 @@ class Graph:
             if hasattr(node, "set_precision_mode_backward"):
                 node.set_precision_mode_backward()
 
-        # --- Default assignment for unresolved modes ---
+        # --- Step 5: Default precision mode fallback ---
         for wave in self._waves:
             if wave.precision_mode is None:
                 wave._set_precision_mode("scalar")
@@ -65,10 +69,30 @@ class Graph:
             if factor.precision_mode is None:
                 factor._set_precision_mode("scalar")
 
-        # --- Finalize wave structures ---
+        # --- Step 6: Finalize wave structure ---
         for wave in self._waves:
             if hasattr(wave, "finalize_structure"):
                 wave.finalize_structure()
+    
+    def get_wave(self, label: str):
+        """
+        Retrieve the Wave instance with the given label.
+
+        Args:
+            label (str): Label assigned to the Wave.
+
+        Returns:
+            Wave instance with the specified label.
+
+        Raises:
+            ValueError: If no wave with the given label exists or if multiple waves share the label.
+        """
+        matches = [w for w in self._waves if getattr(w, "label", None) == label]
+        if not matches:
+            raise ValueError(f"No wave found with label '{label}'")
+        if len(matches) > 1:
+            raise ValueError(f"Multiple waves found with label '{label}'")
+        return matches[0]
 
 
     def forward(self):
@@ -97,20 +121,19 @@ class Graph:
             if callback is not None:
                 callback(self, t)
 
-    def generate_sample(self, rng=None):
-        """
-        Generate a forward sample from the graphical model using all registered factors.
-        Each factor's `generate_sample(rng)` is called in generation order.
+    def generate_sample(self, rng=None, update_observed: bool = True):
+        if rng is None:
+            rng = self._rng
 
-        Args:
-            rng (np.random.Generator or None): RNG used for sampling, defaults to internal.
-        """
-        rng = rng or self._rng
-        factors = sorted(self._factors, key=lambda f: f.generation)
-        for f in factors:
-            f.generate_sample(rng)
-            if hasattr(f, "update_observed_from_sample"):
-                f.update_observed_from_sample()
+        for node in self._nodes_sorted:
+            if hasattr(node, "generate_sample"):
+                node.generate_sample(rng)
+
+        if update_observed:
+            for factor in self._factors:
+                if hasattr(factor, "update_observed_from_sample"):
+                    factor.update_observed_from_sample()
+
 
     def set_init_rng(self, rng):
         """

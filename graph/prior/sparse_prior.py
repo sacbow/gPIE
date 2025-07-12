@@ -13,6 +13,7 @@ class SparsePrior(Prior):
         dtype=np.complex128,
         damping=0.0,
         precision_mode: Optional[str] = None,
+        label = None
     ):
         """
         Spike-and-slab prior with sparsity level `rho`.
@@ -26,7 +27,7 @@ class SparsePrior(Prior):
         self.damping = damping
         self.old_msg = None
 
-        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode)
+        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode, label = label)
 
     def _compute_message(self, incoming: UA) -> UA:
         """

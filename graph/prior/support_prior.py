@@ -4,7 +4,7 @@ from core.uncertain_array import UncertainArray as UA
 
 
 class SupportPrior(Prior):
-    def __init__(self, support: np.ndarray, dtype=np.complex128, precision_mode: str = "array"):
+    def __init__(self, support: np.ndarray, dtype=np.complex128, precision_mode: str = "array", label = None):
         """
         Support-based prior. CN(0,1) on support=True, delta(0) on support=False.
 
@@ -23,7 +23,7 @@ class SupportPrior(Prior):
         self.large_value = 1e6
         self._fixed_msg_array = self._create_fixed_array(dtype)
 
-        super().__init__(shape=support.shape, dtype=dtype, precision_mode=precision_mode)
+        super().__init__(shape=support.shape, dtype=dtype, precision_mode=precision_mode, label = label)
 
     def _create_fixed_array(self, dtype):
         mean = np.zeros_like(self.support, dtype=dtype)

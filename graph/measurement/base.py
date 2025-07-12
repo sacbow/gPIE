@@ -12,7 +12,6 @@ class Measurement(Factor, ABC):
     expected_observed_dtype: Optional[np.dtype] = None  # Optionally set in subclass
 
     def __init__(self,
-                 input_wave: Wave,
                  observed: Optional[UncertainArray] = None,
                  precision_mode: Optional[str] = None,
                  mask: Optional[np.ndarray] = None):
@@ -28,12 +27,6 @@ class Measurement(Factor, ABC):
         if not hasattr(self, "input_dtype"):
             raise NotImplementedError("Subclasses must define input_dtype")
 
-        if input_wave.dtype != self.input_dtype:
-            raise TypeError(
-                f"{type(self).__name__} expects input dtype {self.input_dtype}, "
-                f"but received {input_wave.dtype}"
-            )
-
         if observed is not None and self.expected_observed_dtype is not None:
             if observed.dtype != self.expected_observed_dtype:
                 raise TypeError(
@@ -42,8 +35,6 @@ class Measurement(Factor, ABC):
                 )
 
         super().__init__()
-        self.input = input_wave
-        self.add_input("input", input_wave)
         self._sample = None
         self.observed = observed
         self._mask = mask
@@ -59,8 +50,28 @@ class Measurement(Factor, ABC):
             observed.dtype if observed is not None else
             self.expected_observed_dtype or self.input_dtype
         )
+    
+    def __matmul__(self, wave: Wave):
+        if not hasattr(self, "input_dtype"):
+            raise NotImplementedError("Subclasses must define input_dtype")
 
-        self._set_generation(input_wave.generation + 1)
+        if wave.dtype != self.input_dtype:
+            raise TypeError(
+                f"{type(self).__name__} expects input dtype {self.input_dtype}, "
+                f"but received {wave.dtype}"
+            )
+
+        self.input = wave
+        self.add_input("input", wave)
+        self._set_generation(wave.generation + 1)
+
+        if self.expected_observed_dtype is not None:
+            self.observed_dtype = self.expected_observed_dtype
+        else:
+            self.observed_dtype = self.input_dtype
+
+        return self
+
 
     @property
     def mask(self) -> Optional[np.ndarray]:

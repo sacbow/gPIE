@@ -9,7 +9,7 @@ class AmplitudeMeasurement(Measurement):
     input_dtype = np.complex128
     expected_observed_dtype = np.float64
 
-    def __init__(self, input_wave: Wave, observed_data=None, var=1e-4, damping=0.0, precision_mode=None, mask = None):
+    def __init__(self, observed_data=None, var=1e-4, damping=0.0, precision_mode=None, mask = None):
         """
         Measurement model: y = |z| + N(0, var), real-valued observation
         """
@@ -41,7 +41,7 @@ class AmplitudeMeasurement(Measurement):
         else:
             observed = None
 
-        super().__init__(input_wave=input_wave, observed=observed)
+        super().__init__(observed=observed)
 
     def generate_sample(self, rng):
         """

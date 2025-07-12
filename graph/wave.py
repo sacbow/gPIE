@@ -6,7 +6,7 @@ from core.uncertain_array_tensor import UncertainArrayTensor
 
 
 class Wave:
-    def __init__(self, shape, dtype=np.complex128, precision_mode: Optional[str] = None):
+    def __init__(self, shape, dtype=np.complex128, precision_mode: Optional[str] = None, label = None):
         """
         Initialize a Wave node in the factor graph.
 
@@ -17,6 +17,7 @@ class Wave:
         self.shape = shape
         self.dtype = dtype
         self._precision_mode = precision_mode  # "scalar" or "array"
+        self.label = label
         self._init_rng = None  # Will be set externally by Graph
 
         # Factor graph connections
@@ -33,6 +34,9 @@ class Wave:
 
         #random sample from probabilistic model
         self._sample = None
+    
+    def set_label(self, label: str):
+        self.label = label
 
     def _set_generation(self, generation: int):
         """Internal method to assign generation index for inference scheduling."""
@@ -220,6 +224,8 @@ class Wave:
         self._sample = None
 
     def __repr__(self):
-        return f"Wave(gen={self._generation}, mode={self._precision_mode})"
+        label_str = f", label='{self.label}'" if self.label else ""
+        return f"Wave(shape={self.shape}, {label_str})"
+
 
 

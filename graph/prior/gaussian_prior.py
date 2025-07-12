@@ -13,6 +13,7 @@ class GaussianPrior(Prior):
         shape=(1,),
         dtype=np.complex128,
         precision_mode: Optional[str] = None,
+        label = None
     ):
         """
         Gaussian prior: each variable follows CN(mean, var) independently.
@@ -28,7 +29,7 @@ class GaussianPrior(Prior):
         self.var = var
         self.precision = 1.0 / var
 
-        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode)
+        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode, label = label)
 
     def _compute_message(self, incoming: UA) -> UA:
         """

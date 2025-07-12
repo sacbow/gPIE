@@ -10,7 +10,6 @@ class GaussianMeasurement(Measurement):
     expected_observed_dtype = np.complex128
 
     def __init__(self,
-                 input_wave: Wave,
                  observed_array=None,
                  var=1.0,
                  precision_mode=None,
@@ -44,7 +43,6 @@ class GaussianMeasurement(Measurement):
             observed = None
 
         super().__init__(
-            input_wave=input_wave,
             observed=observed,
             precision_mode=precision_mode,
             mask=mask

@@ -21,6 +21,7 @@ class Prior(Factor, ABC):
         shape,
         dtype=np.complex128,
         precision_mode: Optional[Literal["scalar", "array"]] = None,
+        label = None
     ):
         """
         Initialize the Prior and its output Wave.
@@ -38,7 +39,7 @@ class Prior(Factor, ABC):
             self._set_precision_mode(precision_mode)
 
         # Create Wave (may propagate mode later)
-        wave = Wave(shape, dtype=dtype, precision_mode=precision_mode)
+        wave = Wave(shape, dtype=dtype, precision_mode=precision_mode, label = label)
         self.connect_output(wave)
 
     def set_precision_mode_backward(self):
