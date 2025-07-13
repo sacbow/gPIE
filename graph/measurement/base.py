@@ -8,22 +8,41 @@ from core.uncertain_array import UncertainArray
 
 
 class Measurement(Factor, ABC):
+    """
+    Abstract base class for measurement factors in a Computational Factor Graph.
+
+    A Measurement factor represents a terminal node that connects a latent variable
+    (Wave) to an observation (e.g., amplitude, intensity). It supports receiving 
+    a sample, constructing an observed UncertainArray, and computing backward messages.
+
+    Attributes:
+        input_dtype (np.dtype): Required dtype for the input wave (must be defined in subclass).
+        expected_observed_dtype (np.dtype or None): If specified, required dtype for observed data.
+        observed (UncertainArray or None): The observed noisy measurement.
+        _sample (np.ndarray or None): Cached noiseless sample generated from the model.
+        _mask (np.ndarray of bool or None): Optional boolean mask for valid observed regions.
+    """
+
     input_dtype: np.dtype  # Must be set in subclass
     expected_observed_dtype: Optional[np.dtype] = None  # Optionally set in subclass
 
     def __init__(self,
-                 observed: Optional[UncertainArray] = None,
-                 precision_mode: Optional[str] = None,
-                 mask: Optional[np.ndarray] = None):
+                observed: Optional[UncertainArray] = None,
+                precision_mode: Optional[str] = None,
+                mask: Optional[np.ndarray] = None):
         """
-        Initialize the Measurement base class.
+        Initialize the Measurement node.
 
         Args:
-            input_wave (Wave): The Wave being measured.
-            observed (UncertainArray or None): Optional observed data.
-            precision_mode (str or None): "scalar", "array", or None.
-            mask (ndarray of bool or None): Optional mask indicating valid observations.
+            observed (UncertainArray or None): The observed measurement (optional).
+            precision_mode (str or None): "scalar", "array", or None. Inferred if mask is provided.
+            mask (np.ndarray of bool or None): Binary mask indicating valid observation locations.
+
+        Raises:
+            NotImplementedError: If subclass does not define `input_dtype`.
+            TypeError: If `observed` does not match `expected_observed_dtype`.
         """
+
         if not hasattr(self, "input_dtype"):
             raise NotImplementedError("Subclasses must define input_dtype")
 
@@ -52,6 +71,20 @@ class Measurement(Factor, ABC):
         )
     
     def __matmul__(self, wave: Wave):
+        """
+        Connect this measurement to a Wave node using @ syntax.
+
+        Args:
+            wave (Wave): The input Wave node to be measured.
+
+        Returns:
+            self: Returns the connected Measurement instance for chaining.
+
+        Raises:
+            NotImplementedError: If input_dtype is not defined.
+            TypeError: If wave's dtype does not match input_dtype.
+        """
+
         if not hasattr(self, "input_dtype"):
             raise NotImplementedError("Subclasses must define input_dtype")
 
@@ -94,6 +127,13 @@ class Measurement(Factor, ABC):
         pass  # Measurement does not send forward messages
 
     def backward(self):
+        """
+        Compute and send a backward message based on the observed data.
+
+        Raises:
+            RuntimeError: If observed data is not yet set.
+        """
+
         self._check_observed()
         incoming = self.input_messages[self.input]
         msg = self._compute_message(incoming)
@@ -115,6 +155,19 @@ class Measurement(Factor, ABC):
         self._sample = None
 
     def set_observed(self, data, precision, dtype=None):
+        """
+        Manually assign observed data and its precision to this measurement.
+
+        Args:
+            data (np.ndarray): Observed data array.
+            precision (np.ndarray): Element-wise precision (inverse variance).
+            dtype (np.dtype or None): Optional override for data type.
+
+        Raises:
+            TypeError: If dtype does not match expected.
+            ValueError: If shape mismatches or mask shape is inconsistent.
+        """
+
         dtype = dtype or self.observed_dtype
 
         if self.expected_observed_dtype is not None and dtype != self.expected_observed_dtype:
@@ -133,6 +186,14 @@ class Measurement(Factor, ABC):
         self.observed_dtype = dtype
 
     def update_observed_from_sample(self):
+        """
+        Generate observed data from the current sample, using internal variance
+        and optional mask. Stores the result in `self.observed`.
+
+        Raises:
+            RuntimeError: If no sample is available.
+        """
+
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
 
@@ -149,4 +210,15 @@ class Measurement(Factor, ABC):
 
     @abstractmethod
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
+        """
+        Compute the backward message based on incoming input and current observed data.
+
+        Must be implemented by subclasses.
+
+        Args:
+            incoming (UncertainArray): Message from the input Wave node.
+
+        Returns:
+            UncertainArray: Message sent backward to input.
+        """
         pass

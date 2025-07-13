@@ -4,6 +4,27 @@ from graph.wave import Wave
 from core.uncertain_array import UncertainArray
 
 class Factor(ABC):
+    """
+    Abstract base class for factor nodes in the Computational Factor Graph (CFG).
+
+    A Factor represents a transformation or probabilistic dependency between one or more 
+    input Wave nodes and (optionally) an output Wave. Subclasses define the actual 
+    message-passing logic for belief propagation.
+
+    Typical subclasses include:
+    - Prior: Defines a distribution over a latent variable (only output).
+    - Propagator: Connects input(s) to output via forward model.
+    - Measurement: Observes an input wave (no output).
+
+    Attributes:
+        inputs (dict): Mapping of input name → Wave instance.
+        output (Wave or None): The output variable (if any).
+        input_messages (dict): Messages received from input Waves.
+        output_message (UncertainArray or None): Message from the output Wave.
+        _generation (int or None): Scheduling index used during compilation.
+        _precision_mode (str or None): "scalar" or "array", inferred during graph compilation.
+    """
+
     def __init__(self):
         """
         Initialize an abstract Factor node in the factor graph.
@@ -39,8 +60,13 @@ class Factor(ABC):
     # Subclasses (e.g. Propagator) may override this method to allow additional modes.
     def _set_precision_mode(self, mode: str):
         """
-        Internal setter for precision_mode with consistency check.
-        Called by Graph or propagation logic.
+        Set the precision mode for the factor.
+
+        Args:
+            mode (str): Either "scalar" or "array".
+
+        Raises:
+            ValueError: If conflicting mode is already set.
         """
         if mode not in ("scalar", "array"):
             raise ValueError(f"Invalid precision mode for Factor: {mode}")
@@ -108,8 +134,14 @@ class Factor(ABC):
 
     def receive_message(self, wave: Wave, message: UncertainArray):
         """
-        Receive a message from a connected Wave.
-        Store it as input or output message depending on the source.
+        Receive a message from a connected wave and store it.
+
+        Args:
+            wave (Wave): Sender of the message.
+            message (UncertainArray): Incoming message.
+
+        Raises:
+            ValueError: If the wave is not connected to this factor.
         """
         if wave in self.inputs.values():
             self.input_messages[wave] = message

@@ -6,14 +6,35 @@ from core.uncertain_array_tensor import UncertainArrayTensor
 
 
 class Wave:
+    """
+    A Wave represents a variable node in the Computational Factor Graph (CFG).
+
+    Each Wave has one parent Factor (source of incoming messages) and any number 
+    of child Factors (recipients of outgoing messages). Waves support forward 
+    and backward message passing using Gaussian approximations (mean/precision).
+    
+    Attributes:
+        shape (tuple): Shape of the underlying variable.
+        dtype (np.dtype): Data type, typically np.complex128.
+        label (str or None): Optional name used for identifying this node.
+        parent (Factor or None): Upstream factor providing a message.
+        children (list of Factor): Downstream factors receiving messages.
+        _generation (int): Generation index for topological scheduling.
+        _precision_mode (str or None): "scalar", "array", or None (auto-inferred).
+        _sample (ndarray or None): Sampled value (optional).
+    """
+
     def __init__(self, shape, dtype=np.complex128, precision_mode: Optional[str] = None, label = None):
         """
-        Initialize a Wave node in the factor graph.
+        Construct a new Wave node.
 
         Args:
-            shape (tuple): Shape of the associated array.
-            dtype (np.dtype): Data type of the wave's values (default: np.complex128).
+            shape (tuple): Shape of the wave.
+            dtype (np.dtype): Data type, typically complex-valued.
+            precision_mode (str or None): Precision mode: "scalar" or "array".
+            label (str or None): Optional label for graph-level reference.
         """
+
         self.shape = shape
         self.dtype = dtype
         self._precision_mode = precision_mode  # "scalar" or "array"
@@ -111,9 +132,16 @@ class Wave:
     def receive_message(self, factor, message: UncertainArray):
         """
         Receive a message from a connected Factor.
-        This updates either parent_message or a child_message depending on source.
 
-        Ensures that the dtype of the incoming message matches the Wave's dtype.
+        Depending on whether the factor is a parent or child, update the appropriate slot.
+
+        Args:
+            factor (Factor): The source of the message.
+            message (UncertainArray): Incoming Gaussian approximation.
+
+        Raises:
+            TypeError: If dtype mismatch occurs.
+            ValueError: If the factor is not recognized.
         """
         if message.dtype != self.dtype:
             raise TypeError(
@@ -226,6 +254,3 @@ class Wave:
     def __repr__(self):
         label_str = f", label='{self.label}'" if self.label else ""
         return f"Wave(shape={self.shape}, {label_str})"
-
-
-

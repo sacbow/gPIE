@@ -4,6 +4,22 @@ import numpy as np
 
 
 class Graph:
+    """
+    Graph represents a Computational Factor Graph (CFG) used in gPIE.
+
+    This graph structure encodes the computational dependencies among latent variables (Wave)
+    and transformation/measurement operators (Factor), allowing efficient scheduling of 
+    message-passing inference such as Belief Propagation.
+
+    Attributes:
+        _nodes (set): All Wave and Factor nodes in the graph.
+        _waves (set): Subset of _nodes consisting of Wave instances.
+        _factors (set): Subset of _nodes consisting of Factor instances.
+        _nodes_sorted (list): Topologically sorted list of nodes (forward order).
+        _nodes_sorted_reverse (list): Reverse topological order (for backward pass).
+        _rng (np.random.Generator): Random number generator used for sampling.
+    """
+
     def __init__(self):
         self._nodes = set()
         self._waves = set()
@@ -15,9 +31,21 @@ class Graph:
 
     def compile(self):
         """
-        Automatically discover and register all nodes in the computational factor graph,
-        starting from Measurement objects defined on this Graph.
+        Discover the full computational factor graph topology starting from Measurement nodes.
+
+        This method performs the following steps:
+            1. Detects Measurement objects defined on the Graph.
+            2. Traverses the graph in reverse from Measurements to Priors,
+            registering all Waves and Factors.
+            3. Sorts all nodes topologically based on generation index.
+            4. Propagates precision mode (scalar/array) forward and backward.
+            5. Assigns default precision mode where unresolved.
+            6. Finalizes wave structure (e.g., shape/dtype assertions).
+
+        Raises:
+            ValueError: If graph contains invalid or disconnected components.
         """
+
         self._nodes.clear()
         self._waves.clear()
         self._factors.clear()
@@ -122,6 +150,15 @@ class Graph:
                 callback(self, t)
 
     def generate_sample(self, rng=None, update_observed: bool = True):
+        """
+        Generate a full sample from the generative model defined by the graph.
+
+        Args:
+            rng (np.random.Generator or None): RNG used to sample latent variables.
+            update_observed (bool): If True, automatically update observed data
+                                for all Measurement nodes based on the sampled latent state.
+        """
+
         if rng is None:
             rng = self._rng
 
