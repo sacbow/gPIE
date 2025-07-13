@@ -225,7 +225,6 @@ class BinaryPropagator(Propagator):
         for exclude in ("a", "b"):
             wave = self.inputs[exclude]
             msg = self._compute_backward(self.output_message, exclude=exclude)
-            self.input_messages[wave] = msg
             wave.receive_message(self, msg)
 
     def _compute_forward(self, inputs: dict[str, UA]) -> UA:

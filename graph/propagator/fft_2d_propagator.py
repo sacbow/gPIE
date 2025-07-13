@@ -7,7 +7,7 @@ from core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to
 
 
 class FFT2DPropagator(Propagator):
-    def __init__(self, shape, precision_mode: Optional[str] = None, dtype=np.complex128):
+    def __init__(self, shape = None, precision_mode: Optional[str] = None, dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
         self.shape = shape
         self._init_rng = None
@@ -127,7 +127,7 @@ class FFT2DPropagator(Propagator):
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
-
+        self.shape = wave.shape
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)

@@ -250,6 +250,16 @@ class Wave:
     def clear_sample(self):
         """Clear the stored sample (set to None)."""
         self._sample = None
+    
+    def __add__(self, other: "Wave") -> "Wave":
+        """
+        Define Z = X + Y as AddPropagator() @ (X, Y)
+        """
+        from graph.propagator.add_propagator import AddPropagator
+        
+        if not isinstance(other, Wave):
+            raise TypeError("Can only add Wave to Wave.")
+        return AddPropagator() @ (self, other)
 
     def __repr__(self):
         label_str = f", label='{self.label}'" if self.label else ""
