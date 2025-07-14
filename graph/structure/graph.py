@@ -133,21 +133,34 @@ class Graph:
         for node in self._nodes_sorted_reverse:
             node.backward()
 
-    def run(self, n_iter=10, callback=None, rng=None):
+    def run(self, n_iter=10, callback=None, rng=None, verbose=True):
         """
-        Run multiple rounds of belief propagation.
+        Run multiple rounds of belief propagation with optional progress bar.
 
         Args:
             n_iter (int): Number of forward-backward iterations.
-            callback (callable): Optional function called with (graph, t) at each step.
-            rng (np.random.Generator or None): RNG used for initialization, defaults to internal.
+            callback (callable or None): Function called as callback(graph, t).
+            rng (np.random.Generator or None): Optional RNG.
+            verbose (bool): Whether to show progress bar (requires tqdm).
         """
         rng = rng or self._rng
-        for t in range(n_iter):
+
+        if verbose:
+            try:
+                from tqdm import tqdm
+                iterator = tqdm(range(n_iter), desc="BP Iteration")
+            except ImportError:
+                print("[Graph.run] tqdm not found. Running without progress bar.")
+                iterator = range(n_iter)
+        else:
+            iterator = range(n_iter)
+
+        for t in iterator:
             self.forward()
             self.backward()
             if callback is not None:
                 callback(self, t)
+
 
     def generate_sample(self, rng=None, update_observed: bool = True):
         """

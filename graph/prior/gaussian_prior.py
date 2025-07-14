@@ -8,7 +8,6 @@ from typing import Optional
 class GaussianPrior(Prior):
     def __init__(
         self,
-        mean=0.0,
         var=1.0,
         shape=(1,),
         dtype=np.complex128,
@@ -25,7 +24,6 @@ class GaussianPrior(Prior):
             dtype (np.dtype): Data type.
             precision_mode (str or None): "scalar", "array", or None.
         """
-        self.mean = mean
         self.var = var
         self.precision = 1.0 / var
 
@@ -49,7 +47,7 @@ class GaussianPrior(Prior):
         Generate a sample from CN(mean, var) and set it to the output Wave.
         """
         sample = complex_normal_random_array(self.shape, dtype=self.dtype, rng=rng)
-        sample = np.sqrt(self.var) * sample + self.mean
+        sample = np.sqrt(self.var) * sample
         self.output.set_sample(sample)
 
     def __repr__(self):

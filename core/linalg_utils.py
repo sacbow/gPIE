@@ -249,3 +249,55 @@ def ifft2_centered(x: np.ndarray) -> np.ndarray:
     Centered 2D inverse FFT (with fftshift and ifftshift).
     """
     return np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(x), norm="ortho"))
+
+def masked_random_array(support: np.ndarray, dtype=np.complex128, rng=None):
+    """
+    Generate a random array masked by the given boolean support.
+
+    Args:
+        support (np.ndarray): Boolean mask (True = valid region).
+        dtype (np.dtype): Desired dtype (real or complex).
+        rng (np.random.Generator or None): Random generator.
+
+    Returns:
+        np.ndarray: Array where entries are random in support region, zero elsewhere.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    shape = support.shape
+    full = random_normal_array(shape, dtype=dtype, rng=rng)
+    return np.where(support, full, 0)
+
+import numpy as np
+
+def angular_spectrum_phase_mask(shape, wavelength, distance, dx, dy=None, dtype=np.complex128):
+    """
+    Generate a 2D angular spectrum propagation phase mask.
+
+    This mask represents exp(2πi z √(1/λ² - fx² - fy²)) in the Fourier domain.
+
+    Args:
+        shape (tuple of int): (H, W) image size.
+        wavelength (float): Wavelength in meters.
+        distance (float): Propagation distance (z) in meters.
+        dx (float): Pixel pitch in x-direction (meters).
+        dy (float or None): Pixel pitch in y-direction (defaults to dx).
+        dtype (np.dtype): Output dtype, usually complex.
+
+    Returns:
+        np.ndarray: Complex-valued 2D phase mask (same shape as input).
+    """
+    H, W = shape
+    dy = dx if dy is None else dy
+
+    fx = np.fft.fftfreq(W, d=dx)  # [Hz]
+    fy = np.fft.fftfreq(H, d=dy)
+
+    FX, FY = np.meshgrid(fx, fy)
+    k = 1.0 / wavelength  # spatial frequency
+
+    # Argument under the square root may become negative (evanescent waves)
+    root = np.maximum(0.0, 1.0 / wavelength**2 - FX**2 - FY**2)
+    phase = 2j * np.pi * distance * np.sqrt(root)
+
+    return np.exp(phase).astype(dtype)

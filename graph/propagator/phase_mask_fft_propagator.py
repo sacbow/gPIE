@@ -5,12 +5,28 @@ from graph.wave import Wave
 from core.uncertain_array import UncertainArray as UA
 from core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
 
-
 class PhaseMaskFFTPropagator(Propagator):
+    """
+    FFT-based propagator with a fixed complex-valued phase mask in the Fourier domain.
+
+    This operator performs a linear transformation defined as:
+        y = IFFT2(phase_mask * FFT2(x))
+
+    Such a transformation corresponds to free-space or near-field propagation modeled
+    by the Angular Spectrum Method (ASM), where the phase mask encodes propagation distance.
+
+    It supports scalar and array precision modes, and behaves similarly to
+    a unitary transformation from the inference perspective.
+
+    Args:
+        phase_mask (np.ndarray): Complex-valued 2D phase mask in Fourier domain.
+        precision_mode (str or None): "scalar", "scalar to array", or "array to scalar".
+        dtype (np.dtype): Data type of internal variables (default: np.complex128).
+    """
+
     def __init__(self, phase_mask: np.ndarray, precision_mode: Optional[str] = None, dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
-        self.phase_mask = phase_mask
-        self.phase_mask_conj = np.conj(phase_mask)
+        self.phase_mask = phase_mask  # complex-valued unit-magnitude array
         self.shape = phase_mask.shape
         self._init_rng = None
         self.x_belief = None
@@ -21,9 +37,7 @@ class PhaseMaskFFTPropagator(Propagator):
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for PhaseMaskFFTPropagator: {mode}")
         if self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(
-                f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
-            )
+            raise ValueError(f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'")
         self._precision_mode = mode
 
     @property
@@ -54,21 +68,13 @@ class PhaseMaskFFTPropagator(Propagator):
         if y_wave.precision_mode == "array":
             self._set_precision_mode("scalar to array")
 
-    def apply_U(self, x: np.ndarray) -> np.ndarray:
-        """Apply forward transform: y = Ux = IFFT(phase_mask * FFT(x))"""
-        return ifft2_centered(self.phase_mask * fft2_centered(x))
-
-    def apply_UH(self, y: np.ndarray) -> np.ndarray:
-        """Apply adjoint transform: x = Uᴴy = IFFT(conj(phase_mask) * FFT(y))"""
-        return ifft2_centered(self.phase_mask_conj * fft2_centered(y))
-
     def compute_belief(self):
         x_wave = self.inputs["input"]
         msg_x = self.input_messages.get(x_wave)
         msg_y = self.output_message
 
         if msg_x is None or msg_y is None:
-            raise RuntimeError("Both input and output messages are required to compute belief.")
+            raise RuntimeError("Both input and output messages are required.")
 
         r = msg_x.data
         p = msg_y.data
@@ -76,27 +82,35 @@ class PhaseMaskFFTPropagator(Propagator):
         tau = msg_y._precision
 
         if self._precision_mode == "scalar":
-            Uh_p = self.apply_UH(p)
+            Uh_p = ifft2_centered(self.phase_mask * fft2_centered(p))
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            self.y_belief = UA(self.apply_U(x_mean), dtype=self.dtype, precision=denom)
+            self.y_belief = UA(
+                ifft2_centered(self.phase_mask * fft2_centered(x_mean)),
+                dtype=self.dtype,
+                precision=denom
+            )
 
         elif self._precision_mode == "scalar to array":
-            Ur = self.apply_U(r)
-            denom = gamma + tau
-            y_mean = (gamma / denom) * Ur + (tau / denom) * p
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
-            scalar_prec = reduce_precision_to_scalar(denom)
-            self.x_belief = UA(self.apply_UH(y_mean), dtype=self.dtype, precision=scalar_prec)
+            Ur = fft2_centered(r)
+            HUr = self.phase_mask * Ur
+            y_mean = (gamma / (gamma + tau)) * HUr + (tau / (gamma + tau)) * p
+            self.y_belief = UA(y_mean, dtype=self.dtype, precision=gamma + tau)
+
+            scalar_prec = reduce_precision_to_scalar(gamma + tau)
+            backprop = ifft2_centered(self.phase_mask * fft2_centered(y_mean))
+            self.x_belief = UA(backprop, dtype=self.dtype, precision=scalar_prec)
 
         elif self._precision_mode == "array to scalar":
-            Uh_p = self.apply_UH(p)
+            Uh_p = ifft2_centered(self.phase_mask * fft2_centered(p))
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
+
             scalar_prec = reduce_precision_to_scalar(denom)
-            self.y_belief = UA(self.apply_U(x_mean), dtype=self.dtype, precision=scalar_prec)
+            forward = self.phase_mask * fft2_centered(x_mean)
+            self.y_belief = UA(ifft2_centered(forward), dtype=self.dtype, precision=scalar_prec)
 
         else:
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
@@ -108,6 +122,7 @@ class PhaseMaskFFTPropagator(Propagator):
             msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
         else:
             msg = self.y_belief / self.output_message
+
         self.output.receive_message(self, msg)
 
     def backward(self):
@@ -127,7 +142,7 @@ class PhaseMaskFFTPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        y = self.apply_U(x)
+        y = ifft2_centered(self.phase_mask * fft2_centered(x))
         self.output.set_sample(y)
 
     def __matmul__(self, wave: Wave) -> Wave:
@@ -145,4 +160,4 @@ class PhaseMaskFFTPropagator(Propagator):
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
-        return f"PhaseMaskFFTProp(gen={gen}, mode={self._precision_mode})"
+        return f"PMFFTProp(gen={gen}, mode={self._precision_mode})"

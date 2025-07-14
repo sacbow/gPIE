@@ -42,6 +42,7 @@ class BinaryPropagator(Propagator):
         a, b = inputs
         self.add_input("a", a)
         self.add_input("b", b)
+        self.dtype = a.dtype
 
         output = Wave(a.shape, dtype=self.dtype)
         self.connect_output(output)
@@ -117,6 +118,7 @@ class BinaryPropagator(Propagator):
         a_mode = a_wave.precision_mode
         b_mode = b_wave.precision_mode
 
+
         if z_mode is None:
             return
 
@@ -140,7 +142,10 @@ class BinaryPropagator(Propagator):
                 raise ValueError(
                     "Inconsistent state: output is array but both inputs are scalar."
                 )
-
+            # Case 3 : one of inputs array
+            elif a_mode == "array" or b_mode == "array":
+                return
+            
         raise ValueError(
             f"Unhandled combination in set_precision_mode_backward(): "
             f"a={a_mode}, b={b_mode}, output={z_mode}"
