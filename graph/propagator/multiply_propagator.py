@@ -40,8 +40,8 @@ class MultiplyPropagator(BinaryPropagator):
             raise RuntimeError("Belief not available for forward computation.")
 
         x_m, y_m = x.data, y.data
-        sx2 = 1.0 / x.precision
-        sy2 = 1.0 / y.precision
+        sx2 = 1.0 / x._precision
+        sy2 = 1.0 / y._precision
 
         mu = x_m * y_m
         var = (np.abs(x_m)**2 + sx2) * (np.abs(y_m)**2 + sy2) - np.abs(x_m * y_m)**2
@@ -72,13 +72,13 @@ class MultiplyPropagator(BinaryPropagator):
         abs_y2_plus_var = np.abs(y_q)**2 + sy2
 
         mean_msg = np.conj(y_q) * z_m / abs_y2_plus_var
-        prec_msg = gamma_z * abs_y2_plus_var
+        prec_msg = gamma_z * abs_y2_plus_var #Note : this becomes an array even when the propagator scalar mode
         msg = UA(mean_msg, dtype=self.dtype, precision=prec_msg)
 
         target_wave = self.inputs[exclude]
         msg_in = self.input_messages.get(target_wave)
 
-        if self.precision_mode in ("scalar/array to scalar", "array/scalar to array"):
+        if self.precision_mode in ("scalar/array to scalar", "array/scalar to array", "scalar"):
             if target_wave.precision_mode == "scalar":
                 q_x = (msg * msg_in).as_scalar_precision()
                 return q_x / msg_in, q_x
@@ -105,8 +105,11 @@ class MultiplyPropagator(BinaryPropagator):
 
         else:
             belief = self._compute_forward(self.input_messages)
-            msg = belief / self.output_message if self.output_message is not None else belief
-            z_wave.set_belief(belief)
+            if self.get_output_precision_mode() == "array":
+                msg = belief / self.output_message if self.output_message is not None else belief
+                z_wave.set_belief(belief)
+            else:
+                msg = belief.as_scalar_precision() / self.output_message  if self.output_message is not None else belief
 
         z_wave.receive_message(self, msg)
 
@@ -145,3 +148,4 @@ class MultiplyPropagator(BinaryPropagator):
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
         return f"Mul(gen={gen}, mode={self.precision_mode})"
+
