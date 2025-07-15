@@ -178,6 +178,27 @@ class Wave:
 
         self.belief = combined
         return self.belief
+    
+    def set_belief(self, belief: UncertainArray):
+        """
+        Explicitly set the belief (posterior approximation) for this Wave node.
+
+        This is typically used by factors (e.g., MultiplyPropagator) that compute
+        belief internally due to asymmetric precision modes or variational structure.
+
+        Args:
+            belief (UncertainArray): The belief to assign.
+    
+        Raises:
+            ValueError: If the shape or dtype is incompatible.
+        """
+        if belief.shape != self.shape:
+            raise ValueError(f"Belief shape mismatch: expected {self.shape}, got {belief.shape}")
+        if belief.dtype != self.dtype:
+            raise ValueError(f"Belief dtype mismatch: expected {self.dtype}, got {belief.dtype}")
+    
+        self.belief = belief
+
 
 
     def forward(self):
@@ -260,6 +281,20 @@ class Wave:
         if not isinstance(other, Wave):
             raise TypeError("Can only add Wave to Wave.")
         return AddPropagator() @ (self, other)
+    
+    def __mul__(self, other: "Wave") -> "Wave":
+        """
+        Define Z = X * Y as MultiplyPropagator() @ (X, Y)
+
+        Returns:
+            Wave: The output wave resulting from pointwise multiplication.
+        """
+        from graph.propagator.multiply_propagator import MultiplyPropagator
+
+        if not isinstance(other, Wave):
+            raise TypeError("Can only multiply Wave by Wave.")
+        return MultiplyPropagator() @ (self, other)
+
 
     def __repr__(self):
         label_str = f", label='{self.label}'" if self.label else ""
