@@ -3,15 +3,22 @@ from typing import Optional
 from .base import Propagator
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray as UA
-from core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
+from core.linalg_utils import reduce_precision_to_scalar
 
 
-class PhaseMaskFFTPropagator(Propagator):
-    def __init__(self, phase_mask: np.ndarray, precision_mode: Optional[str] = None, dtype=np.complex128):
+class UnitaryPropagator(Propagator):
+    def __init__(self, U, precision_mode: Optional[str] = None, dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
-        self.phase_mask = phase_mask
-        self.phase_mask_conj = np.conj(phase_mask)
-        self.shape = phase_mask.shape
+
+        if U is None:
+            raise ValueError("Unitary matrix U must be explicitly provided.")
+        self.U = np.asarray(U)
+        self.Uh = U.conj().T
+
+        if self.U.ndim != 2 or self.U.shape[0] != self.U.shape[1]:
+            raise ValueError("U must be a square 2D unitary matrix.")
+
+        self.shape = (self.U.shape[0],)
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
@@ -19,28 +26,24 @@ class PhaseMaskFFTPropagator(Propagator):
     def _set_precision_mode(self, mode: str):
         allowed = ("scalar", "scalar to array", "array to scalar")
         if mode not in allowed:
-            raise ValueError(f"Invalid precision_mode for PhaseMaskFFTPropagator: {mode}")
+            raise ValueError(f"Invalid precision_mode for UnitaryPropagator: {mode}")
         if self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(
-                f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
-            )
+            raise ValueError(f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'")
         self._precision_mode = mode
 
-    @property
-    def precision_mode(self) -> Optional[str]:
-        return self._precision_mode
-
     def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
-        if self._precision_mode in ("scalar", "scalar to array"):
+        if self.precision_mode == "scalar":
             return "scalar"
-        elif self._precision_mode == "array to scalar":
+        elif self.precision_mode == "scalar to array":
+            return "scalar"
+        elif self.precision_mode == "array to scalar":
             return "array"
         return None
 
     def get_output_precision_mode(self) -> Optional[str]:
-        if self._precision_mode in ("scalar", "array to scalar"):
+        if self.precision_mode in ("scalar", "array to scalar"):
             return "scalar"
-        elif self._precision_mode == "scalar to array":
+        elif self.precision_mode == "scalar to array":
             return "array"
         return None
 
@@ -53,14 +56,6 @@ class PhaseMaskFFTPropagator(Propagator):
         y_wave = self.output
         if y_wave.precision_mode == "array":
             self._set_precision_mode("scalar to array")
-
-    def apply_U(self, x: np.ndarray) -> np.ndarray:
-        """Apply forward transform: y = Ux = IFFT(phase_mask * FFT(x))"""
-        return ifft2_centered(self.phase_mask * fft2_centered(x))
-
-    def apply_UH(self, y: np.ndarray) -> np.ndarray:
-        """Apply adjoint transform: x = Uᴴy = IFFT(conj(phase_mask) * FFT(y))"""
-        return ifft2_centered(self.phase_mask_conj * fft2_centered(y))
 
     def compute_belief(self):
         x_wave = self.inputs["input"]
@@ -75,31 +70,31 @@ class PhaseMaskFFTPropagator(Propagator):
         gamma = msg_x._precision
         tau = msg_y._precision
 
-        if self._precision_mode == "scalar":
-            Uh_p = self.apply_UH(p)
+        if self.precision_mode == "scalar":
+            Uh_p = self.Uh @ p
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            self.y_belief = UA(self.apply_U(x_mean), dtype=self.dtype, precision=denom)
+            self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=denom)
 
-        elif self._precision_mode == "scalar to array":
-            Ur = self.apply_U(r)
+        elif self.precision_mode == "scalar to array":
+            Ur = self.U @ r
             denom = gamma + tau
             y_mean = (gamma / denom) * Ur + (tau / denom) * p
             self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
             scalar_prec = reduce_precision_to_scalar(denom)
-            self.x_belief = UA(self.apply_UH(y_mean), dtype=self.dtype, precision=scalar_prec)
+            self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=scalar_prec)
 
-        elif self._precision_mode == "array to scalar":
-            Uh_p = self.apply_UH(p)
+        elif self.precision_mode == "array to scalar":
+            Uh_p = self.Uh @ p
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
             scalar_prec = reduce_precision_to_scalar(denom)
-            self.y_belief = UA(self.apply_U(x_mean), dtype=self.dtype, precision=scalar_prec)
+            self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=scalar_prec)
 
         else:
-            raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
+            raise ValueError(f"Unknown precision_mode: {self.precision_mode}")
 
     def forward(self):
         if self.output_message is None or self.y_belief is None:
@@ -108,6 +103,7 @@ class PhaseMaskFFTPropagator(Propagator):
             msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
         else:
             msg = self.y_belief / self.output_message
+
         self.output.receive_message(self, msg)
 
     def backward(self):
@@ -127,16 +123,17 @@ class PhaseMaskFFTPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        y = self.apply_U(x)
+        y = self.U @ x
         self.output.set_sample(y)
 
     def __matmul__(self, wave: Wave) -> Wave:
-        if wave.ndim != 2:
-            raise ValueError("PhaseMaskFFTPropagator only supports 2D wave input.")
+        if wave.ndim != 1:
+            raise ValueError(f"UnitaryPropagator only supports 1D wave input. Got: {wave.shape}")
 
         self.add_input("input", wave)
-        self._set_generation(wave.generation + 1)
-        self.shape = wave.shape
+        input_gen = wave.generation
+        self._set_generation(input_gen + 1)
+
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
@@ -145,4 +142,4 @@ class PhaseMaskFFTPropagator(Propagator):
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
-        return f"PhaseMaskFFTProp(gen={gen}, mode={self._precision_mode})"
+        return f"UProp(gen={gen}, mode={self.precision_mode})"
