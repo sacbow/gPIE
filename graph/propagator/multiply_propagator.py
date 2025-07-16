@@ -72,13 +72,13 @@ class MultiplyPropagator(BinaryPropagator):
         abs_y2_plus_var = np.abs(y_q)**2 + sy2
 
         mean_msg = np.conj(y_q) * z_m / abs_y2_plus_var
-        prec_msg = gamma_z * abs_y2_plus_var #Note : this becomes an array even when the propagator scalar mode
+        prec_msg = gamma_z * abs_y2_plus_var #Note : this becomes an array
         msg = UA(mean_msg, dtype=self.dtype, precision=prec_msg)
 
         target_wave = self.inputs[exclude]
         msg_in = self.input_messages.get(target_wave)
 
-        if self.precision_mode in ("scalar/array to scalar", "array/scalar to array", "scalar"):
+        if self.precision_mode in ("scalar/array to array", "array/scalar to array"):
             if target_wave.precision_mode == "scalar":
                 q_x = (msg * msg_in).as_scalar_precision()
                 return q_x / msg_in, q_x
@@ -105,11 +105,8 @@ class MultiplyPropagator(BinaryPropagator):
 
         else:
             belief = self._compute_forward(self.input_messages)
-            if self.get_output_precision_mode() == "array":
-                msg = belief / self.output_message if self.output_message is not None else belief
-                z_wave.set_belief(belief)
-            else:
-                msg = belief.as_scalar_precision() / self.output_message  if self.output_message is not None else belief
+            msg = belief / self.output_message if self.output_message is not None else belief
+            z_wave.set_belief(belief)
 
         z_wave.receive_message(self, msg)
 
@@ -141,10 +138,56 @@ class MultiplyPropagator(BinaryPropagator):
 
         if a is None or b is None:
             raise RuntimeError("Input sample(s) not set for MultiplyPropagator.")
-
         self.output.set_sample(a * b)
+    
+    #precision related logics
+    def _set_precision_mode(self, mode: str):
+        """
+        Set precision mode for MultiplyPropagator, disallowing scalar-to-scalar mode.
 
+        Allowed modes:
+            - "array"
+            - "scalar/array to array"
+            - "array/scalar to array"
+            - "scalar/scalar to array" (optional: experimental)
+        """
+        allowed = (
+            "array",
+            "scalar/array to array",
+            "array/scalar to array",
+            # "scalar/scalar to array"  # Optional: include if needed for experiments
+        )
+        if mode not in allowed:
+            raise ValueError(f"Invalid precision_mode for MultiplyPropagator: '{mode}'")
 
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict in MultiplyPropagator: "
+                f"existing='{self._precision_mode}', requested='{mode}'"
+            )
+
+        self._precision_mode = mode
+    
+    def set_precision_mode_forward(self):
+        a_mode = self.inputs["a"].precision_mode
+        b_mode = self.inputs["b"].precision_mode
+
+        if a_mode == "scalar" and b_mode == "scalar":
+            raise ValueError("MultiplyPropagator does not support scalar × scalar mode.")
+        if a_mode == "scalar":
+            self._set_precision_mode("scalar/array to array")
+        elif b_mode == "scalar":
+            self._set_precision_mode("array/scalar to array")
+        else:
+            self._set_precision_mode("array")
+    
+    def get_output_precision_mode(self) -> str:
+        return "array"
+    
+    def set_precision_mode_backward(self):
+        # Precision mode is already fully determined during forward pass.
+        pass
+    
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
         return f"Mul(gen={gen}, mode={self.precision_mode})"
