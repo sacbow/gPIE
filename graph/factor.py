@@ -1,75 +1,84 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Union
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray
+from core.types import PrecisionMode
+
 
 class Factor(ABC):
     """
     Abstract base class for factor nodes in the Computational Factor Graph (CFG).
 
-    A Factor represents a transformation or probabilistic dependency between one or more 
-    input Wave nodes and (optionally) an output Wave. Subclasses define the actual 
-    message-passing logic for belief propagation.
+    A `Factor` represents a probabilistic dependency or transformation between one or more
+    latent variables (`Wave` nodes). It handles message passing for approximate inference
+    using Expectation Propagation (EP).
 
-    Typical subclasses include:
-    - Prior: Defines a distribution over a latent variable (only output).
-    - Propagator: Connects input(s) to output via forward model.
-    - Measurement: Observes an input wave (no output).
+    There are three typical subclasses:
+        - Prior: Defines a prior distribution over a single variable (output only).
+        - Propagator: Maps one or more input variables to an output via a forward model.
+        - Measurement: Applies likelihood constraint to an observed variable (input only).
 
     Attributes:
-        inputs (dict): Mapping of input name → Wave instance.
-        output (Wave or None): The output variable (if any).
-        input_messages (dict): Messages received from input Waves.
-        output_message (UncertainArray or None): Message from the output Wave.
-        _generation (int or None): Scheduling index used during compilation.
-        _precision_mode (str or None): "scalar" or "array", inferred during graph compilation.
+        inputs (dict[str, Wave]):
+            Mapping from input names (e.g., "a", "x") to connected Wave nodes.
+        output (Optional[Wave]):
+            Output wave connected to this factor. May be None.
+        input_messages (dict[Wave, Optional[UncertainArray]]):
+            Received messages from each input wave.
+        output_message (Optional[UncertainArray]):
+            Message received from the output wave.
+        _generation (Optional[int]):
+            Scheduling index (topological depth in the graph).
+        _precision_mode (Optional[PrecisionMode]):
+            Precision mode required by this factor (e.g., scalar or array).
     """
 
     def __init__(self):
-        """
-        Initialize an abstract Factor node in the factor graph.
-
-        Each factor connects one or more input Waves to an optional output Wave,
-        and passes messages between them during belief propagation.
-        Subclasses (e.g., Prior, Propagator, Measurement) must implement forward/backward logic.
-        """
-
         # Connected wave nodes
-        self.inputs = dict()               # str -> Wave
-        self.output = None                 # Single output wave or None
+        self.inputs: dict[str, Wave] = {}
+        self.output: Optional[Wave] = None
 
-        # Messages from/to wave nodes
-        self.input_messages = dict()       # Wave -> UncertainArray
-        self.output_message = None         # UncertainArray or None
+        # Messages
+        self.input_messages: dict[Wave, Optional[UncertainArray]] = {}
+        self.output_message: Optional[UncertainArray] = None
 
-        # Optional scheduling index
-        self._generation = None
-
-        #precision mode
-        self._precision_mode: Optional[str] = None  # 'scalar' or 'array'
+        # Scheduling & precision
+        self._generation: Optional[int] = None
+        self._precision_mode: Optional[PrecisionMode] = None
 
     def _set_generation(self, gen: int):
-        """Assign generation index for scheduling."""
+        """Set scheduling index (used during graph compilation)."""
         self._generation = gen
-    
+
     @property
-    def precision_mode(self) -> Optional[str]:
-        """Public accessor for precision mode."""
+    def generation(self) -> Optional[int]:
+        """Return topological scheduling index."""
+        return self._generation
+
+    @property
+    def precision_mode(self) -> Optional[PrecisionMode]:
+        """Return the current precision mode of the factor (scalar or array)."""
         return self._precision_mode
-    
-    # Subclasses (e.g. Propagator) may override this method to allow additional modes.
-    def _set_precision_mode(self, mode: str):
+
+    def _set_precision_mode(self, mode: Union[str, PrecisionMode]):
         """
-        Set the precision mode for the factor.
+        Set the precision mode for the factor, with consistency checks.
 
         Args:
-            mode (str): Either "scalar" or "array".
+            mode (str | PrecisionMode): Either a string ("scalar", "array") or Enum value.
 
         Raises:
-            ValueError: If conflicting mode is already set.
+            ValueError: If the string is invalid or mode conflicts with existing value.
+            TypeError: If input is not a valid type.
         """
-        if mode not in ("scalar", "array"):
-            raise ValueError(f"Invalid precision mode for Factor: {mode}")
+        if isinstance(mode, str):
+            try:
+                mode = PrecisionMode(mode)
+            except ValueError:
+                raise ValueError(f"Invalid precision mode string: {mode}")
+
+        if not isinstance(mode, PrecisionMode):
+            raise TypeError(f"Invalid precision mode type: {type(mode)}")
 
         if self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
@@ -79,69 +88,85 @@ class Factor(ABC):
 
         self._precision_mode = mode
 
-    
-    def get_output_precision_mode(self) -> Optional[str]:
-        """Return precision mode of the output Wave based on this factor's constraints."""
-        return None  # override in subclass
-
-    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
-        """Return required mode for a specific input Wave."""
-        return None  # override in subclass
-
-    def set_precision_mode_forward(self):
-        """Propagate from input to output (default: no-op)."""
-        pass  # override in subclass
-
-    def set_precision_mode_backward(self):
-        """Propagate from output to input (default: no-op)."""
-        pass  # override in subclass
-
-    
-    def add_input(self, name: str, wave: Wave):
+    def get_output_precision_mode(self) -> Optional[PrecisionMode]:
         """
-        Connect a wave as input to this factor.
+        Override in subclasses to specify required precision mode for the output Wave.
+
+        Returns:
+            PrecisionMode or None
+        """
+        return None
+
+    def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
+        """
+        Override in subclasses to specify required precision mode for a given input Wave.
 
         Args:
-            name (str): Name/key for this input (e.g., "input", "a", "b", etc.)
-            wave (Wave): The Wave instance to connect.
+            wave (Wave): Input wave to query.
+
+        Returns:
+            PrecisionMode or None
+        """
+        return None
+
+    def set_precision_mode_forward(self):
+        """
+        Optionally propagate precision mode forward: from inputs to output.
+
+        Used during graph compilation to coordinate Wave-Factor consistency.
+        Override in subclasses.
+        """
+        pass
+
+    def set_precision_mode_backward(self):
+        """
+        Optionally propagate precision mode backward: from output to inputs.
+
+        Used during graph compilation to coordinate Wave-Factor consistency.
+        Override in subclasses.
+        """
+        pass
+
+    def add_input(self, name: str, wave: Wave):
+        """
+        Connect an input Wave to this factor under a given name.
+
+        Args:
+            name (str): Name/key to refer to this input (e.g., "x", "lhs").
+            wave (Wave): Wave instance to connect.
         """
         self.inputs[name] = wave
         self.input_messages[wave] = None
         wave.add_child(self)
-    
+
     def connect_output(self, wave: Wave):
         """
         Connect a Wave as the output of this factor.
-        Handles bidirectional linking and generation scheduling.
+
+        This sets the parent/child links and also updates generation indices.
 
         Args:
-            wave (Wave): The Wave object to connect as output.
+            wave (Wave): Output Wave node to connect.
         """
-        # Set as this factor's output
         self.output = wave
-
-        # Determine generation index: max of all input generations + 1
-        max_gen = max((w._generation for w in self.inputs.values()
-               if w is not None and w._generation is not None), default=0)
-
+        max_gen = max(
+            (w._generation for w in self.inputs.values() if w._generation is not None),
+            default=0
+        )
         self._set_generation(max_gen + 1)
-
-        # Set wave's generation accordingly
         wave._set_generation(self._generation + 1)
-
-        # Register this factor as the parent of the wave
         wave.set_parent(self)
 
     def receive_message(self, wave: Wave, message: UncertainArray):
         """
-        Receive a message from a connected wave and store it.
+        Receive a message from a connected wave.
 
         Args:
-            wave (Wave): Sender of the message.
-            message (UncertainArray): Incoming message.
+            wave (Wave): The sender Wave.
+            message (UncertainArray): The message to store.
 
         Raises:
-            ValueError: If the wave is not connected to this factor.
+            ValueError: If wave is not connected to this factor.
         """
         if wave in self.inputs.values():
             self.input_messages[wave] = message
@@ -149,40 +174,10 @@ class Factor(ABC):
             self.output_message = message
         else:
             raise ValueError("Received message from unconnected Wave.")
-    
+
     def generate_sample(self):
         """
-        Generate and set sample on the output Wave.
-        Should be overridden by Prior and Propagator subclasses.
-        """
-        raise NotImplementedError("generate_sample not implemented for this Factor")
-    
-    @property
-    def generation(self):
-        return self._generation
+        Generate a sample on the output Wave (if applicable).
 
-    @abstractmethod
-    def forward(self):
+        Subclasses like `Prior` or `Propagator`
         """
-        Send message(s) from this factor to its output wave.
-        Should call output.receive_message(self, message).
-        """
-        pass
-
-    @abstractmethod
-    def backward(self):
-        """
-        Send message(s) from this factor to its input wave(s).
-        Should call input.receive_message(self, message).
-        """
-        pass
-
-    def __repr__(self):
-        """
-        Return a concise string representation for visualization and debugging.
-        Example: SparsePrior(gen=1)
-        """
-        cls = type(self).__name__
-        gen = self._generation if self._generation is not None else "-"
-        return f"{cls}(gen={gen})"
-
