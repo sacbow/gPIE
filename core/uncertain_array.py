@@ -1,64 +1,53 @@
+from __future__ import annotations
+
+from typing import Union, Optional, Literal, overload
+from numpy.typing import NDArray
 import numpy as np
+
 from .linalg_utils import complex_normal_random_array, reduce_precision_to_scalar, random_normal_array
+
+# Type aliases
+ArrayLike = Union[NDArray[np.complex128], NDArray[np.float64]]
+Precision = Union[float, NDArray[np.float64]]
+PrecisionMode = Literal["scalar", "array"]
+
 
 class UncertainArray:
     """
-    A numerical array with associated elementwise or scalar precision,
+    A numerical array with associated scalar or elementwise precision,
     representing a belief/message in a probabilistic inference model.
-
-    This class models complex (or real) multivariate Gaussian beliefs over arrays,
-    where each value is represented with a mean (`data`) and an associated precision
-    (inverse variance), which can be either a scalar or an array matching the shape of `data`.
-
-    Core functionality includes:
-        - Combining beliefs via additive precision (`__mul__`)
-        - Subtracting messages to form residuals (`__truediv__`)
-        - Damping (convex interpolation of mean and standard deviation)
-        - Precision scalarization for approximate factor inference
-
-    Used throughout the factor graph framework to pass messages between
-    Wave and Factor nodes during belief propagation.
-
-    Attributes:
-        data (np.ndarray): Mean values of the belief (real or complex array).
-        precision (Union[float, np.ndarray]): Scalar or elementwise precision.
-        dtype (np.dtype): Data type of the array (typically np.complex128).
-        shape (tuple): Shape of the data array (excluding batch).
-        ndim (int): Number of dimensions of the data array.
-
-    Notes:
-        - Internally, precision is stored as `_precision`, which can be a float or ndarray.
-        - All arithmetic operations promote precision to elementwise form as needed.
-        - If precision is scalar, it is broadcasted for computation but not stored as array.
     """
 
-    def __init__(self, array, dtype=np.complex128, precision=1.0): 
-        self.data = np.asarray(array, dtype=dtype)
-        self.dtype = self.data.dtype
+    def __init__(
+        self,
+        array: ArrayLike,
+        dtype: np.dtype = np.complex128,
+        precision: Precision = 1.0
+    ) -> None:
+        """
+        Initialize an UncertainArray representing a belief/message.
+
+        Args:
+            array: Mean values of the belief (real or complex).
+            dtype: Data type of the array (default: np.complex128).
+            precision: Either a scalar precision (float) or elementwise precision (ndarray).
+                    If scalar, the same precision is applied to all elements.
+
+        Raises:
+            ValueError: If precision is non-positive or shape mismatch occurs.
+        """
+        self.data: NDArray = np.asarray(array, dtype=dtype)
+        self.dtype: np.dtype = self.data.dtype
+        self._scalar_precision: bool = np.isscalar(precision)
         self._set_precision_internal(precision)
-    
-    def is_real(self):
-        """Return True if the array has a real-valued dtype (e.g., float32/64)."""
+
+    def is_real(self) -> bool:
         return np.issubdtype(self.dtype, np.floating)
 
-    def is_complex(self):
-        """Return True if the array has a complex-valued dtype (e.g., complex64/128)."""
+    def is_complex(self) -> bool:
         return np.issubdtype(self.dtype, np.complexfloating)
 
-    def astype(self, dtype):
-        """
-        Return a new UncertainArray with data cast to the specified dtype.
-
-        The precision is preserved. A warning is issued if casting from complex
-        to real would discard a non-negligible imaginary part.
-    
-        Args:
-            dtype (np.dtype): Target data type (e.g., np.float64, np.complex128).
-
-        Returns:
-            UncertainArray: Converted array with same shape and precision.
-        """
-
+    def astype(self, dtype: np.dtype) -> UncertainArray:
         if np.issubdtype(dtype, np.floating) and self.is_complex():
             if not np.allclose(self.data.imag, 0):
                 import warnings
@@ -69,189 +58,246 @@ class UncertainArray:
             precision=self._precision
         )
 
-    def _set_precision_internal(self, value):
-        """Internal method to set precision as scalar or array."""
+    def _set_precision_internal(self, value: Precision) -> None:
         if np.isscalar(value):
             if value <= 0:
                 raise ValueError("Precision must be positive.")
-            self._precision = float(value)
+            self._precision: Precision = float(value)
         else:
-            # convert if not already correct dtype
-            if isinstance(value, np.ndarray) and value.dtype == np.float64:
-                arr = value
-            else:
-                arr = np.asarray(value, dtype=np.float64)
-            #check shape
+            arr: NDArray[np.float64] = (
+                value if isinstance(value, np.ndarray) and value.dtype == np.float64
+                else np.asarray(value, dtype=np.float64)
+            )
             if arr.shape != self.data.shape:
                 raise ValueError("Precision array must match data shape.")
             self._precision = arr
 
-    @property
-    def precision(self):
-        """Return precision as array (broadcasted if scalar)."""
-        if np.isscalar(self._precision):
+    @overload
+    def precision(self, raw: Literal[False] = False) -> NDArray[np.float64]: ...
+    @overload
+    def precision(self, raw: Literal[True]) -> Precision: ...
+
+    def precision(self, raw: bool = False) -> Union[NDArray[np.float64], Precision]:
+        """
+        Access the precision (inverse variance) associated with this array.
+
+        Args:
+            raw: 
+                - If False (default), returns a broadcasted ndarray matching `data.shape`.
+                - If True, returns the raw internal value (`float` or `ndarray`) directly.
+
+        Returns:
+            Either a broadcasted precision array (when raw=False),
+            or the internal precision representation (when raw=True).
+        """
+        if raw:
+            return self._precision
+        if self._scalar_precision:
             return np.full(self.shape, self._precision, dtype=np.float64)
         return self._precision
 
     @property
-    def shape(self):
-        """Return the shape of the data array."""
-        return self.data.shape
-    
+    def precision_mode(self) -> PrecisionMode:
+        """
+        Return the precision mode of this array.
+
+        - 'scalar': single global precision used for all elements
+        - 'array': elementwise precision used (per value)
+
+        This property is determined automatically during construction.
+        """
+        return "scalar" if self._scalar_precision else "array"
+
     @property
-    def ndim(self):
-        """Return the number of dimensions of the data array."""
+    def shape(self) -> tuple[int, ...]:
+        return self.data.shape
+
+    @property
+    def ndim(self) -> int:
         return self.data.ndim
 
     @classmethod
-    def random(cls, shape, dtype=np.complex128, rng=None, precision=1.0):
-        """
-        Create a random UncertainArray with Gaussian-distributed complex or real values.
-
-        Args:
-            shape (tuple): Shape of the array.
-            dtype (np.dtype): Data type (default: np.complex128).
-            rng (np.random.Generator or None): Optional RNG for reproducibility.
-            precision (float or ndarray): Initial precision (scalar or array).
-
-        Returns:
-            UncertainArray: Randomly initialized instance.
-        """
+    def random(
+        cls,
+        shape: tuple[int, ...],
+        dtype: np.dtype = np.complex128,
+        rng: Optional[np.random.Generator] = None,
+        precision: float = 1.0,
+        scalar_precision: bool = True
+    ) -> UncertainArray:
         rng = np.random.default_rng() if rng is None else rng
         data = random_normal_array(shape, dtype=dtype, rng=rng)
-        return cls(data, dtype=dtype, precision=precision)
-    
+
+        if scalar_precision:
+            return cls(data, dtype=dtype, precision=precision)
+        else:
+            arr_precision = np.full(shape, precision, dtype=np.float64)
+            return cls(data, dtype=dtype, precision=arr_precision)
+
+
     @classmethod
-    def zeros(cls, shape, dtype=np.complex128, precision=1.0):
+    def zeros(
+        cls,
+        shape: tuple[int, ...],
+        dtype: np.dtype = np.complex128,
+        precision: float = 1.0,
+        scalar_precision: bool = True
+    ) -> UncertainArray:
         """
-        Create an UncertainArray filled with zeros and a specified precision.
+        Create an UncertainArray filled with zeros and specified precision.
 
         Args:
-            shape (tuple): Shape of the array.
-            dtype (np.dtype): Data type of the values (default: np.complex128).
-            precision (float or ndarray): Initial precision (scalar or array).
+            shape: Shape of the array.
+            dtype: Data type (default: np.complex128).
+            precision: Precision value (float). Used for all entries.
+            scalar_precision: If True, use scalar precision. If False, broadcast as array.
 
         Returns:
-            UncertainArray: Zero-initialized instance.
+            UncertainArray with zero data and specified precision mode.
         """
         data = np.zeros(shape, dtype=dtype)
-        return cls(data, dtype=dtype, precision=precision)
 
-    
-    def __mul__(self, other):
+        if scalar_precision:
+            return cls(data, dtype=dtype, precision=precision)
+        else:
+            arr_precision = np.full(shape, precision, dtype=np.float64)
+            return cls(data, dtype=dtype, precision=arr_precision)
+
+
+    def __mul__(self, other: UncertainArray) -> UncertainArray:
         """
-        Combine two UncertainArrays using additive precision rule.
+        Combine two UncertainArrays under the additive precision model.
 
-        This operation corresponds to fusing two independent Gaussian beliefs.
-        The resulting data is the weighted average, and the precision is summed.
+        This corresponds to fusing two independent Gaussian beliefs:
+            posterior_precision = p1 + p2
+            posterior_mean = (p1 * m1 + p2 * m2) / (p1 + p2)
+
+        Args:
+            other: Another UncertainArray with the same dtype and shape.
 
         Returns:
-            UncertainArray: The fused belief.
+            A new UncertainArray representing the combined belief.
+
+        Raises:
+            TypeError: If dtype mismatch occurs.
         """
-        if not isinstance(other, UncertainArray):
-            raise TypeError("Multiplication only supported between UncertainArrays.")
+
         if self.dtype != other.dtype:
             raise TypeError(f"Dtype mismatch: {self.dtype} vs {other.dtype}")
 
         d1, d2 = self.data, other.data
-        p1, p2 = self._precision, other._precision
+        p1, p2 = self.precision(raw=True), other.precision(raw=True)
         precision_sum = p1 + p2
         result_data = (p1 * d1 + p2 * d2) / precision_sum
-        
+
         return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum)
 
-
-    def __truediv__(self, other):
+    def __truediv__(self, other: UncertainArray) -> UncertainArray:
         """
-        Compute the 'difference' between two UncertainArrays under
-        the additive precision model.
+        Subtract a message from this UncertainArray under the additive precision model.
 
-        This corresponds to computing the residual message in belief propagation.
-        It "removes" the contribution of `other` from `self`.
+        This corresponds to computing a residual message in EP-style belief propagation:
+            residual_precision = p1 - p2
+            residual_mean = (p1 * m1 - p2 * m2) / (p1 - p2)
+
+        For numerical stability:
+            - Precision differences are clipped to be positive.
+            - Scalar vs. array precision modes are handled accordingly.
+
+        Args:
+            other: The message to subtract (same dtype and shape).
 
         Returns:
-            UncertainArray: The residual message.
-        
-        Note:
-        The precision subtraction may lead to non-positive values; we clip the result
-        to ensure numerical stability and avoid division by zero.
+            A new UncertainArray representing the residual message.
+
+        Raises:
+            TypeError: If dtype mismatch occurs.
         """
-        if not isinstance(other, UncertainArray):
-            raise TypeError("Division only supported between UncertainArrays.")
+
         if self.dtype != other.dtype:
             raise TypeError(f"Dtype mismatch: {self.dtype} vs {other.dtype}")
 
         d1, d2 = self.data, other.data
-        p1, p2 = self._precision, other._precision
+        p1, p2 = self.precision(raw=True), other.precision(raw=True)
 
-        if np.isscalar(p1) and np.isscalar(p2):
+        if self._scalar_precision and other._scalar_precision:
             precision_diff = p1 - p2
-            precision_safe = max(precision_diff, 1.0)
+            precision_safe = max(precision_diff, 1e-12)
             result_data = (p1 * d1 - p2 * d2) / precision_safe
         else:
-            p1_arr = self.precision
-            p2_arr = other.precision
+            p1_arr = self.precision()
+            p2_arr = other.precision()
             precision_diff = p1_arr - p2_arr
             precision_safe = np.maximum(precision_diff, 1e-12)
             result_data = (p1_arr * d1 - p2_arr * d2) / precision_safe
 
         return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)
-        
-    def damp_with(self, other, alpha: float) -> "UncertainArray":
-        """
-        Return a damped version of self, interpolated with another UA instance.
 
-        This method performs convex interpolation of the mean and the standard deviation
-        (not precision) using the given damping coefficient alpha.
+    def damp_with(self, other: UncertainArray, alpha: float) -> UncertainArray:
+        """
+        Apply damping between this UncertainArray and another one.
+
+        This performs convex interpolation of both:
+            - the mean values (data)
+            - the **standard deviation** (not precision)
+
+        The resulting UncertainArray reflects a softened update,
+        useful for stabilizing message updates in iterative algorithms
+        like EP or VAMP-style inference.
 
         Args:
-            other (UncertainArray): Target UA to interpolate towards.
-            alpha (float): Interpolation factor in [0, 1].
+            other: Target UncertainArray to interpolate toward.
+            alpha: Damping coefficient in [0, 1]; 0 = keep self, 1 = replace with other.
 
         Returns:
-            UncertainArray: Damped instance between self and other.
+            A new UncertainArray with damped mean and standard deviation.
+
+        References:
+            - Subrata Sarkar, Rizwan Ahmad, Philip Schniter,
+            "MRI Image Recovery using Damped Denoising Vector AMP",
+            ICASSP 2021. https://doi.org/10.1109/ICASSP39728.2021.9415050
         """
 
-        if not isinstance(other, UncertainArray):
-            raise TypeError("Damping only supported between UncertainArray instances.")
         if self.shape != other.shape:
-            raise ValueError("UncertainArrays must have the same shape to apply damping.")
+            raise ValueError("Shape mismatch for damping.")
         if not (0.0 <= alpha <= 1.0):
-            raise ValueError("Damping coefficient alpha must be between 0 and 1.")
+            raise ValueError("Alpha must be in [0, 1].")
 
         damped_data = (1 - alpha) * self.data + alpha * other.data
 
-        p1 = self._precision
-        p2 = other._precision
-
-        std1 = np.sqrt(1.0 / p1)
-        std2 = np.sqrt(1.0 / p2)
+        std1 = np.sqrt(1.0 / self.precision(raw=True))
+        std2 = np.sqrt(1.0 / other.precision(raw=True))
         damped_std = (1 - alpha) * std1 + alpha * std2
         damped_precision = 1.0 / (damped_std ** 2)
 
-        return UncertainArray(damped_data, dtype=self.data.dtype, precision=damped_precision)
-    
-    def as_scalar_precision(self) -> "UncertainArray":
-        """
-        Return a copy of the current UA with precision replaced by a single scalar value.
+        return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision)
 
-        This is used in certain approximate inference scenarios (e.g., in Sparse Prior),
-        where a single global precision is needed for efficiency or model consistency.
+    def as_scalar_precision(self) -> UncertainArray:
+        """
+        Convert this UncertainArray to scalar precision mode.
+
+        This method reduces an elementwise precision array into a single scalar precision
+        using the harmonic mean of variances:
+            1 / mean(1 / p_i)
+
+        This is useful for approximate inference algorithms that assume global precision,
+        such as SparsePrior or when simplifying updates for efficiency.
 
         Returns:
-            UncertainArray: New instance with same data and scalar precision.
+            A new UncertainArray with the same mean values but scalar precision.
+
+        Note:
+            If the array is already in scalar mode, self is returned unchanged.
         """
 
-        if np.isscalar(self._precision):
+        if self._scalar_precision:
             return self
-        else:
-            scalar_prec = reduce_precision_to_scalar(self._precision)
-            return UncertainArray(self.data, dtype=self.data.dtype, precision=scalar_prec)
+        scalar_prec = reduce_precision_to_scalar(self._precision)
+        return UncertainArray(self.data, dtype=self.dtype, precision=scalar_prec)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
-        Return a string representation showing the array shape
-        and whether precision is scalar or array-valued.
+        Return a string summary of the UncertainArray including shape and precision mode.
+        Example: 'UA(shape=(32, 32), precision=array)'
         """
-        return f"UA(shape={self.shape}, precision={'scalar' if np.isscalar(self._precision) else 'array'})"
-
+        return f"UA(shape={self.shape}, precision={self.precision_mode})"
