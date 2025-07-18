@@ -3,6 +3,7 @@ from typing import Optional
 from .base import Propagator
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray as UA
+from core.types import PrecisionMode
 
 
 class PhaseMaskPropagator(Propagator):
@@ -25,58 +26,58 @@ class PhaseMaskPropagator(Propagator):
         self.phase_mask = phase_mask
         self.shape = phase_mask.shape
 
-    def _set_precision_mode(self, mode: str):
+    def _set_precision_mode(self, mode: str | PrecisionMode) -> None:
         """
-        Internal setter with consistency checking.
+        Set the precision mode for this propagator with type-safe handling.
+
+        Args:
+            mode: Either a string or a PrecisionMode enum.
+
+        Raises:
+            ValueError: If the mode is invalid or conflicts with previously set mode.
         """
-        if mode not in ("scalar", "array"):
+        if isinstance(mode, str):
+            mode = PrecisionMode(mode)
+
+        if mode.value not in ("scalar", "array"):
             raise ValueError(f"Invalid precision mode for PhaseMaskPropagator: {mode}")
+
         if self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
                 f"Precision mode conflict for PhaseMaskPropagator: "
                 f"existing='{self._precision_mode}', requested='{mode}'"
             )
+
         self._precision_mode = mode
 
-    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
-        return self.precision_mode
+    def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
+        return self._precision_mode
 
-    def get_output_precision_mode(self) -> Optional[str]:
-        return self.precision_mode
+    def get_output_precision_mode(self) -> Optional[PrecisionMode]:
+        return self._precision_mode
 
     def set_precision_mode_forward(self):
-        """
-        Propagate precision from input wave to self.
-        """
-        mode = self.inputs["input"].precision_mode
+        mode = self.inputs["input"].precision_mode_enum
         if mode is not None:
-            self._set_precision_mode(mode)
+            self._set_precision_mode(mode.value)
 
     def set_precision_mode_backward(self):
-        """
-        Propagate precision from output wave to self.
-        """
-        mode = self.output.precision_mode
+        mode = self.output.precision_mode_enum
         if mode is not None:
-            self._set_precision_mode(mode)
+            self._set_precision_mode(mode.value)
 
     def _compute_forward(self, incoming: dict[str, UA]) -> UA:
-        """
-        Forward message: multiply input by phase mask (component-wise).
-        """
         ua = incoming["input"]
-        return UA(ua.data * self.phase_mask, dtype=ua.dtype, precision=ua._precision)
+        data = ua.data.astype(self.dtype, copy=False)
+        result = data * self.phase_mask
+        return UA(result, dtype=self.dtype, precision=ua._precision)
 
     def _compute_backward(self, outgoing: UA, exclude: str = None) -> UA:
-        """
-        Backward message: divide by phase mask (component-wise inverse).
-        """
-        return UA(outgoing.data / self.phase_mask, dtype=outgoing.dtype, precision=outgoing._precision)
+        data = outgoing.data.astype(self.dtype, copy=False)
+        result = data / self.phase_mask
+        return UA(result, dtype=self.dtype, precision=outgoing._precision)
 
     def __matmul__(self, wave: Wave) -> Wave:
-        """
-        Connect this propagator to a Wave using @ operator.
-        """
         if wave.shape != self.shape:
             raise ValueError("Input wave shape does not match phase mask shape.")
 
@@ -90,12 +91,10 @@ class PhaseMaskPropagator(Propagator):
         return self.output
 
     def generate_sample(self, rng):
-        """
-        Generate output sample by applying the phase mask to input sample.
-        """
         x = self.inputs["input"].get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
+        x = x.astype(self.dtype, copy=False)
         self.output.set_sample(x * self.phase_mask)
 
     def __repr__(self):

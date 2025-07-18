@@ -4,10 +4,11 @@ from .base import Propagator
 from graph.wave import Wave
 from core.uncertain_array import UncertainArray as UA
 from core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
+from core.types import PrecisionMode
 
 
 class FFT2DPropagator(Propagator):
-    def __init__(self, shape = None, precision_mode: Optional[str] = None, dtype=np.complex128):
+    def __init__(self, shape=None, precision_mode: Optional[PrecisionMode] = None, dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
         self.shape = shape
         self._init_rng = None
@@ -19,37 +20,41 @@ class FFT2DPropagator(Propagator):
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for FFT2DPropagator: {mode}")
         if self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(
-                f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
-            )
+            raise ValueError(f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'")
         self._precision_mode = mode
+
+    @property
+    def precision_mode_enum(self) -> Optional[PrecisionMode]:
+        if self._precision_mode is None:
+            return None
+        return PrecisionMode(self._precision_mode)
 
     @property
     def precision_mode(self) -> Optional[str]:
         return self._precision_mode
 
-    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
+    def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
         if self._precision_mode in ("scalar", "scalar to array"):
-            return "scalar"
+            return PrecisionMode.SCALAR
         elif self._precision_mode == "array to scalar":
-            return "array"
+            return PrecisionMode.ARRAY
         return None
 
-    def get_output_precision_mode(self) -> Optional[str]:
+    def get_output_precision_mode(self) -> Optional[PrecisionMode]:
         if self._precision_mode in ("scalar", "array to scalar"):
-            return "scalar"
+            return PrecisionMode.SCALAR
         elif self._precision_mode == "scalar to array":
-            return "array"
+            return PrecisionMode.ARRAY
         return None
 
     def set_precision_mode_forward(self):
         x_wave = self.inputs["input"]
-        if x_wave.precision_mode == "array":
+        if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode("array to scalar")
 
     def set_precision_mode_backward(self):
         y_wave = self.output
-        if y_wave.precision_mode == "array":
+        if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode("scalar to array")
 
     def compute_belief(self):
@@ -59,6 +64,9 @@ class FFT2DPropagator(Propagator):
 
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required to compute belief.")
+
+        if not np.issubdtype(msg_x.data.dtype, np.complexfloating):
+            msg_x = msg_x.astype(np.complex128)
 
         r = msg_x.data
         p = msg_y.data
@@ -98,7 +106,6 @@ class FFT2DPropagator(Propagator):
             msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
         else:
             msg = self.y_belief / self.output_message
-
         self.output.receive_message(self, msg)
 
     def backward(self):
