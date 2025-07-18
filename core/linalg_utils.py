@@ -65,7 +65,7 @@ def random_normal_array(shape, dtype=np.complex128, rng=None):
     if np.issubdtype(dtype, np.complexfloating):
         real = rng.normal(size=shape)
         imag = rng.normal(size=shape)
-        return (real + 1j * imag).astype(dtype)
+        return ((real + 1j * imag)/np.sqrt(2)).astype(dtype)
     elif np.issubdtype(dtype, np.floating):
         return rng.normal(size=shape).astype(dtype)
     else:

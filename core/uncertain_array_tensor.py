@@ -4,7 +4,8 @@ from typing import List, Union, Literal
 from numpy.typing import NDArray
 import numpy as np
 
-from core.uncertain_array import UncertainArray, Precision
+from core.uncertain_array import UncertainArray
+from core.types import PrecisionMode
 
 
 class UncertainArrayTensor:
@@ -69,7 +70,7 @@ class UncertainArrayTensor:
         self.shape: tuple[int, ...] = data.shape[1:]
     
     @property
-    def precision_mode(self) -> Literal["scalar", "array"]:
+    def precision_mode(self) -> PrecisionMode:
         """
         Return the precision mode of the tensor: either 'scalar' or 'array'.
 
@@ -79,7 +80,7 @@ class UncertainArrayTensor:
         This affects how operations like `combine()` are computed.
         """
 
-        return "scalar" if self._scalar_precision else "array"
+        return PrecisionMode.SCALAR if self._scalar_precision else PrecisionMode.ARRAY
     
     def assert_compatible(self, ua: UncertainArray, idx: int | None = None, context: str = "") -> None:
         """
@@ -135,7 +136,7 @@ class UncertainArrayTensor:
         self.precision[idx] = ua.precision(raw=True)
 
     @classmethod
-    def from_list(cls, ua_list: List[UncertainArray]) -> UncertainArrayTensor:
+    def from_list(cls, ua_list: list[UncertainArray]) -> UncertainArrayTensor:
         """
         Create a UncertainArrayTensor from a list of UncertainArrays.
 
@@ -173,7 +174,7 @@ class UncertainArrayTensor:
         return cls(np.stack(data), np.stack(prec), dtype=ref.dtype)
 
 
-    def to_list(self) -> List[UncertainArray]:
+    def to_list(self) -> list[UncertainArray]:
         """
         Decompose the tensor into a list of UncertainArray instances.
 

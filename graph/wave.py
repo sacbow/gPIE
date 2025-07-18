@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Literal, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
+from core.types import PrecisionMode
 import numpy as np
 from numpy.typing import NDArray
 
@@ -11,7 +12,7 @@ from core.uncertain_array_tensor import UncertainArrayTensor
 if TYPE_CHECKING:
     from graph.propagator.add_propagator import AddPropagator
     from graph.propagator.multiply_propagator import MultiplyPropagator
-    from graph.structure.graph import Factor  # Wave uses this in several places
+    from graph.structure.graph import Factor
 
 
 class Wave:
@@ -19,51 +20,42 @@ class Wave:
     Represents a latent variable node in a Computational Factor Graph (CFG),
     typically used for approximate inference using Expectation Propagation (EP).
 
-    Each Wave node:
-        - Receives a single message from a parent Factor (e.g., prior or propagator)
-        - Sends messages to one or more child Factors (e.g., measurements or constraints)
-        - Maintains belief as a fused Gaussian approximation (UncertainArray)
+    Each Wave stores:
+        - A current belief (Gaussian: mean and precision)
+        - Messages from one parent and multiple children
+        - Precision mode (scalar or array)
+        - Optional random sample for stochastic inference
 
-    Precision mode:
-        - 'scalar': Assumes identical precision (inverse variance) for all entries
-        - 'array': Allows elementwise precision per entry
-        - If not specified during construction, mode will be auto-determined via `compile()`
+    Precision modes:
+        - 'scalar': One global precision value for all elements
+        - 'array': Per-element precision values (same shape as mean)
+        - Internally stored as Enum[PrecisionMode], but exposed as str for compatibility
 
     Attributes:
-        shape (tuple[int, ...]): Shape of the underlying variable (e.g., image size).
-        dtype (np.dtype): Data type (e.g., np.complex128 or np.float64).
-        label (Optional[str]): Optional identifier for debugging or visualization.
-        precision_mode (Optional[str]): 'scalar' or 'array'; can be set manually or inferred.
-
-        parent (Optional[Factor]): Upstream factor sending a message.
-        parent_message (Optional[UncertainArray]): Current message from parent.
-
-        children (list[Factor]): Downstream factors receiving messages.
-        child_messages_tensor (Optional[UncertainArrayTensor]): Batched messages from children.
-
-        belief (Optional[UncertainArray]): Current fused belief.
-        _sample (Optional[np.ndarray]): Optional sample drawn from the belief.
-
-    Typical lifecycle:
-        1. Create Wave with shape/dtype
-        2. Attach factors via `set_parent` and `add_child`
-        3. Auto-determine precision_mode via `set_precision_mode_forward/backward`
-        4. Initialize messages via `finalize_structure`
-        5. Participate in EP via `forward` and `backward`
+        shape (tuple[int, ...]): Shape of the variable.
+        dtype (np.dtype): Data type (e.g., np.complex128).
+        label (str | None): Optional identifier.
+        parent (Factor | None): The parent factor.
+        children (list[Factor]): List of child factors.
+        belief (UncertainArray | None): Current belief.
+        parent_message (UncertainArray | None): Message from parent.
+        child_messages_tensor (UncertainArrayTensor | None): Messages from children.
+        _precision_mode (PrecisionMode | None): Internal precision mode.
     """
-
 
     def __init__(
         self,
         shape: tuple[int, ...],
         dtype: np.dtype = np.complex128,
-        precision_mode: Optional[Literal["scalar", "array"]] = None,
+        precision_mode: Optional[str | PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
-        self.shape: tuple[int, ...] = shape
-        self.dtype: np.dtype = dtype
-        self._precision_mode: Optional[Literal["scalar", "array"]] = precision_mode
-        self.label: Optional[str] = label
+        self.shape = shape
+        self.dtype = dtype
+        self._precision_mode: Optional[PrecisionMode] = (
+            PrecisionMode(precision_mode) if isinstance(precision_mode, str) else precision_mode
+        )
+        self.label = label
         self._init_rng: Optional[np.random.Generator] = None
 
         self.parent: Optional["Factor"] = None
@@ -76,22 +68,49 @@ class Wave:
         self._sample: Optional[NDArray] = None
 
     def set_label(self, label: str) -> None:
+        """Assign label to this wave (for debugging or visualization)."""
         self.label = label
 
     def _set_generation(self, generation: int) -> None:
+        """Internal: Assign scheduling generation index."""
         self._generation = generation
 
     @property
     def generation(self) -> int:
+        """Topological generation index for inference scheduling."""
         return self._generation
-
+    
     @property
-    def precision_mode(self) -> Optional[Literal["scalar", "array"]]:
+    def precision_mode_enum(self) -> Optional[PrecisionMode]:
+        """
+        Return the internal precision mode as an Enum (recommended for new code).
+
+        Returns:
+            PrecisionMode or None
+        """
         return self._precision_mode
 
-    def _set_precision_mode(self, mode: Literal["scalar", "array"]) -> None:
-        if mode not in ("scalar", "array"):
-            raise ValueError(f"Invalid precision mode: {mode}")
+    @property
+    def precision_mode(self) -> Optional[str]:
+        """
+        Return the precision mode as a string ("scalar" or "array").
+
+        This is kept for backward compatibility. Use `precision_mode_enum` for new code.
+
+        Returns:
+            "scalar", "array", or None
+        """
+        return self._precision_mode.value if self._precision_mode else None
+
+    def _set_precision_mode(self, mode: str | PrecisionMode) -> None:
+        """
+        Set the precision mode for this wave, ensuring consistency if already set.
+
+        Raises:
+            ValueError: If conflicting precision mode already assigned.
+        """
+        if isinstance(mode, str):
+            mode = PrecisionMode(mode)
         if self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
                 f"Precision mode conflict for Wave: existing='{self._precision_mode}', requested='{mode}'"
@@ -100,12 +119,9 @@ class Wave:
 
     def set_precision_mode_forward(self) -> None:
         """
-        Propagate precision mode from parent Factor to this Wave.
-
-        This is used during graph compilation to ensure consistency
-        between Wave and Factor precision types.
+        Infer precision mode from parent factor's output requirements.
+        Called during graph compilation.
         """
-
         if self.parent is not None:
             parent_mode = self.parent.get_output_precision_mode()
             if parent_mode is not None:
@@ -113,42 +129,38 @@ class Wave:
 
     def set_precision_mode_backward(self) -> None:
         """
-        Propagate precision mode constraints from child Factors.
-
-        Each child factor may impose a requirement on the precision mode
-        of its connected Wave inputs. This method collects and applies them.
+        Infer precision mode from child factors' input requirements.
+        Called during graph compilation.
         """
-
         for factor in self.children:
             child_mode = factor.get_input_precision_mode(self)
             if child_mode is not None:
                 self._set_precision_mode(child_mode)
 
     def set_parent(self, factor: Factor) -> None:
+        """Assign a parent factor. Each wave can have only one parent."""
         if self.parent is not None:
             raise RuntimeError("Parent factor is already set for this Wave.")
         self.parent = factor
         self.parent_message = None
 
     def add_child(self, factor: Factor) -> None:
+        """Register a child factor to this wave."""
         idx = len(self.children)
         self.children.append(factor)
-        factor._child_index = idx  # optional
+        factor._child_index = idx  # optional usage
 
     def finalize_structure(self) -> None:
         """
-        Allocate the child message tensor based on the number of children
-        and the precision mode.
+        Allocate child message tensor using the wave's precision mode.
 
-        This must be called after all child factors have been registered,
-        typically as part of `Graph.compile()`.
+        This should be called once all children are connected (e.g. in Graph.compile()).
         """
-
         n_child = len(self.children)
         shape = (n_child,) + self.shape
         data = random_normal_array(shape, dtype=self.dtype, rng=self._init_rng)
 
-        if self._precision_mode == "scalar":
+        if self._precision_mode == PrecisionMode.SCALAR:
             precision = np.ones(n_child, dtype=np.float64)
         else:
             precision = np.ones(shape, dtype=np.float64)
@@ -157,40 +169,46 @@ class Wave:
 
     def receive_message(self, factor: Factor, message: UncertainArray) -> None:
         """
-        Receive a message (UncertainArray) from a connected Factor.
+        Receive a message from either the parent or a child.
 
-        This message is routed to either:
-            - `parent_message`, if the source is the parent
-            - `child_messages_tensor[i]`, if the source is a registered child
-
-        Type/shape/mode consistency is enforced via UAT's setitem.
-
-        Args:
-            factor: Source Factor node.
-            message: Incoming Gaussian message.
+        If the message's dtype does not match the Wave's dtype:
+            - If Wave expects real and message is complex → apply UA.real
+            - If Wave expects complex and message is real → apply UA.astype(complex)
 
         Raises:
-            TypeError: If dtype mismatch.
-            ValueError: If the factor is not registered.
+            TypeError: If dtype mismatch cannot be reconciled.
+            ValueError: If factor is not connected to this wave.
         """
-
         if message.dtype != self.dtype:
-            raise TypeError(
-                f"UncertainArray dtype {message.dtype} does not match Wave dtype {self.dtype}."
-            )
+            if np.issubdtype(self.dtype, np.floating) and np.issubdtype(message.dtype, np.complexfloating):
+                message = message.real  # Complex → Real
+            elif np.issubdtype(self.dtype, np.complexfloating) and np.issubdtype(message.dtype, np.floating):
+                message = message.astype(self.dtype)  # Real → Complex
+            else:
+                raise TypeError(
+                    f"UncertainArray dtype {message.dtype} does not match Wave dtype {self.dtype}, "
+                    f"and cannot be safely converted."
+                )
 
         if factor == self.parent:
             self.parent_message = message
         elif factor in self.children:
             idx = self.children.index(factor)
-            self.child_messages_tensor[idx] = message  # use __setitem__ with safety
+            self.child_messages_tensor[idx] = message
         else:
             raise ValueError(
                 f"Received message from unregistered factor: {factor}. "
                 f"Expected parent: {self.parent}, or one of children: {list(self.children)}"
             )
 
+
     def compute_belief(self) -> UncertainArray:
+        """
+        Compute current belief by combining parent and child messages.
+
+        Returns:
+            Fused `UncertainArray` belief.
+        """
         if self.parent_message is not None:
             combined = self.parent_message * self.child_messages_tensor.combine()
         else:
@@ -200,6 +218,7 @@ class Wave:
         return self.belief
 
     def set_belief(self, belief: UncertainArray) -> None:
+        """Manually assign the belief (used in propagators with internal computation)."""
         if belief.shape != self.shape:
             raise ValueError(f"Belief shape mismatch: expected {self.shape}, got {belief.shape}")
         if belief.dtype != self.dtype:
@@ -207,6 +226,11 @@ class Wave:
         self.belief = belief
 
     def forward(self) -> None:
+        """
+        Send messages to all child factors using EP-style division.
+
+        Requires that parent message has already been received.
+        """
         if self.parent_message is None:
             raise RuntimeError("Cannot forward without parent message.")
 
@@ -219,6 +243,11 @@ class Wave:
                 factor.receive_message(self, msg)
 
     def backward(self) -> None:
+        """
+        Send message to parent by combining all child messages.
+
+        If there's only one child, reuse its message directly.
+        """
         if self.parent is None:
             return
 
@@ -230,24 +259,35 @@ class Wave:
         self.parent.receive_message(self, msg)
 
     def set_init_rng(self, rng: np.random.Generator) -> None:
+        """Set random generator for child message initialization."""
         self._init_rng = rng
 
     @property
     def ndim(self) -> int:
+        """Return number of dimensions of the wave variable."""
         return len(self.shape)
 
     def get_sample(self) -> Optional[NDArray]:
+        """Return the current sample (if set)."""
         return self._sample
 
     def set_sample(self, sample: NDArray) -> None:
+        """Set sample value explicitly, with shape check."""
         if sample.shape != self.shape:
             raise ValueError(f"Sample shape mismatch: expected {self.shape}, got {sample.shape}")
         self._sample = sample
 
     def clear_sample(self) -> None:
+        """Clear the stored sample."""
         self._sample = None
 
     def __add__(self, other: Wave) -> Wave:
+        """
+        Shorthand for `AddPropagator() @ (self, other)`.
+
+        Returns:
+            Output wave of the addition.
+        """
         from graph.propagator.add_propagator import AddPropagator
 
         if not isinstance(other, Wave):
@@ -255,6 +295,12 @@ class Wave:
         return AddPropagator() @ (self, other)
 
     def __mul__(self, other: Wave) -> Wave:
+        """
+        Shorthand for `MultiplyPropagator() @ (self, other)`.
+
+        Returns:
+            Output wave of the multiplication.
+        """
         from graph.propagator.multiply_propagator import MultiplyPropagator
 
         if not isinstance(other, Wave):

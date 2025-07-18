@@ -1,6 +1,10 @@
 from graph.wave import Wave
 from graph.factor import Factor
 import numpy as np
+import contextlib
+import threading
+
+_current_graph = threading.local()
 
 
 class Graph:
@@ -28,6 +32,26 @@ class Graph:
         self._nodes_sorted_reverse = None
 
         self._rng = np.random.default_rng()  # default RNG for sampling
+    
+    @contextlib.contextmanager
+    def observe(self):
+        """
+        Context manager for automatic measurement registration.
+        Usage:
+            with self.observe():
+                Z = AmplitudeMeasurement(...) @ x
+        """
+        _current_graph.value = self
+        try:
+            yield
+        finally:
+            _current_graph.value = None
+    
+    @staticmethod
+    def get_active_graph():
+        """Return the current graph context if inside a `with observe()` block."""
+        return getattr(_current_graph, "value", None)
+
 
     def compile(self):
         """
