@@ -22,24 +22,20 @@ class PhaseMaskFFTPropagator(Propagator):
         self.x_belief = None
         self.y_belief = None
 
-    def _set_precision_mode(self, mode: UnaryPropagatorPrecisionMode) -> None:
-        if not isinstance(mode, UnaryPropagatorPrecisionMode):
-            raise TypeError(f"Expected UnaryPropagatorPrecisionMode, got {type(mode)}")
-
+    def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
+        if isinstance(mode, str):
+            mode = UnaryPropagatorPrecisionMode(mode)
         allowed = {
             UnaryPropagatorPrecisionMode.SCALAR,
             UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
+            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
         }
-
         if mode not in allowed:
-            raise ValueError(f"Invalid precision_mode for PhaseMaskFFTPropagator: {mode}")
-
-        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(f"Invalid precision_mode for UnitaryPropagator: {mode}")
+        if hasattr(self, "_precision_mode") and self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
                 f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
             )
-
         self._precision_mode = mode
 
     @property

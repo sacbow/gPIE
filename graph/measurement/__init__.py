@@ -1,3 +1,2 @@
-from .base import Measurement
 from .gaussian_measurement import GaussianMeasurement
 from .amplitude_measurement import AmplitudeMeasurement

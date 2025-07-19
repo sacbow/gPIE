@@ -1,5 +1,6 @@
 from .unitary_propagator import UnitaryPropagator
 from .fft_2d_propagator import FFT2DPropagator
 from .phase_mask_propagator import PhaseMaskPropagator
+from .phase_mask_fft_propagator import PhaseMaskFFTPropagator
 from .add_propagator import AddPropagator
 from .multiply_propagator import MultiplyPropagator

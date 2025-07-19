@@ -24,7 +24,9 @@ class UnitaryPropagator(Propagator):
         self.x_belief = None
         self.y_belief = None
 
-    def _set_precision_mode(self, mode: UnaryPropagatorPrecisionMode):
+    def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
+        if isinstance(mode, str):
+            mode = UnaryPropagatorPrecisionMode(mode)
         allowed = {
             UnaryPropagatorPrecisionMode.SCALAR,
             UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,

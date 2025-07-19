@@ -237,67 +237,132 @@ class Graph:
         print("Graph Summary:")
         print(f"- {len(self._waves)} Wave nodes")
         print(f"- {len(self._factors)} Factor nodes")
+    
+    def visualize(self):
+        from bokeh.plotting import figure, show
+        from bokeh.models import ColumnDataSource, LabelSet, Arrow, NormalHead
+        from bokeh.io import output_notebook
+        import numpy as np
 
-    def visualize(self, with_labels=True, layout="kamada_kawai", font_size=6, scale=1.0):
-        """
-        Visualize the graph structure as a directed computational graph.
-        Arrows: Wave → Factor → Wave
+        output_notebook()
 
-        Args:
-            with_labels (bool): Whether to show text labels on nodes.
-            layout (str): Layout type ('spring', 'kamada_kawai', 'shell', etc.)
-            font_size (int): Font size for node labels.
-            scale (float): Scaling factor for node layout spacing.
-        """
-        import networkx as nx
-        import matplotlib.pyplot as plt
+        # ==== ヘルパー関数 ====
+        def list_of_dicts_to_dict_of_lists(ld):
+            return {key: [d[key] for d in ld] for key in ld[0]}
 
-        G = nx.DiGraph()
+        # ==== ノードリストの作成 ====
+        nodes = []
+        edges = []
 
-        # Add nodes
-        for wave in self._waves:
-            G.add_node(wave, label=repr(wave), shape='circle')
-        for factor in self._factors:
-            G.add_node(factor, label=repr(factor), shape='square')
+        # 全ノードを一つのループで扱う
+        for i, node in enumerate(list(self._waves) + list(self._factors)):
+            gen = getattr(node, "generation", 0)
+            label = getattr(node, "label", None)
+            if label is None:
+                label = node.__class__.__name__
 
-        # Add edges (Wave → Factor, Factor → Wave)
-        for wave in self._waves:
-            for child in wave.children:
-                G.add_edge(wave, child)
-        for factor in self._factors:
-            if factor.output is not None:
-                G.add_edge(factor, factor.output)
+            node_type = "wave" if node in self._waves else "factor"
 
-        # Layout selection
-        if layout == "spring":
-            pos = nx.spring_layout(G, seed=42, k=scale)
-        elif layout == "shell":
-            pos = nx.shell_layout(G)
-        elif layout == "circular":
-            pos = nx.circular_layout(G)
-        elif layout == "spectral":
-            pos = nx.spectral_layout(G)
-        else:  # default to kamada_kawai
-            pos = nx.kamada_kawai_layout(G, scale=scale)
+            # generation に基づく横位置、同generation内のindexで縦をずらす
+            group = [n for n in (self._waves if node_type == "wave" else self._factors) if getattr(n, "generation", 0) == gen]
+            index_in_group = group.index(node)
+            y_offset = index_in_group * 0.4 - (len(group) - 1) * 0.2  # 中心から散らす
 
-        # Draw nodes by shape
-        node_shapes = {'circle': [], 'square': []}
-        for node in G.nodes:
-            shape = G.nodes[node]['shape']
-            node_shapes[shape].append(node)
+            nodes.append(dict(
+                id=id(node),
+                label=label,
+                type=node_type,
+                x=gen * 1.5,
+                y=y_offset,
+                generation=gen
+            ))
 
-        nx.draw_networkx_nodes(G, pos,
-            nodelist=node_shapes['circle'], node_shape='o', node_color='skyblue')
-        nx.draw_networkx_nodes(G, pos,
-            nodelist=node_shapes['square'], node_shape='s', node_color='lightgreen')
+            # edges の登録（Factorなら入力/出力を調べる）
+            if node_type == "factor":
+                for wave in node.inputs.values():
+                    edges.append((id(wave), id(node)))
+                if node.output:
+                    edges.append((id(node), id(node.output)))
 
-        nx.draw_networkx_edges(G, pos, arrows=True)
 
-        if with_labels:
-            labels = {n: G.nodes[n]['label'] for n in G.nodes}
-            nx.draw_networkx_labels(G, pos, labels, font_size=font_size)
+        # ==== 可視化データ準備 ====
+        wave_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "wave"])
+        factor_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "factor"])
+        all_data = list_of_dicts_to_dict_of_lists(nodes)
 
-        plt.title("Computational Factor Graph")
-        plt.axis('off')
-        plt.tight_layout()
-        plt.show()
+        wave_source = ColumnDataSource(wave_data)
+        factor_source = ColumnDataSource(factor_data)
+        label_source = ColumnDataSource(all_data)
+
+        # ==== 描画設定 ====
+        # ノード位置から範囲を自動計算
+        xs = [n["x"] for n in nodes]
+        ys = [n["y"] for n in nodes]
+
+        x_margin = 1.0
+        y_margin = 1.0
+
+        x_min = min(xs) - x_margin
+        x_max = max(xs) + x_margin
+        y_min = min(ys) - y_margin
+        y_max = max(ys) + y_margin
+
+        p = figure(
+            title="Computational Factor Graph",
+            x_range=(x_min, x_max),
+            y_range=(y_min, y_max),
+            tools="pan,zoom_in,zoom_out,reset,save",
+            width=800,
+            height=600,
+        )
+
+
+        p.scatter(x="x", y="y", source=wave_source, size=20, color="skyblue", marker="circle", legend_label="Wave")
+        p.scatter(x="x", y="y", source=factor_source, size=20, color="lightgreen", marker="square", legend_label="Factor")
+
+        labels = LabelSet(
+            x="x",
+            y="y",
+            text="label",
+            source=label_source,
+            text_align="center",
+            text_baseline="bottom",  # テキストの基準を「下」に
+            text_font_size="9pt",
+            y_offset=10,              # 上にずらす
+        )
+
+        p.add_layout(labels)
+
+        # ノードを generation 付きで辞書化
+        gen_lookup = {n["id"]: n.get("generation", 0) for n in nodes}
+        pos_lookup = {n["id"]: (n["x"], n["y"]) for n in nodes}
+
+        for src_id, tgt_id in edges:
+            src_gen = gen_lookup.get(src_id, 0)
+            tgt_gen = gen_lookup.get(tgt_id, 0)
+
+            # 方向を generation に基づいて決定
+            if src_gen <= tgt_gen:
+                start_id, end_id = src_id, tgt_id
+            else:
+                start_id, end_id = tgt_id, src_id
+
+            x0, y0 = pos_lookup[start_id]
+            x1, y1 = pos_lookup[end_id]
+
+            arrow = Arrow(end=NormalHead(size=8),
+                        x_start=x0, y_start=y0,
+                        x_end=x1, y_end=y1,
+                        line_width=1.5, line_color="gray")
+
+            p.add_layout(arrow)
+
+        p.axis.visible = False
+        p.grid.visible = False
+        show(p)
+
+
+
+
+
+
