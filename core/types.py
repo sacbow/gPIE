@@ -25,7 +25,8 @@ class BinaryPropagatorPrecisionMode(Enum):
     """Precision mode used in propagators with 2 inputs (e.g., add, multiply)."""
     SCALAR = "scalar"
     ARRAY = "array"
-    SCALAR_OR_ARRAY_TO_ARRAY = "scalar/array to array"
+    SCALAR_AND_ARRAY_TO_ARRAY = "scalar/array to array"
+    ARRAY_AND_SCALAR_TO_ARRAY = "array/scalar to array"
 
     def __str__(self) -> str:
         return self.value

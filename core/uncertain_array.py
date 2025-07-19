@@ -348,7 +348,7 @@ class UncertainArray:
         d1, d2 = self.data, other.data
         p1, p2 = self.precision(raw=True), other.precision(raw=True)
 
-        if self._scalar_precision:
+        if self._scalar_precision and other._scalar_precision:
             precision_diff = p1 - p2
             precision_safe = max(precision_diff, 1.0)
             result_data = (p1 * d1 - p2 * d2) / precision_safe
