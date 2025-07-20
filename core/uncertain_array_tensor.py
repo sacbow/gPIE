@@ -23,6 +23,11 @@ class UncertainArrayTensor:
     This distinction impacts how the `combine()` operation fuses messages, and
     is automatically inferred based on the shape of the input precision tensor.
 
+    Typical use cases:
+    - Representing incoming messages from multiple child factors in a Wave
+    - Supporting batch belief fusion via `combine()` in message-passing inference
+    - Enabling efficient vectorized operations on groups of UncertainArray
+
     Attributes:
         data (np.ndarray): Mean values of shape (B, ...), where B is the batch size.
         precision (np.ndarray): Precision values of shape (B,) or (B, ...).
@@ -213,10 +218,9 @@ class UncertainArrayTensor:
 
         else:
             total_precision = np.sum(self.precision, axis=0)
-            total_precision_safe = np.clip(total_precision, 1e-12, np.inf)
             weighted_sum = np.sum(self.precision * self.data, axis=0)
-            mean = weighted_sum / total_precision_safe
-            return UncertainArray(mean, dtype=self.dtype, precision=total_precision_safe)
+            mean = weighted_sum / total_precision
+            return UncertainArray(mean, dtype=self.dtype, precision=total_precision)
 
     def __getitem__(self, idx: int) -> UncertainArray:
         """

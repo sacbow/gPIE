@@ -8,6 +8,43 @@ from core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 
 class UnitaryPropagator(Propagator):
+    """
+    A linear propagator that applies a fixed unitary transformation.
+
+    This propagator models:
+        y = U @ x   with U ∈ C^{N * N}, where U is unitary (U.h U = I)
+
+    It supports precision mode conversion between input and output waves:
+        - SCALAR → SCALAR
+        - SCALAR → ARRAY
+        - ARRAY → SCALAR
+
+    Message Passing:
+        - Forward: uses output_message and belief to compute message to output
+        - Backward: computes x_belief from y and sends message to input
+
+    Belief Fusion:
+        In the SCALAR mode, Belief fusion is done using the formula:
+            posterior = (tau * U @ x + gamma * r) / (τ + gamma)
+        where:
+            - r, gamma: input message (mean, precision)
+            - p, tau: output message (mean, precision)
+        Scalar/array precision is handled accordingly, and can be harmonized.
+
+    Precision Modes:
+        - SCALAR: assumes both input and output share scalar precision
+        - SCALAR_TO_ARRAY: maps scalar precision input → array output
+        - ARRAY_TO_SCALAR: maps array precision input → scalar output
+
+    Args:
+        U (np.ndarray): Unitary matrix of shape (N, N).
+        precision_mode (UnaryPropagatorPrecisionMode | None): Optional precision mode.
+        dtype (np.dtype): Data type (real or complex), default: np.complex128.
+
+    Raises:
+        ValueError: If U is not a square 2D unitary matrix.
+    """
+
     def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np.complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
 
@@ -121,7 +158,10 @@ class UnitaryPropagator(Propagator):
         if self.output_message is None or self.y_belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
+            if self.output.precision_mode == "scalar":
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = True)
+            else:
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
         else:
             msg = self.y_belief / self.output_message
 

@@ -7,8 +7,29 @@ from typing import Optional, Union
 
 class AmplitudeMeasurement(Measurement):
     """
-    Measurement model: y = |z| + N(0, var), real-valued observation
+    Nonlinear amplitude measurement model: y = |z| + ε, with ε ~ N(0, var)
+
+    This class models observations that are the magnitude (absolute value) of a complex-valued latent variable,
+    corrupted by additive Gaussian noise. The true latent signal is complex-valued `z`, and the measurement is:
+
+        y = |z| + ε,     ε ~ N(0, var)
+
+    The inference is performed using a Laplace approximation to the posterior over the latent variable,
+    following methods from recent literature in nonlinear Gaussian belief propagation.
+
+    Features:
+        - Real-valued noisy observations of complex-valued signals
+        - Supports scalar or elementwise (array) precision
+        - Optional damping to stabilize EP updates
+        - Optional observation masking (partial observability)
+        - Forward sampling and backward message computation
+
+    Attributes:
+        _var (float): Noise variance
+        damping (float): Damping factor for EP message updates
+        old_msg (Optional[UA]): Cached message from previous iteration
     """
+
 
     input_dtype: np.dtype = np.complex128
     expected_observed_dtype: np.dtype = np.float64
@@ -21,6 +42,20 @@ class AmplitudeMeasurement(Measurement):
         precision_mode: Optional[Union[str, PrecisionMode]] = None,
         mask: Optional[np.ndarray] = None,
     ) -> None:
+        """
+        Initialize the amplitude measurement node.
+
+        Args:
+            observed_data (Optional[np.ndarray]): Real-valued observed amplitude data (optional).
+            var (float): Observation noise variance (must be positive).
+            damping (float): Optional damping for EP message updates (default: 0.0).
+            precision_mode (Optional[Union[str, PrecisionMode]]): Precision mode: "scalar" or "array".
+            mask (Optional[np.ndarray]): Optional binary mask for valid observation regions.
+
+        Raises:
+            TypeError: If observed data is not real-valued.
+            ValueError: If mask and data shape mismatch or precision settings are inconsistent.
+        """
         self._var = var
         self.damping = damping
         self.old_msg: Optional[UA] = None
@@ -55,7 +90,15 @@ class AmplitudeMeasurement(Measurement):
 
     def generate_sample(self, rng: np.random.Generator) -> None:
         """
-        Generate noisy amplitude: y = |x| + N(0, sqrt(var))
+        Generate synthetic observation from the latent sample.
+
+        Computes:  y = |x| + ε  where ε ~ N(0, var)
+
+        Stores the result in internal `_sample` buffer, which can later be used
+        via `update_observed_from_sample`.
+
+        Raises:
+            RuntimeError: If latent sample is not available.
         """
         x = self.input.get_sample()
         if x is None:

@@ -8,6 +8,41 @@ from core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 
 class FFT2DPropagator(Propagator):
+    """
+    A 2D Fourier-domain propagator that performs centered FFT/IFFT transforms.
+
+    This propagator defines a unitary mapping between:
+        - x (spatial domain) ⟷ y (frequency domain)
+        using fft2_centered() and ifft2_centered()
+
+    The message-passing and belief fusion are performed in the Fourier domain.
+    Precision mode conversion is supported to accommodate different configurations
+    of input and output uncertainty (scalar or array).
+
+    Belief Fusion Model:
+        Beliefs are computed by weighted averaging of input/output messages:
+            x_belief = posterior(x | y)
+            y_belief = FFT2(x_belief)
+        where message precisions are fused based on the current precision mode.
+
+    Supported Precision Modes:
+        - SCALAR → SCALAR
+        - SCALAR → ARRAY
+        - ARRAY → SCALAR
+
+    Args:
+        shape (tuple[int, int] | None): Shape of the 2D variable (inferred during `@` if None).
+        precision_mode (UnaryPropagatorPrecisionMode | None): Precision model (optional).
+        dtype (np.dtype): Data type (default: np.complex128).
+    
+    Raises:
+        ValueError: If input is not 2D or precision mode is incompatible.
+
+    Notes:
+        - Uses internally centered FFT/IFFT (i.e., fftshifted)
+        - This class is optimized for image-domain applications
+    """
+
     def __init__(
         self,
         shape=None,
@@ -122,7 +157,10 @@ class FFT2DPropagator(Propagator):
         if self.output_message is None or self.y_belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
+            if self.output.precision_mode == "scalar":
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = True)
+            else:
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
         else:
             msg = self.y_belief / self.output_message
         self.output.receive_message(self, msg)

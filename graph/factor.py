@@ -9,28 +9,43 @@ class Factor(ABC):
     """
     Abstract base class for factor nodes in the Computational Factor Graph (CFG).
 
-    A `Factor` represents a probabilistic dependency or transformation between one or more
-    latent variables (`Wave` nodes). It handles message passing for approximate inference
-    using Expectation Propagation (EP).
+    A Factor represents a probabilistic dependency or transformation among one or more
+    latent variables (`Wave` nodes). It serves as the core unit of computation and message
+    propagation in Expectation Propagation (EP) and related inference algorithms.
 
-    There are three typical subclasses:
-        - Prior: Defines a prior distribution over a single variable (output only).
-        - Propagator: Maps one or more input variables to an output via a forward model.
-        - Measurement: Applies likelihood constraint to an observed variable (input only).
+    Responsibilities:
+        - Receives and sends messages to connected Waves
+        - Defines forward and backward message-passing logic
+        - Specifies precision mode requirements for connected Waves
+        - Participates in topological scheduling and sampling
+
+    Typical subclasses:
+        - Prior:    Defines a distribution from which a Wave is generated (no inputs)
+        - Propagator: Maps input Wave(s) to an output Wave (e.g., Add, Multiply)
+        - Measurement: Applies an observation likelihood to a Wave (no output)
+
+    Message Passing Semantics:
+        - receive_message(): stores incoming UncertainArray from Wave
+        - forward(): sends message from inputs to output (to be implemented in subclass)
+        - backward(): sends message from output to inputs (to be implemented in subclass)
+
+    Precision Modes:
+        Factors may require a specific precision model ("scalar" or "array").
+        These are propagated via `set_precision_mode_forward()` and `set_precision_mode_backward()`.
 
     Attributes:
         inputs (dict[str, Wave]):
-            Mapping from input names (e.g., "a", "x") to connected Wave nodes.
-        output (Optional[Wave]):
-            Output wave connected to this factor. May be None.
-        input_messages (dict[Wave, Optional[UncertainArray]]):
-            Received messages from each input wave.
-        output_message (Optional[UncertainArray]):
-            Message received from the output wave.
-        _generation (Optional[int]):
-            Scheduling index (topological depth in the graph).
-        _precision_mode (Optional[PrecisionMode]):
-            Precision mode required by this factor (e.g., scalar or array).
+            Mapping from string keys (e.g., "a", "x") to connected input Waves.
+        output (Wave | None):
+            Output wave node (optional, depending on subclass).
+        input_messages (dict[Wave, UncertainArray | None]):
+            Cached incoming messages from input Waves.
+        output_message (UncertainArray | None):
+            Cached message from output Wave.
+        _precision_mode (PrecisionMode | None):
+            Required precision mode for this factor. Can be inferred or user-specified.
+        _generation (int | None):
+            Topological depth index for scheduling in the graph.
     """
 
     def __init__(self):

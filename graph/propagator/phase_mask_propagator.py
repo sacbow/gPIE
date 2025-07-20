@@ -8,8 +8,34 @@ from core.types import PrecisionMode
 
 class PhaseMaskPropagator(Propagator):
     """
-    Component-wise complex phase modulation propagator.
-    Applies a fixed unit-magnitude phase mask to the wave.
+    Elementwise phase modulation propagator with a fixed unit-magnitude complex mask.
+
+    This propagator applies a componentwise complex multiplication:
+        y = x * phase_mask
+
+    where `phase_mask` is a complex-valued array with |phase_mask[i]| = 1.
+
+    Common use cases:
+        - Modeling known optical elements (e.g., SLMs, coded apertures)
+        - Introducing known phase modulation in frequency or spatial domain
+        - Enabling interpretable transforms without altering signal amplitude
+
+    Precision:
+        - Supports both 'scalar' and 'array' precision modes
+        - Mode is propagated forward/backward from input/output
+
+    Forward message:
+        - y = x \odot phase_mask
+
+    Backward message:
+        - x ≈ y / phase_mask
+
+    Args:
+        phase_mask (np.ndarray): Complex-valued array of shape (H, W) with unit magnitude.
+        dtype (np.dtype): Data type for internal computation (default: np.complex128).
+
+    Raises:
+        ValueError: If phase_mask is not unit-magnitude or shape mismatch occurs.
     """
 
     def __init__(self, phase_mask, dtype=np.complex128):

@@ -8,6 +8,42 @@ from core.types import PrecisionMode
 
 
 class SparsePrior(Prior):
+    """
+    A spike-and-slab prior promoting sparsity in the latent variable.
+
+    This prior models each element as:
+        x_i ~ (1 - rho) * delta(0) + rho * CN(0, 1)   (or N(0,1) for real dtype)
+
+    During inference, it approximates the posterior via elementwise Bayesian
+    updates and maintains damping across iterations to stabilize convergence.
+
+    Behavior:
+        - The prior computes an approximate posterior based on the incoming message
+        - This posterior is fused with the incoming message to yield an updated message
+        - Optional damping is supported to smooth updates across iterations
+
+    Key Components:
+        - rho: Probability of the non-zero component (sparsity level)
+        - `approximate_posterior()`: Performs spike-and-slab posterior approximation
+        - `damping`: Convex weight between previous and new message for stability
+
+    Sampling:
+        - Each element is drawn from CN(0,1) (or N(0,1)) with probability rho, or zero otherwise
+
+    Args:
+        rho (float): Probability of non-zero entry (default: 0.5).
+        shape (tuple[int, ...]): Shape of the latent variable.
+        dtype (np.dtype): np.float64 or np.complex128.
+        damping (float): Damping coefficient in [0, 1] for belief updates.
+        precision_mode (PrecisionMode | None): Scalar or array precision model.
+        label (str | None): Optional label for the Wave.
+
+    Attributes:
+        rho (float): Non-zero entry probability.
+        damping (float): Damping factor.
+        old_msg (UncertainArray | None): Previous message (used if damping > 0).
+    """
+
     def __init__(
         self,
         rho: float = 0.5,
@@ -17,17 +53,7 @@ class SparsePrior(Prior):
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:
-        """
-        Spike-and-slab prior with sparsity level `rho`.
 
-        Args:
-            rho: Probability of non-zero component.
-            shape: Shape of the latent variable.
-            dtype: Data type (real or complex).
-            damping: Damping factor for message updates.
-            precision_mode: "scalar", "array", or None.
-            label: Optional label for wave.
-        """
         self.rho = rho
         self.damping = damping
         self.old_msg: Optional[UA] = None

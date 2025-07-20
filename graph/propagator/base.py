@@ -9,20 +9,49 @@ from core.types import UnaryPropagatorPrecisionMode
 
 
 class Propagator(Factor, ABC):
+    """
+    Abstract base class for deterministic mappings from input Waves to an output Wave.
+
+    A `Propagator` represents a computational operator (e.g., addition, multiplication)
+    that maps one or more input latent variables (`Wave` nodes) to a single output `Wave`.
+
+    It serves as the core building block for composing computational factor graphs
+    within the EP framework. Propagators manage both forward and backward message-passing,
+    and coordinate precision mode inference across input/output nodes.
+
+    Responsibilities:
+        - Receive messages from inputs and compute output belief (forward)
+        - Receive message from output and send approximate messages to inputs (backward)
+        - Set precision mode for inputs/outputs based on known constraints
+
+    Precision Mode Handling:
+        - `UnaryPropagatorPrecisionMode` defines allowed configurations
+          (e.g., scalar → array, array → scalar, etc.)
+        - Precision propagation is handled via `set_precision_mode_forward()` and `backward()`
+        - Conflicting precision assignments are explicitly rejected
+
+    Subclass Requirements:
+        - Must implement `_compute_forward()` and `_compute_backward()`
+        - Must define `set_precision_mode_forward()` and `backward()`
+
+    Args:
+        input_names (tuple[str, ...]): Keys for input variables (e.g., ("a", "b")).
+        dtype (np.dtype): Expected dtype for inputs/outputs (default: np.complex128).
+        precision_mode (str | UnaryPropagatorPrecisionMode | None): Optional mode.
+
+    Attributes:
+        input_names (tuple[str, ...]): Keys identifying inputs.
+        dtype (np.dtype): Common dtype used for messages.
+        _precision_mode (UnaryPropagatorPrecisionMode | None): Precision configuration.
+    """
+
     def __init__(
         self,
         input_names: tuple[str, ...] = ("input",),
         dtype: np.dtype = np.complex128,
         precision_mode: Optional[Union[str, UnaryPropagatorPrecisionMode]] = None,
     ):
-        """
-        Base class for propagators with one or more inputs and a single output.
 
-        Args:
-            input_names (tuple of str): Names of input Wave nodes (e.g., ("a", "b")).
-            dtype (np.dtype): Data type of the wave signals.
-            precision_mode (str | UnaryPropagatorPrecisionMode | None): Optional mode.
-        """
         super().__init__()
         self.dtype = dtype
         self.input_names = input_names

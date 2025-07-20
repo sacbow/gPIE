@@ -5,7 +5,7 @@ from core.types import PrecisionMode
 from numpy.typing import NDArray
 import numpy as np
 
-from .linalg_utils import complex_normal_random_array, reduce_precision_to_scalar, random_normal_array
+from .linalg_utils import reduce_precision_to_scalar, random_normal_array
 
 # Type aliases
 ArrayLike = Union[NDArray[np.complex128], NDArray[np.float64]]
@@ -59,7 +59,7 @@ class UncertainArray:
         self,
         array: ArrayLike,
         dtype: np.dtype = np.complex128,
-        precision: Precision = 1.0
+        precision: Precision = 1.0   # scalar precision implies self._scalar_precision = True.
     ) -> None:
         """
         Initialize an UncertainArray representing a belief/message.
@@ -75,7 +75,7 @@ class UncertainArray:
         """
         self.data: NDArray = np.asarray(array, dtype=dtype)
         self.dtype: np.dtype = self.data.dtype
-        self._scalar_precision: bool = np.isscalar(precision)
+        self._scalar_precision: bool = np.isscalar(precision) 
         self._set_precision_internal(precision)
 
     def is_real(self) -> bool:
@@ -112,12 +112,12 @@ class UncertainArray:
                     category=UserWarning
                 )
             real_data = self.data.real.astype(dtype)
-            new_precision = 2.0 * self.precision(raw = True)
+            new_precision = 2.0 * self.precision(raw = True)  # Complex → Real: Real part carries half the variance, so precision doubles
             return UncertainArray(real_data, dtype=dtype, precision=new_precision)
 
         if np.issubdtype(dtype, np.complexfloating) and self.is_real():
             complex_data = self.data.astype(dtype)
-            new_precision = 0.5 * self.precision(raw = True)
+            new_precision = 0.5 * self.precision(raw = True)  # Real → Complex: Spreads variance over two dimensions, so precision halves
             return UncertainArray(complex_data, dtype=dtype, precision=new_precision)
 
         raise TypeError(f"Unsupported dtype conversion: {self.dtype} → {dtype}")
@@ -137,7 +137,7 @@ class UncertainArray:
         if self.is_real():
             return self
         real_data = self.data.real.astype(np.float64)
-        new_precision = 2.0 * self.precision(raw = True)
+        new_precision = 2.0 * self.precision(raw = True) # Complex → Real: Real part carries half the variance, so precision doubles
         return UncertainArray(real_data, dtype=np.float64, precision=new_precision)
 
 
@@ -350,13 +350,13 @@ class UncertainArray:
 
         if self._scalar_precision and other._scalar_precision:
             precision_diff = p1 - p2
-            precision_safe = max(precision_diff, 1.0)
+            precision_safe = max(precision_diff, 1.0)  # Avoid division by zero
             result_data = (p1 * d1 - p2 * d2) / precision_safe
         else:
             p1_arr = self.precision()
             p2_arr = other.precision()
             precision_diff = p1_arr - p2_arr
-            precision_safe = np.maximum(precision_diff, 1.0)
+            precision_safe = np.maximum(precision_diff, 1.0)   # Avoid division by zero
             result_data = (p1_arr * d1 - p2_arr * d2) / precision_safe
 
         return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)

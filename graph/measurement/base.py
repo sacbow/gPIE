@@ -12,18 +12,34 @@ from graph.structure.graph import Graph
 
 class Measurement(Factor, ABC):
     """
-    Abstract base class for measurement factors in a Computational Factor Graph.
+    Abstract base class for measurement factors in a Computational Factor Graph (CFG).
 
-    A Measurement connects a latent variable (Wave) to observed data.
-    Unlike Prior, it has inputs but no output.
+    A Measurement represents the link between a latent variable (`Wave`) and
+    an observed noisy measurement. It plays the role of a likelihood term
+    in probabilistic modeling.
+
+    Key characteristics:
+        - One input wave (latent variable).
+        - No output wave (terminal node).
+        - Operates only in the backward direction (updates input from observations).
+        - Supports optional masking (e.g., for missing/corrupted data).
+        - Can handle scalar or array precision modes.
 
     Attributes:
-        input_dtype (np.dtype): Required dtype for input wave.
-        expected_observed_dtype (np.dtype | None): Optional constraint on observed data dtype.
-        observed (UncertainArray | None): Noisy observed measurement.
-        _sample (np.ndarray | None): Cached sample generated from the input wave.
-        _mask (np.ndarray | None): Optional binary mask for valid observed regions.
+        input_dtype (np.dtype):
+            Required dtype for the input wave. Must be defined in subclass or __init__.
+        expected_observed_dtype (np.dtype | None):
+            Optional constraint on the dtype of observed data.
+        observed (UncertainArray | None):
+            The observed data as an UncertainArray (mean and precision).
+        _sample (np.ndarray | None):
+            Cached simulated sample from the latent variable, for use in forward modeling.
+        _mask (np.ndarray | None):
+            Optional boolean array masking valid observed entries (True = valid).
+        label (str | None):
+            Optional identifier registered to the graph when `@` operator is used.
     """
+
 
     input_dtype: np.dtype                          # must be defined in subclass or __init__
     expected_observed_dtype: Optional[np.dtype] = None  # can be defined in subclass
@@ -65,14 +81,19 @@ class Measurement(Factor, ABC):
 
     def __matmul__(self, wave: Wave) -> "Measurement":
         """
-        Connect this measurement to a wave via `@` operator.
+        Connect this measurement node to the given wave.
 
-        Args:
-            wave: The wave to observe.
+        This is syntactic sugar for graph construction: `Y = MyMeasurement(...) @ X`.
+
+        Also performs:
+            - Input dtype check and assignment.
+            - Generation assignment for scheduling.
+            - Optional label registration to the active Graph (via context).
 
         Returns:
             self
         """
+
         # If input_dtype is not set (e.g., in GaussianMeasurement), infer from wave
         if getattr(self, "input_dtype", None) is None:
             self.input_dtype = wave.dtype
@@ -141,9 +162,13 @@ class Measurement(Factor, ABC):
         """
         Compute and send a backward message to the input wave.
 
+        Requires that `self.observed` is set and valid. The message is computed
+        using the subclass-defined `_compute_message()`.
+
         Raises:
-            RuntimeError: If no observation is available.
+            RuntimeError: If observed data is not yet set.
         """
+
         self._check_observed()
         incoming = self.input_messages[self.input]
         msg = self._compute_message(incoming)
@@ -171,13 +196,20 @@ class Measurement(Factor, ABC):
         dtype: Optional[np.dtype] = None
     ) -> None:
         """
-        Manually set the observed measurement and precision.
+        Manually provide the observed data and its precision.
+
+        Useful for injecting experimental or synthetic measurements.
 
         Args:
-            data: Observed data.
-            precision: Inverse variance (float or array).
-            dtype: Optional override of dtype.
+            data: The observed values (same shape as input wave).
+            precision: Inverse variance; scalar or per-element array.
+            dtype: Optional override of dtype. Must match expected_observed_dtype.
+
+        Raises:
+            TypeError: If dtype does not match expected_observed_dtype.
+            ValueError: If shape of data, precision, or mask are inconsistent.
         """
+
         dtype = dtype or self.observed_dtype
 
         if self.expected_observed_dtype is not None and dtype != self.expected_observed_dtype:
@@ -197,8 +229,12 @@ class Measurement(Factor, ABC):
 
     def update_observed_from_sample(self) -> None:
         """
-        Use internal sample to generate observed data with internal variance and mask.
+        Generate synthetic observations from the stored latent sample.
+
+        Uses internal `_sample` (set externally) and synthetic noise based on `_var`.
+        If a mask is defined, applies zero precision outside the mask.
         """
+
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
 

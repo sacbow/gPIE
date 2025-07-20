@@ -9,19 +9,37 @@ _current_graph = threading.local()
 
 class Graph:
     """
-    Graph represents a Computational Factor Graph (CFG) used in gPIE.
+    The central coordinator of a Computational Factor Graph (CFG) in gPIE.
 
-    This graph structure encodes the computational dependencies among latent variables (Wave)
-    and transformation/measurement operators (Factor), allowing efficient scheduling of 
-    message-passing inference such as Belief Propagation.
+    A Graph manages the connectivity, compilation, scheduling, and execution
+    of all `Wave` (latent variables) and `Factor` (probabilistic operators) nodes.
 
-    Attributes:
-        _nodes (set): All Wave and Factor nodes in the graph.
-        _waves (set): Subset of _nodes consisting of Wave instances.
-        _factors (set): Subset of _nodes consisting of Factor instances.
-        _nodes_sorted (list): Topologically sorted list of nodes (forward order).
-        _nodes_sorted_reverse (list): Reverse topological order (for backward pass).
-        _rng (np.random.Generator): Random number generator used for sampling.
+    Responsibilities:
+    - Collect Wave and Factor instances into a coherent model
+    - Compile the model into a topologically sorted DAG
+    - Propagate precision modes forward/backward for consistency
+    - Perform forward-backward inference via message passing
+    - Support sampling and observation via Measurement nodes
+
+    Key Concepts:
+    - Compilation is required before inference; it discovers all reachable nodes.
+    - Message passing is done in topological order (`forward`) and reverse (`backward`).
+    - The graph supports sampling (`generate_sample`) and visualization (`visualize`).
+
+    Usage Example:
+        >>> g = Graph()
+        >>> with g.observe():
+        >>>     z = GaussianMeasurement(...) @ (x + y)
+        >>> g.compile()
+        >>> g.run(n_iter=10)
+
+    Internal State:
+        _nodes (set): All Wave and Factor nodes in the graph
+        _waves (set): Subset of Wave instances
+        _factors (set): Subset of Factor instances
+        _nodes_sorted (list): Nodes in forward topological order
+        _nodes_sorted_reverse (list): Nodes in reverse topological order
+        _rng (np.random.Generator): Default RNG for sampling and initialization
     """
 
     def __init__(self):
@@ -157,7 +175,7 @@ class Graph:
         for node in self._nodes_sorted_reverse:
             node.backward()
 
-    def run(self, n_iter=10, callback=None, rng=None, verbose=True):
+    def run(self, n_iter=10, callback=None, rng=None, verbose=False):
         """
         Run multiple rounds of belief propagation with optional progress bar.
 
@@ -246,15 +264,12 @@ class Graph:
 
         output_notebook()
 
-        # ==== ヘルパー関数 ====
         def list_of_dicts_to_dict_of_lists(ld):
             return {key: [d[key] for d in ld] for key in ld[0]}
 
-        # ==== ノードリストの作成 ====
         nodes = []
         edges = []
 
-        # 全ノードを一つのループで扱う
         for i, node in enumerate(list(self._waves) + list(self._factors)):
             gen = getattr(node, "generation", 0)
             label = getattr(node, "label", None)
@@ -263,10 +278,9 @@ class Graph:
 
             node_type = "wave" if node in self._waves else "factor"
 
-            # generation に基づく横位置、同generation内のindexで縦をずらす
             group = [n for n in (self._waves if node_type == "wave" else self._factors) if getattr(n, "generation", 0) == gen]
             index_in_group = group.index(node)
-            y_offset = index_in_group * 0.4 - (len(group) - 1) * 0.2  # 中心から散らす
+            y_offset = index_in_group * 0.4 - (len(group) - 1) * 0.2  
 
             nodes.append(dict(
                 id=id(node),
@@ -277,15 +291,12 @@ class Graph:
                 generation=gen
             ))
 
-            # edges の登録（Factorなら入力/出力を調べる）
             if node_type == "factor":
                 for wave in node.inputs.values():
                     edges.append((id(wave), id(node)))
                 if node.output:
                     edges.append((id(node), id(node.output)))
 
-
-        # ==== 可視化データ準備 ====
         wave_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "wave"])
         factor_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "factor"])
         all_data = list_of_dicts_to_dict_of_lists(nodes)
@@ -294,8 +305,6 @@ class Graph:
         factor_source = ColumnDataSource(factor_data)
         label_source = ColumnDataSource(all_data)
 
-        # ==== 描画設定 ====
-        # ノード位置から範囲を自動計算
         xs = [n["x"] for n in nodes]
         ys = [n["y"] for n in nodes]
 
@@ -326,14 +335,12 @@ class Graph:
             text="label",
             source=label_source,
             text_align="center",
-            text_baseline="bottom",  # テキストの基準を「下」に
+            text_baseline="bottom",  
             text_font_size="9pt",
-            y_offset=10,              # 上にずらす
+            y_offset=10,             
         )
 
         p.add_layout(labels)
-
-        # ノードを generation 付きで辞書化
         gen_lookup = {n["id"]: n.get("generation", 0) for n in nodes}
         pos_lookup = {n["id"]: (n["x"], n["y"]) for n in nodes}
 
@@ -341,7 +348,6 @@ class Graph:
             src_gen = gen_lookup.get(src_id, 0)
             tgt_gen = gen_lookup.get(tgt_id, 0)
 
-            # 方向を generation に基づいて決定
             if src_gen <= tgt_gen:
                 start_id, end_id = src_id, tgt_id
             else:
@@ -360,9 +366,4 @@ class Graph:
         p.axis.visible = False
         p.grid.visible = False
         show(p)
-
-
-
-
-
 

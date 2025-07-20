@@ -17,29 +17,40 @@ if TYPE_CHECKING:
 
 class Wave:
     """
-    Represents a latent variable node in a Computational Factor Graph (CFG),
-    typically used for approximate inference using Expectation Propagation (EP).
+    A latent variable node in a Computational Factor Graph (CFG),
+    representing a Gaussian-distributed belief updated via message passing.
 
-    Each Wave stores:
-        - A current belief (Gaussian: mean and precision)
-        - Messages from one parent and multiple children
+    Each Wave corresponds to a vector-shaped random variable in the model.
+    It manages:
+        - A belief (mean and precision)
+        - Messages from a parent and multiple children
         - Precision mode (scalar or array)
-        - Optional random sample for stochastic inference
+        - Optional sample for generative use
 
-    Precision modes:
-        - 'scalar': One global precision value for all elements
-        - 'array': Per-element precision values (same shape as mean)
-        - Internally stored as Enum[PrecisionMode], but exposed as str for compatibility
+    Message Passing Semantics:
+        - forward(): sends belief / child_message to each child
+        - backward(): sends combined child messages to the parent
+        - Belief is updated as: belief = parent_message * combine(child_messages)
+
+    Precision Modes:
+        - 'scalar': Single scalar precision per UA
+        - 'array': Elementwise precision (same shape as mean)
+        Internally stored as `PrecisionMode` enum, externally exposed as str.
+
+    Typical Usage:
+        >> a = Wave((64, 64))
+        >> b = Wave((64, 64))
+        >> c = a + b  # Equivalent to AddPropagator() @ (a, b)
 
     Attributes:
-        shape (tuple[int, ...]): Shape of the variable.
-        dtype (np.dtype): Data type (e.g., np.complex128).
-        label (str | None): Optional identifier.
-        parent (Factor | None): The parent factor.
-        children (list[Factor]): List of child factors.
-        belief (UncertainArray | None): Current belief.
-        parent_message (UncertainArray | None): Message from parent.
-        child_messages_tensor (UncertainArrayTensor | None): Messages from children.
+        shape (tuple[int, ...]): Shape of the variable (excluding batch).
+        dtype (np.dtype): Data type of values (e.g., np.complex128).
+        label (str | None): Optional name identifier for graph visualization/debugging.
+        parent (Factor | None): Connected parent factor node.
+        children (list[Factor]): Connected child factors.
+        belief (UncertainArray | None): Current belief estimate.
+        parent_message (UncertainArray | None): Incoming message from parent.
+        child_messages_tensor (UncertainArrayTensor | None): Incoming messages from children.
         _precision_mode (PrecisionMode | None): Internal precision mode.
     """
 
@@ -228,7 +239,7 @@ class Wave:
     def forward(self) -> None:
         """
         Send messages to all child factors using EP-style division.
-
+        forward(): sends (belief / child_message) to each child
         Requires that parent message has already been received.
         """
         if self.parent_message is None:
@@ -245,7 +256,7 @@ class Wave:
     def backward(self) -> None:
         """
         Send message to parent by combining all child messages.
-
+        backward(): sends combined(child_messages) to parent
         If there's only one child, reuse its message directly.
         """
         if self.parent is None:

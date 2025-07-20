@@ -9,7 +9,32 @@ from typing import Optional, Union
 class GaussianMeasurement(Measurement):
     """
     Gaussian measurement model: y ~ N(x, var) or CN(x, var).
+
+    This class implements a measurement factor where the observed data `y`
+    is a noisy version of the latent variable `x`, with additive Gaussian noise:
+
+        y = x + ε,     ε ~ N(0, var)   (real or complex)
+
+    This is the most standard observation model used in signal processing
+    and probabilistic inference.
+
+    Features:
+        - Supports both real and complex data types
+        - Accepts scalar or per-element (array) precision
+        - Supports optional observation masking (via binary mask)
+        - Allows both fixed and synthetic (generated) observations
+
+    Usage:
+        meas = GaussianMeasurement(observed_array=..., var=0.1) @ x
+
+    Attributes:
+        _var (float): Observation noise variance
+        _precision_value (float): 1 / _var
+        input_dtype (np.dtype): Required dtype for latent input wave
+        expected_observed_dtype (np.dtype): Must match observed data
+        observed (UncertainArray): Actual observed values with precision
     """
+
 
     input_dtype: Optional[np.dtype] = None
     expected_observed_dtype: Optional[np.dtype] = None  # will default to input_dtype
@@ -66,8 +91,14 @@ class GaussianMeasurement(Measurement):
 
     def generate_sample(self, rng: np.random.Generator) -> None:
         """
-        Generate noisy observation: y = x + noise.
+        Generate synthetic observed value by adding Gaussian noise to the latent sample.
+
+        The result is stored in `self._sample`, which can be promoted to observation later.
+
+        Raises:
+            RuntimeError: If latent sample from input wave is missing.
         """
+
         x = self.input.get_sample()
         if x is None:
             raise RuntimeError("Input sample not available.")
@@ -77,8 +108,18 @@ class GaussianMeasurement(Measurement):
 
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Return the observed message directly.
+        Return the observation as an UncertainArray message.
+
+        Depending on the precision mode, either scalar or array precision
+        will be enforced before returning.
+
+        Returns:
+            UA: The observation in message form.
+    
+        Raises:
+            RuntimeError: If no observation is set.
         """
+
         self._check_observed()
         if self.precision_mode_enum == PrecisionMode.SCALAR:
             return self.observed.as_scalar_precision()
@@ -87,8 +128,13 @@ class GaussianMeasurement(Measurement):
 
     def set_observed(self, data: np.ndarray, var: Optional[float] = None) -> None:
         """
-        Manually assign observed data and its precision to this measurement.
+        Manually assign the observation and precision (overrides current value).
+
+        Args:
+            data: Observed measurement array (same shape as input wave).
+            var: Optional override for noise variance (defaults to internal value).
         """
+
         var = var if var is not None else self._var
         prec = 1.0 / var
 
@@ -106,8 +152,14 @@ class GaussianMeasurement(Measurement):
 
     def update_observed_from_sample(self) -> None:
         """
-        Use current sample as observed value, constructing proper masked precision.
+        Promote internal sample (from `generate_sample`) to actual observation.
+
+        Constructs appropriate precision array using internal variance and mask.
+    
+        Raises:
+            RuntimeError: If no internal sample is available.
         """
+
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
 

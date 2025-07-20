@@ -10,10 +10,31 @@ from core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPMM
 
 class MultiplyPropagator(BinaryPropagator):
     """
-    Propagator implementing Z = X * Y for complex Gaussian belief propagation.
+    A propagator implementing Z = A * B under complex Gaussian belief propagation.
 
-    Uses EP-style inference to handle multiplicative interactions.
+    This module supports multiplicative interactions between two latent variables
+    within the Expectation Propagation (EP) framework.
+
+    Unlike additive propagators, the multiplication is nonlinear and leads to
+    non-Gaussian true posteriors. This module approximates them as Gaussians
+    by moment matching (mean & variance).
+
+    Precision modes:
+        - Supported: ARRAY, SCALAR_AND_ARRAY_TO_ARRAY, ARRAY_AND_SCALAR_TO_ARRAY
+        - Not supported: SCALAR (this is a bad approximation)
+
+    Key operations:
+        - Forward: Combines beliefs of A and B to estimate Z ≈ A * B
+        - Backward: Sends messages to A or B by conditioning on Z and the other
+
+    Note:
+        Belief estimates are required on both inputs before forward propagation.
+
+    Typical use cases:
+        - Gain-modulated signal modeling
+        - Elementwise multiplicative interaction (e.g., masks, amplitude scaling)
     """
+
 
     def __init__(self, precision_mode: Optional[BPMM] = None):
         super().__init__(precision_mode=precision_mode)
@@ -59,6 +80,19 @@ class MultiplyPropagator(BinaryPropagator):
         self._init_rng = rng
 
     def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+        """
+        Approximate the output belief for Z = A * B using moment-matching.
+
+        Args:
+            inputs: Dictionary with input messages ("a", "b").
+
+        Returns:
+            UncertainArray: Gaussian approximation of the product distribution.
+    
+        Raises:
+            RuntimeError: If required input beliefs are missing.
+        """
+
         x = self.inputs["a"].belief
         y = self.inputs["b"].belief
 
@@ -83,6 +117,22 @@ class MultiplyPropagator(BinaryPropagator):
         return UA(mu, dtype=out_dtype, precision=prec)
 
     def _compute_backward(self, output: UA, exclude: str) -> tuple[UA, UA]:
+        """
+        Compute the backward message and updated belief for the excluded input.
+
+        Args:
+            output: The current output message (belief about Z).
+            exclude: Either "a" or "b", indicating which input to update.
+
+        Returns:
+            tuple:
+                - Message to send to the excluded input
+                - Updated belief estimate for that input
+    
+        Raises:
+            RuntimeError: If necessary beliefs or messages are missing.
+        """
+
         z_m, gamma_z = output.data, output._precision
         other_wave = self.inputs["b" if exclude == "a" else "a"]
 
@@ -110,11 +160,20 @@ class MultiplyPropagator(BinaryPropagator):
         return msg, q_x
 
     def forward(self) -> None:
+        """
+        Send a message from Z = A * B toward the output wave.
+
+        If input beliefs are not available, initializes a random message.
+
+        Raises:
+            RuntimeError: If RNG is not set and inputs are missing.
+        """
+
         z_wave = self.output
         if self.inputs["a"].belief is None or self.inputs["b"].belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            msg = UA.random(z_wave.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
+            msg = UA.random(z_wave.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)  # precision mode of msg is always "array"
         else:
             belief = self._compute_forward(self.input_messages)
             msg = belief / self.output_message if self.output_message is not None else belief
@@ -123,6 +182,15 @@ class MultiplyPropagator(BinaryPropagator):
         z_wave.receive_message(self, msg)
 
     def backward(self) -> None:
+        """
+        Send messages to both inputs (A and B) based on the output belief.
+
+        This function uses approximate inversion of the product relation.
+
+        Raises:
+            RuntimeError: If the output message is not available.
+        """
+
         if self.output_message is None:
             raise RuntimeError("Output message missing.")
 

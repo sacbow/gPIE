@@ -7,10 +7,41 @@ from core.types import BinaryPropagatorPrecisionMode as BPM
 
 class AddPropagator(BinaryPropagator):
     """
-    A propagator that models Z = A + B under Gaussian belief propagation.
+    A propagator representing the sum of two latent variables: Z = A + B.
+
+    This propagator fuses Gaussian beliefs of two inputs (`a`, `b`) and produces
+    a new belief for the output `z`. It supports both scalar and array precision modes,
+    including asymmetric combinations (e.g., scalar + array → array).
+
+    Precision model:
+        - Forward: combines means and precisions via precision-weighted addition.
+        - Backward: subtracts known input from output and refines residual belief.
+
+    Supports:
+        - Real or complex dtype inputs
+        - Mixed precision propagation with optional scalar reduction
+
+    Used in:
+        - Signal composition models
+        - Residual decomposition
+        - Summation constraints in factor graphs
     """
 
+
     def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+        """
+        Combine two input beliefs into a posterior for Z = A + B.
+
+        Args:
+            inputs (dict): Contains "a" and "b" UncertainArray inputs.
+
+        Returns:
+            UncertainArray: Fused belief for z with updated mean and precision.
+    
+        Raises:
+            RuntimeError: If any input message is missing.
+        """
+
         a = inputs.get("a")
         b = inputs.get("b")
 
@@ -30,6 +61,20 @@ class AddPropagator(BinaryPropagator):
 
 
     def _compute_backward(self, output: UA, exclude: str) -> UA:
+        """
+        Compute the residual message to one input by subtracting the other.
+
+        Args:
+            output: Current belief of z.
+            exclude: Which input to exclude when computing the backward message ("a" or "b").
+
+        Returns:
+            UncertainArray: The updated message to send to the excluded input.
+
+        Raises:
+            RuntimeError: If required inputs are not available.
+        """
+
         other_name = "b" if exclude == "a" else "a"
         other_wave = self.inputs.get(other_name)
         other_msg = self.input_messages.get(other_wave)

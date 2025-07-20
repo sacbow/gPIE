@@ -12,7 +12,33 @@ class Prior(Factor, ABC):
     """
     Abstract base class for prior factors in a Computational Factor Graph (CFG).
 
-    A Prior represents the probabilistic origin of a Wave variable.
+    A `Prior` defines the generative origin of a `Wave` node by specifying
+    its initial distribution (e.g., standard Gaussian, sparse, structured).
+
+    Responsibilities:
+        - Owns and connects a single output Wave (no inputs)
+        - Sends initial messages during the forward pass
+        - Optionally refines messages if feedback is available (e.g., structured priors)
+        - Manages precision mode (scalar/array) based on Wave or user input
+
+    Message Passing Semantics:
+        - forward(): Sends a randomly sampled or updated belief to the connected Wave
+        - backward(): No operation (priors do not receive messages)
+
+    Precision Handling:
+        - If the precision_mode is not explicitly set, it is inferred from the connected Wave
+        - Random samples are generated using `UncertainArray.random(...)`
+
+    DSL Integration:
+        Supports syntactic sugar:
+            >> x = ~MyPrior(...)   # equivalent to: x = prior.output
+
+    Attributes:
+        shape (tuple[int, ...]): Shape of the variable to be generated.
+        dtype (np.dtype): Data type (default: np.complex128).
+        output (Wave): The Wave node this prior generates.
+        _precision_mode (PrecisionMode | None): Precision mode, if set or inferred.
+        _init_rng (np.random.Generator | None): RNG used for random message generation.
     """
     
     def __invert__(self) -> Wave:

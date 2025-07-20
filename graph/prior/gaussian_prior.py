@@ -8,6 +8,32 @@ from core.linalg_utils import random_normal_array
 
 
 class GaussianPrior(Prior):
+    """
+    A standard zero-mean Gaussian prior for latent variables.
+
+    This class instantiates a prior distribution of the form:
+        - For real dtype:     x ~ N(0, var)
+        - For complex dtype:  x ~ CN(0, var)
+
+    The prior defines the origin of a `Wave` in the factor graph, initializing it
+    with a fixed variance and zero mean. It supports both scalar and array precision modes.
+
+    Behavior:
+        - On the first forward pass, it samples from the prior (if not cached)
+        - On later passes, it returns a fixed UncertainArray with the specified precision
+        - Sampling and precision are consistent with the specified dtype and mode
+
+    Args:
+        var (float): Variance of the Gaussian (must be positive).
+        shape (tuple[int, ...]): Shape of the latent variable.
+        dtype (np.dtype): Output dtype; supports np.float64 or np.complex128.
+        precision_mode (PrecisionMode | None): Scalar or array mode (or inferred).
+        label (str | None): Optional name for the associated Wave.
+
+    Attributes:
+        var (float): Variance of the prior (used for sampling and precision).
+        precision (float): Inverse of variance, used in message construction.
+    """
     def __init__(
         self,
         var: float = 1.0,
@@ -16,17 +42,7 @@ class GaussianPrior(Prior):
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:
-        """
-        Gaussian prior with zero-mean and scalar variance.
-        Supports both real and complex outputs.
 
-        Args:
-            var: Variance (must be positive).
-            shape: Shape of the latent variable.
-            dtype: Output dtype (np.float64 or np.complex128).
-            precision_mode: "scalar", "array", or None (inferred).
-            label: Optional label for the Wave.
-        """
         if var <= 0:
             raise ValueError("Variance must be positive.")
         

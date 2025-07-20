@@ -8,6 +8,32 @@ from core.types import PrecisionMode
 
 
 class SupportPrior(Prior):
+    """
+    A structured prior that enforces known support constraints on the latent variable.
+
+    This prior models a variable as:
+        - Gaussian CN(0, 1) or N(0, 1) on the support region
+        - Deterministically zero (delta function) elsewhere
+
+    Internally, this is implemented via an UncertainArray with a very large precision
+    (e.g., 1e10) outside the support, effectively clamping those values to zero.
+
+    Behavior:
+        - Precision mode is typically array-based (default), but scalar fallback is supported
+        - Forward messages are fixed and reused unless scalar conversion is needed
+        - Sampling uses CN(0,1) or N(0,1) on the support, zero elsewhere
+
+    Args:
+        support (np.ndarray[bool]): Boolean mask of the same shape as the latent variable.
+        dtype (np.dtype): np.float64 or np.complex128 (default: complex).
+        precision_mode (PrecisionMode | None): Precision mode to use; defaults to array.
+        label (str | None): Optional label for the output wave.
+
+    Attributes:
+        support (np.ndarray): Mask indicating active support positions.
+        large_value (float): Precision value used to approximate delta constraints.
+    """
+
     def __init__(
         self,
         support: np.ndarray,
@@ -15,20 +41,12 @@ class SupportPrior(Prior):
         precision_mode: Optional[PrecisionMode] = PrecisionMode.ARRAY,
         label: Optional[str] = None
     ) -> None:
-        """
-        Support-based prior: CN(0,1) on support=True, delta(0) on support=False.
 
-        Args:
-            support: Boolean mask indicating support region.
-            dtype: np.float64 or np.complex128.
-            precision_mode: Enum value (scalar/array), default: array.
-            label: Optional label for the output wave.
-        """
         if support.dtype != bool:
             raise ValueError("Support must be a boolean numpy array.")
 
         self.support: np.ndarray = support
-        self.large_value: float = 1e6
+        self.large_value: float = 1e10
 
         super().__init__(
             shape=support.shape,

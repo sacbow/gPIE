@@ -7,10 +7,54 @@ from core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPM
 
 
 class BinaryPropagator(Propagator):
+    """
+    Abstract base class for two-input propagators in the computational graph.
+
+    This class serves as a parent for operations like addition, multiplication,
+    or other binary transformations with two Wave inputs ("a" and "b") and a single output.
+
+    It handles:
+        - Input/output wiring with shape and dtype checks
+        - Precision mode inference and compatibility logic
+        - Message routing and EP-style forward/backward logic
+
+    Supported precision modes:
+        - SCALAR: All variables have scalar precision
+        - ARRAY: All variables use elementwise precision
+        - SCALAR_AND_ARRAY_TO_ARRAY: Mixed mode (scalar + array → array)
+        - ARRAY_AND_SCALAR_TO_ARRAY: Mixed mode (array + scalar → array)
+
+    Subclasses must implement:
+        - `_compute_forward(inputs: dict[str, UA]) -> UA`
+        - `_compute_backward(output: UA, exclude: str) -> UA`
+
+    Usage:
+        z = AddPropagator() @ (x, y)
+    """
+
     def __init__(self, precision_mode: Optional[BPM] = None):
         super().__init__(input_names=("a", "b"), dtype=None, precision_mode=precision_mode)
 
     def __matmul__(self, inputs: tuple[Wave, Wave]) -> Wave:
+        """
+        Wire two input Wave nodes into the binary propagator.
+
+        Performs:
+            - Shape compatibility check
+            - dtype resolution (real → real, mixed → complex)
+            - Connection of inputs and output
+            - Graph generation index setup
+
+        Args:
+            inputs (tuple[Wave, Wave]): Two wave variables to combine.
+
+        Returns:
+            Wave: The output wave resulting from the binary operation.
+
+        Raises:
+            ValueError: If inputs are invalid or incompatible.
+        """
+
         if not (isinstance(inputs, tuple) and len(inputs) == 2):
             raise ValueError("BinaryPropagator requires a tuple of two Wave objects.")
 
