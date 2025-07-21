@@ -317,18 +317,43 @@ class Wave:
         return self.__add__(other)
 
 
-    def __mul__(self, other: Wave) -> Wave:
+    def __mul__(self, other) -> Wave:
         """
-        Shorthand for `MultiplyPropagator() @ (self, other)`.
+        Overloaded elementwise multiplication.
+
+        Supports:
+            - Wave * Wave → MultiplyPropagator
+            - Wave * ndarray/scalar → MultiplyConstPropagator
+
+        Args:
+            other (Wave | ndarray | scalar)
 
         Returns:
-            Output wave of the multiplication.
+            Wave
         """
+        from .propagator.multiply_const_propagator import MultiplyConstPropagator
         from .propagator.multiply_propagator import MultiplyPropagator
 
-        if not isinstance(other, Wave):
-            raise TypeError("Can only multiply Wave by Wave.")
-        return MultiplyPropagator() @ (self, other)
+        if isinstance(other, Wave):
+            return MultiplyPropagator() @ (self, other)
+        elif isinstance(other, (int, float, complex, np.ndarray)):
+            return MultiplyConstPropagator(other) @ self
+        return NotImplemented
+
+    def __rmul__(self, other) -> Wave:
+        """
+        Right-side multiplication.
+
+        Supports:
+            - scalar * Wave
+            - ndarray * Wave
+
+        Returns:
+            Wave
+        """
+        if isinstance(other, (int, float, complex, np.ndarray)):
+            return MultiplyConstPropagator(other) @ self
+        return NotImplemented
 
     def __repr__(self) -> str:
         label_str = f", label='{self.label}'" if self.label else ""
