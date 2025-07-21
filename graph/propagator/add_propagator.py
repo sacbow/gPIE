@@ -1,8 +1,8 @@
 import numpy as np
 from typing import Optional
 from .binary_propagator import BinaryPropagator
-from core.uncertain_array import UncertainArray as UA
-from core.types import BinaryPropagatorPrecisionMode as BPM
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import BinaryPropagatorPrecisionMode as BPM
 
 
 class AddPropagator(BinaryPropagator):

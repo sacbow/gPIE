@@ -1,5 +1,5 @@
-from graph.wave import Wave
-from graph.factor import Factor
+from ..wave import Wave
+from ..factor import Factor
 import numpy as np
 import contextlib
 import threading

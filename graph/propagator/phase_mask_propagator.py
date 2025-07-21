@@ -1,9 +1,9 @@
 import numpy as np
 from typing import Optional
 from .base import Propagator
-from graph.wave import Wave
-from core.uncertain_array import UncertainArray as UA
-from core.types import PrecisionMode
+from ..wave import Wave
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode
 
 
 class PhaseMaskPropagator(Propagator):

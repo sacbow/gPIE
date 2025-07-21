@@ -2,10 +2,9 @@ import numpy as np
 from typing import Optional, Tuple
 
 from .base import Prior
-from core.uncertain_array import UncertainArray as UA
-from core.types import PrecisionMode
-from core.linalg_utils import random_normal_array
-
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode
+from ...core.linalg_utils import random_normal_array
 
 class GaussianPrior(Prior):
     """

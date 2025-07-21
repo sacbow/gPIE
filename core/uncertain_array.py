@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from typing import Union, Optional, Literal, overload
-from core.types import PrecisionMode
 from numpy.typing import NDArray
 import numpy as np
 
+from .types import PrecisionMode
 from .linalg_utils import reduce_precision_to_scalar, random_normal_array
+
 
 # Type aliases
 ArrayLike = Union[NDArray[np.complex128], NDArray[np.float64]]

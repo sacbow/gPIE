@@ -4,10 +4,9 @@ import numpy as np
 
 from ..factor import Factor
 from ..wave import Wave
-from core.uncertain_array import UncertainArray
-from core.types import PrecisionMode
-from graph.structure.graph import Graph
-
+from ...core.uncertain_array import UncertainArray
+from ...core.types import PrecisionMode
+from ..structure.graph import Graph
 
 
 class Measurement(Factor, ABC):

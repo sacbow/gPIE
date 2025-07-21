@@ -1,10 +1,10 @@
 import numpy as np
 from typing import Optional
 from .base import Propagator
-from graph.wave import Wave
-from core.uncertain_array import UncertainArray as UA
-from core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
-from core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from ..wave import Wave
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
+from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 
 class IFFT2DPropagator(Propagator):

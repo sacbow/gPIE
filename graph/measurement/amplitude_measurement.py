@@ -1,7 +1,7 @@
 import numpy as np
 from .base import Measurement
-from core.uncertain_array import UncertainArray as UA
-from core.types import PrecisionMode
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode
 from typing import Optional, Union
 
 

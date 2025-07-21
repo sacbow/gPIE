@@ -4,9 +4,8 @@ import numpy as np
 
 from ..factor import Factor
 from ..wave import Wave
-from core.uncertain_array import UncertainArray
-from core.types import PrecisionMode
-
+from ...core.uncertain_array import UncertainArray
+from ...core.types import PrecisionMode
 
 class Prior(Factor, ABC):
     """

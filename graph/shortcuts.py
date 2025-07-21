@@ -1,8 +1,6 @@
-# graph/shortcuts.py
-
-from graph.wave import Wave
-from graph.propagator.fft_2d_propagator import FFT2DPropagator
-from graph.propagator.ifft_2d_propagator import IFFT2DPropagator
+from .wave import Wave
+from .propagator.fft_2d_propagator import FFT2DPropagator
+from .propagator.ifft_2d_propagator import IFFT2DPropagator
 
 def fft2(x: Wave, *, label: str = None) -> Wave:
     """

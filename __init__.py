@@ -1,8 +1,10 @@
-from core import (
+# core modules
+from .core import (
     UncertainArray,
     UncertainArrayTensor,
     mse,
     nmse,
+    pmse,
     psnr,
     support_error,
     PrecisionMode,
@@ -11,12 +13,12 @@ from core import (
 )
 
 # Graph structure and base components
-from graph.structure import Graph
-from graph.wave import Wave
-from graph.factor import Factor
+from .graph.structure import Graph
+from .graph.wave import Wave
+from .graph.factor import Factor
 
 # Priors
-from graph.prior import (
+from .graph.prior import (
     GaussianPrior,
     SparsePrior,
     SupportPrior,
@@ -24,7 +26,7 @@ from graph.prior import (
 )
 
 # Propagators
-from graph.propagator import (
+from .graph.propagator import (
     UnitaryPropagator,
     FFT2DPropagator,
     PhaseMaskPropagator,
@@ -34,7 +36,13 @@ from graph.propagator import (
 )
 
 # Measurements
-from graph.measurement import (
+from .graph.measurement import (
     GaussianMeasurement,
     AmplitudeMeasurement,
+)
+
+# Shortcuts
+from .graph.shortcuts import (
+    fft2,
+    ifft2,
 )

@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Union
-from graph.wave import Wave
-from core.uncertain_array import UncertainArray
-from core.types import PrecisionMode
+from .wave import Wave
+from ..core.uncertain_array import UncertainArray
+from ..core.types import PrecisionMode
 
 
 class Factor(ABC):

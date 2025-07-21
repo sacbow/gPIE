@@ -3,9 +3,9 @@ from typing import Optional
 import numpy as np
 
 from .binary_propagator import BinaryPropagator
-from graph.wave import Wave
-from core.uncertain_array import UncertainArray as UA
-from core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPMM
+from ..wave import Wave
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPMM
 
 
 class MultiplyPropagator(BinaryPropagator):

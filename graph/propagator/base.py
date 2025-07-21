@@ -4,8 +4,8 @@ import numpy as np
 
 from ..factor import Factor
 from ..wave import Wave
-from core.uncertain_array import UncertainArray as UA
-from core.types import UnaryPropagatorPrecisionMode
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import UnaryPropagatorPrecisionMode
 
 
 class Propagator(Factor, ABC):

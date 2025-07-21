@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
-from core.types import PrecisionMode
+from ..core.types import PrecisionMode
 import numpy as np
 from numpy.typing import NDArray
 
-from core.linalg_utils import random_normal_array
-from core.uncertain_array import UncertainArray
-from core.uncertain_array_tensor import UncertainArrayTensor
+from ..core.linalg_utils import random_normal_array
+from ..core.uncertain_array import UncertainArray
+from ..core.uncertain_array_tensor import UncertainArrayTensor
 
 if TYPE_CHECKING:
-    from graph.propagator.add_propagator import AddPropagator
-    from graph.propagator.multiply_propagator import MultiplyPropagator
-    from graph.structure.graph import Factor
+    from .propagator.add_propagator import AddPropagator
+    from .propagator.multiply_propagator import MultiplyPropagator
+    from .structure.graph import Factor
 
 
 class Wave:
@@ -53,6 +53,7 @@ class Wave:
         child_messages_tensor (UncertainArrayTensor | None): Incoming messages from children.
         _precision_mode (PrecisionMode | None): Internal precision mode.
     """
+    __array_priority__ = 1000
 
     def __init__(
         self,
@@ -292,18 +293,29 @@ class Wave:
         """Clear the stored sample."""
         self._sample = None
 
-    def __add__(self, other: Wave) -> Wave:
+    def __add__(self, other):
         """
-        Shorthand for `AddPropagator() @ (self, other)`.
-
-        Returns:
-            Output wave of the addition.
+        x + other → AddConstPropagator if other is scalar or ndarray,
+                    otherwise AddPropagator
         """
-        from graph.propagator.add_propagator import AddPropagator
+        from .propagator.add_propagator import AddPropagator
+        from .propagator.add_const_propagator import AddConstPropagator
+        from numpy import ndarray
 
-        if not isinstance(other, Wave):
-            raise TypeError("Can only add Wave to Wave.")
-        return AddPropagator() @ (self, other)
+        if isinstance(other, Wave):
+            return AddPropagator() @ (self, other)
+
+        if np.isscalar(other) or isinstance(other, ndarray):
+            return AddConstPropagator(const=other) @ self
+
+        return NotImplemented
+
+    def __radd__(self, other):
+        """
+        other + x → same as x + other
+        """
+        return self.__add__(other)
+
 
     def __mul__(self, other: Wave) -> Wave:
         """
@@ -312,7 +324,7 @@ class Wave:
         Returns:
             Output wave of the multiplication.
         """
-        from graph.propagator.multiply_propagator import MultiplyPropagator
+        from .propagator.multiply_propagator import MultiplyPropagator
 
         if not isinstance(other, Wave):
             raise TypeError("Can only multiply Wave by Wave.")

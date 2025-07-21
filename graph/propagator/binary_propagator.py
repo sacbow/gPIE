@@ -1,9 +1,9 @@
 from typing import Optional
 import numpy as np
 from .base import Propagator
-from graph.wave import Wave
-from core.uncertain_array import UncertainArray as UA
-from core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPM
+from ..wave import Wave
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPM
 
 
 class BinaryPropagator(Propagator):

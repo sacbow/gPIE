@@ -4,9 +4,8 @@ from typing import List, Union, Literal
 from numpy.typing import NDArray
 import numpy as np
 
-from core.uncertain_array import UncertainArray
-from core.types import PrecisionMode
-
+from .uncertain_array import UncertainArray
+from .types import PrecisionMode
 
 class UncertainArrayTensor:
     """
