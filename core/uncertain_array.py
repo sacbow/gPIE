@@ -419,6 +419,26 @@ class UncertainArray:
             return self
         scalar_prec = reduce_precision_to_scalar(self._precision)
         return UncertainArray(self.data, dtype=self.dtype, precision=scalar_prec)
+    
+    def as_array_precision(self) -> UncertainArray:
+        """
+        Convert this UncertainArray to array precision mode.
+
+        This method promotes a scalar precision UncertainArray into an array-based precision,
+        replicating the scalar precision value across all elements.
+
+        Returns:
+            A new UncertainArray with the same data but per-element precision.
+
+        Note:
+            If already in array mode, returns self unchanged.
+        """
+        if not self._scalar_precision:
+            return self
+
+        array_precision = np.full_like(self.data, fill_value=self._precision, dtype=np.float64)
+        return UncertainArray(self.data, dtype=self.dtype, precision=array_precision)
+
 
     def __repr__(self) -> str:
         """

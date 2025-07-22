@@ -10,7 +10,7 @@ class ConstWave(Prior):
     def __init__(
         self,
         data: np.ndarray,
-        large_value: float = 1e10,
+        large_value: float = 1e12,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:

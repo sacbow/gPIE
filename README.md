@@ -47,37 +47,38 @@ gpie/
 
 This project has been tested on **Python 3.10.5**.
 
+---
+
 ### ✅ Required Dependencies
 
 | Package   | Version | Purpose                                   |
 |-----------|---------|-------------------------------------------|
 | `numpy`   | ≥2.2.6  | Core tensor computation and math support  |
 
+---
+
 ### ⚙️ Optional Dependencies
 
-| Package   | Version | Used In             | Description                             |
-|-----------|---------|---------------------|-----------------------------------------|
-| `bokeh`   | ≥3.7.3  | `graph.visualize()` | Visualization of computational graphs   |
+| Package        | Version       | Used In                      | Description                                      |
+|----------------|---------------|------------------------------|--------------------------------------------------|
+| `bokeh`        | ≥3.7.3        | `Graph.visualize()`          | Interactive visualization in Jupyter notebook    |
+| `networkx`     | ≥3.3          | `Graph.visualize_graphviz()` | Graph structure modeling                         |
+| `pygraphviz`   | ≥1.10         | `Graph.visualize_graphviz()` | Graphviz layout interface (requires native build)|
+| `graphviz`     | system package| `pygraphviz` build/runtime    | Must be installed separately (e.g. via installer)|
 
-Note: `bokeh` may install additional transitive dependencies such as `Jinja2`, `tornado`, etc., automatically via pip.
+> **Note:**  
+> - `pygraphviz` requires [Graphviz](https://graphviz.org/) to be **pre-installed** and available on your system (e.g. `cgraph.h` headers).  
+> - On **Windows**, install Graphviz using the official installer and ensure that `Graphviz/bin` is in your `PATH`.
 
 ---
 
 ### 📦 Install with pip
 
-Minimum setup (core functionality only):
+**Minimum setup (core functionality only):**
 
 ```bash
 pip install numpy>=2.2.6
 ```
-
-Optional: for graph visualization via `Graph.visualize()`:
-
-```bash
-pip install bokeh>=3.7.3
-```
-
----
 
 ###  Development Setup
 

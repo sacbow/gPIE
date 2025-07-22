@@ -256,114 +256,91 @@ class Graph:
         print(f"- {len(self._waves)} Wave nodes")
         print(f"- {len(self._factors)} Factor nodes")
     
+
     def visualize(self):
-        from bokeh.plotting import figure, show
-        from bokeh.models import ColumnDataSource, LabelSet, Arrow, NormalHead
+        import networkx as nx
+        from networkx.drawing.nx_agraph import graphviz_layout
+        from bokeh.plotting import figure, show, save, output_file
+        from bokeh.models import ColumnDataSource, LabelSet, Arrow, NormalHead, CDSView, BooleanFilter
         from bokeh.io import output_notebook
-        import numpy as np
+        from bokeh.io.export import export_png
+        import os
 
         output_notebook()
 
-        def list_of_dicts_to_dict_of_lists(ld):
-            return {key: [d[key] for d in ld] for key in ld[0]}
-
+        # === 1. ノードとエッジの収集 ===
         nodes = []
         edges = []
 
-        for i, node in enumerate(list(self._waves) + list(self._factors)):
-            gen = getattr(node, "generation", 0)
-            label = getattr(node, "label", None)
-            if label is None:
-                label = node.__class__.__name__
+        for node in list(self._waves) + list(self._factors):
+            nid = id(node)
+            label = getattr(node, "label", None) or node.__class__.__name__
+            ntype = "wave" if node in self._waves else "factor"
+            nodes.append((nid, {"label": label, "type": ntype}))
 
-            node_type = "wave" if node in self._waves else "factor"
-
-            group = [n for n in (self._waves if node_type == "wave" else self._factors) if getattr(n, "generation", 0) == gen]
-            index_in_group = group.index(node)
-            y_offset = index_in_group * 0.4 - (len(group) - 1) * 0.2  
-
-            nodes.append(dict(
-                id=id(node),
-                label=label,
-                type=node_type,
-                x=gen * 1.5,
-                y=y_offset,
-                generation=gen
-            ))
-
-            if node_type == "factor":
+            if ntype == "factor":
                 for wave in node.inputs.values():
-                    edges.append((id(wave), id(node)))
+                    edges.append((id(wave), nid))
                 if node.output:
-                    edges.append((id(node), id(node.output)))
+                    edges.append((nid, id(node.output)))
 
-        wave_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "wave"])
-        factor_data = list_of_dicts_to_dict_of_lists([n for n in nodes if n["type"] == "factor"])
-        all_data = list_of_dicts_to_dict_of_lists(nodes)
+        # === 2. グラフ構築 & レイアウト ===
+        G = nx.DiGraph()
+        G.add_nodes_from(nodes)
+        G.add_edges_from(edges)
+        pos = graphviz_layout(G, prog="dot")
 
-        wave_source = ColumnDataSource(wave_data)
-        factor_source = ColumnDataSource(factor_data)
-        label_source = ColumnDataSource(all_data)
+        # === 3. ノード属性をBokeh用に整形 ===
+        node_x, node_y, node_type, node_label, node_color = [], [], [], [], []
 
-        xs = [n["x"] for n in nodes]
-        ys = [n["y"] for n in nodes]
+        for nid, attrs in nodes:
+            x, y = pos[nid]
+            node_x.append(x)
+            node_y.append(-y)
+            node_type.append(attrs["type"])
+            node_label.append(attrs["label"])
+            node_color.append("skyblue" if attrs["type"] == "wave" else "lightgreen")
 
-        x_margin = 1.0
-        y_margin = 1.0
+        source = ColumnDataSource(data=dict(
+            x=node_x, y=node_y, type=node_type, label=node_label, color=node_color
+        ))
 
-        x_min = min(xs) - x_margin
-        x_max = max(xs) + x_margin
-        y_min = min(ys) - y_margin
-        y_max = max(ys) + y_margin
+        # === 4. View 定義 ===
+        is_wave = [t == "wave" for t in node_type]
+        is_factor = [t == "factor" for t in node_type]
+        wave_view = CDSView(filter=BooleanFilter(is_wave))
+        factor_view = CDSView(filter=BooleanFilter(is_factor))
 
-        p = figure(
-            title="Computational Factor Graph",
-            x_range=(x_min, x_max),
-            y_range=(y_min, y_max),
-            tools="pan,zoom_in,zoom_out,reset,save",
-            width=800,
-            height=600,
-        )
+        # === 5. プロット作成 ===
+        p = figure(title="Computational Factor Graph",
+               tools="pan,reset,zoom_in,zoom_out,save",
+               width=800, height=600)
 
+        p.scatter(x='x', y='y', source=source, size=18,
+              marker='circle', color='skyblue', legend_label='Wave', view=wave_view)
 
-        p.scatter(x="x", y="y", source=wave_source, size=20, color="skyblue", marker="circle", legend_label="Wave")
-        p.scatter(x="x", y="y", source=factor_source, size=20, color="lightgreen", marker="square", legend_label="Factor")
+        p.scatter(x='x', y='y', source=source, size=18,
+              marker='square', color='lightgreen', legend_label='Factor', view=factor_view)
 
-        labels = LabelSet(
-            x="x",
-            y="y",
-            text="label",
-            source=label_source,
-            text_align="center",
-            text_baseline="bottom",  
-            text_font_size="9pt",
-            y_offset=10,             
-        )
-
+        labels = LabelSet(x="x", y="y", text="label", source=source,
+                      text_align="center", text_baseline="bottom",
+                      text_font_size="11pt", y_offset=12)
         p.add_layout(labels)
-        gen_lookup = {n["id"]: n.get("generation", 0) for n in nodes}
-        pos_lookup = {n["id"]: (n["x"], n["y"]) for n in nodes}
 
-        for src_id, tgt_id in edges:
-            src_gen = gen_lookup.get(src_id, 0)
-            tgt_gen = gen_lookup.get(tgt_id, 0)
-
-            if src_gen <= tgt_gen:
-                start_id, end_id = src_id, tgt_id
-            else:
-                start_id, end_id = tgt_id, src_id
-
-            x0, y0 = pos_lookup[start_id]
-            x1, y1 = pos_lookup[end_id]
-
-            arrow = Arrow(end=NormalHead(size=8),
-                        x_start=x0, y_start=y0,
-                        x_end=x1, y_end=y1,
-                        line_width=1.5, line_color="gray")
-
-            p.add_layout(arrow)
+        # エッジ
+        for src, tgt in edges:
+            if src in pos and tgt in pos:
+                x0, y0 = pos[src]
+                x1, y1 = pos[tgt]
+                p.add_layout(Arrow(end=NormalHead(size=6),
+                               x_start=x0, y_start=-y0,
+                               x_end=x1, y_end=-y1,
+                               line_color="gray", line_width=1.5, line_alpha=0.4))
 
         p.axis.visible = False
         p.grid.visible = False
-        show(p)
+        p.legend.visible = False
 
+        # === 6. 画像ファイルに保存 ===
+        output_file("graph.html")
+        save(p)

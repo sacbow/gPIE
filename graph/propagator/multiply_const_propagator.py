@@ -35,6 +35,7 @@ class MultiplyConstPropagator(Propagator):
         super().__init__(input_names=("input",))
         self.const = np.asarray(const)
         self.const_dtype = self.const.dtype
+        self._init_rng = None
 
         # Safe constant to prevent div-by-zero
         abs_vals = np.abs(self.const)
@@ -42,8 +43,9 @@ class MultiplyConstPropagator(Propagator):
 
         # Replace zero or near-zero elements with small magnitude values
         self.const_safe = self.const.copy()
-        self.const_safe[abs_vals < 1e-6] = 1e-6 * np.exp(1j * np.angle(self.const_safe[abs_vals < 1e-6]))
+        self.const_safe[abs_vals < 1e-10] = 1e-10 * np.exp(1j * np.angle(self.const_safe[abs_vals < 1e-10]))
         self.inv_amp_sq = 1.0 / np.abs(self.const_safe)**2
+        self.inv_amp_sq_scalar = 1.0 / np.mean(np.abs(self.const_safe)**2)
 
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
         if isinstance(mode, str):
@@ -61,6 +63,44 @@ class MultiplyConstPropagator(Propagator):
                 f"Precision mode conflict: existing='{self._precision_mode}', requested='{mode}'"
             )
         self._precision_mode = mode
+    
+    def forward(self) -> None:
+        """
+        Send a message to the output wave.
+
+        On first iteration (no output message yet), initializes a random message
+        if RNG is configured. Otherwise, uses standard deterministic forward logic.
+        """
+        from ...core.uncertain_array import UncertainArray as UA
+
+        input_wave = self.inputs.get("input")
+        if input_wave is None:
+            raise RuntimeError("Input wave not connected.")
+
+        # First iteration: no message has been sent to output yet
+        if self.output_message is None:
+            if self._init_rng is None:
+                raise RuntimeError("Initial RNG not configured.")
+            else:
+                scalar = self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR
+                msg = UA.random(
+                    self.output.shape,
+                    dtype=self.dtype,
+                    rng=self._init_rng,
+                    scalar_precision=scalar
+                )
+                self.output.receive_message(self, msg)
+                return
+
+        # Standard deterministic forward
+        input_msg = self.input_messages.get(input_wave)
+        if input_msg is None:
+            raise RuntimeError("Missing input message for MultiplyConstPropagator.")
+        msg_out = self._compute_forward({"input": input_msg})
+        self.output.receive_message(self, msg_out)
+    
+    def set_init_rng(self, rng):
+        self._init_rng = rng
 
     def set_precision_mode_forward(self) -> None:
         mode = self.inputs["input"].precision_mode_enum
@@ -113,9 +153,9 @@ class MultiplyConstPropagator(Propagator):
 
         mu = x.data * const
         if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
-            precision = x.precision(raw=True) / self.inv_amp_sq[0]
+            precision = x.precision(raw=True) * self.inv_amp_sq_scalar
         else:
-            precision = x.precision(raw=True) / self.inv_amp_sq
+            precision = x.precision(raw=True) * self.inv_amp_sq
 
         return UA(mu, dtype=target_dtype, precision=precision)
 
@@ -140,11 +180,11 @@ class MultiplyConstPropagator(Propagator):
 
         mu = output_msg.data / const
         if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
-            precision = output_msg.precision(raw=True) * self.inv_amp_sq[0]
+            precision = output_msg.precision(raw=True) / self.inv_amp_sq_scalar
             return UA(mu, dtype=target_dtype, precision=precision)
 
         # SCALAR_TO_ARRAY or ARRAY mode
-        precision = output_msg.precision(raw=True) * self.inv_amp_sq
+        precision = output_msg.precision(raw=True) / self.inv_amp_sq
         msg_array = UA(mu, dtype=target_dtype, precision=precision)
 
         target_wave = self.inputs["input"]
@@ -152,7 +192,7 @@ class MultiplyConstPropagator(Propagator):
 
         if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
             # Fuse and downgrade to scalar precision
-            q_x = (msg_array * msg_in).as_scalar_precision()
+            q_x = (msg_array * msg_in.as_array_precision()).as_scalar_precision()
             return q_x / msg_in
 
         return msg_array
@@ -186,3 +226,11 @@ class MultiplyConstPropagator(Propagator):
         if x is not None:
             const = self.const.astype(x.dtype) if self.const_dtype != x.dtype else self.const
             self.output.set_sample(x * const)
+    
+    def __repr__(self) -> str:
+        mode = self.precision_mode or "unset"
+        shape_str = (
+            f"scalar" if np.isscalar(self.const) or self.const.shape == ()
+            else f"shape={self.const.shape}"
+        )
+        return f"MultiplyConstProp(mode={mode}, {shape_str})"

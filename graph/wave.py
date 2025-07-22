@@ -351,10 +351,13 @@ class Wave:
         Returns:
             Wave
         """
-        if isinstance(other, (int, float, complex, np.ndarray)):
-            return MultiplyConstPropagator(other) @ self
-        return NotImplemented
+        return self.__mul__(other)
 
     def __repr__(self) -> str:
         label_str = f", label='{self.label}'" if self.label else ""
-        return f"Wave(shape={self.shape}{label_str})"
+        dtype_str = f", dtype={np.dtype(self.dtype).name}" if self.dtype else ""
+        precision_str = f", precision={self.precision_mode}" if self.precision_mode else ""
+        return f"Wave(shape={self.shape}{label_str}{dtype_str}{precision_str})"
+
+
+
