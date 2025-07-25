@@ -1,5 +1,6 @@
 from enum import Enum
 
+# === Precision Modes ===
 
 class PrecisionMode(Enum):
     """Precision mode used in Wave and simple Factor nodes."""
@@ -30,3 +31,17 @@ class BinaryPropagatorPrecisionMode(Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+# === Backend-agnostic Array Type Hints ===
+
+try:
+    from numpy.typing import NDArray
+    import numpy as _np
+    ArrayLike = NDArray[_np.generic]
+except ImportError:
+    ArrayLike = "Any"  # fallback for environments without numpy.typing
+
+# Optional: more specific aliases
+FloatArray = ArrayLike
+ComplexArray = ArrayLike

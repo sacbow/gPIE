@@ -1,5 +1,8 @@
-import numpy as np
+from .backend import np
+from .types import ArrayLike
+from .rng_utils import get_rng, normal, choice, shuffle, uniform
 import warnings
+
 
 def reduce_precision_to_scalar(precision_array):
     """
@@ -15,13 +18,13 @@ def reduce_precision_to_scalar(precision_array):
     Returns:
         float: Scalar precision value
     """
-    precision_array = np.asarray(precision_array, dtype=np.float64)
-    if np.any(precision_array <= 0):
+    precision_array = np().asarray(precision_array, dtype=np().float64)
+    if np().any(precision_array <= 0):
         raise ValueError("Precision values must be positive.")
-    return 1.0 / np.mean(1.0 / precision_array)
+    return 1.0 / np().mean(1.0 / precision_array)
 
 
-def complex_normal_random_array(shape, dtype=np.complex128, rng=None):
+def complex_normal_random_array(shape, dtype=None, rng=None):
     """
     (Deprecated) Generate complex Gaussian random array from CN(0,1).
 
@@ -39,13 +42,14 @@ def complex_normal_random_array(shape, dtype=np.complex128, rng=None):
         "complex_normal_random_array is deprecated. Use random_normal_array instead.",
         DeprecationWarning
     )
-    rng = np.random.default_rng() if rng is None else rng
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
     real = rng.normal(size=shape)
     imag = rng.normal(size=shape)
     return (real + 1j * imag).astype(dtype)
 
 
-def random_normal_array(shape, dtype=np.complex128, rng=None):
+def random_normal_array(shape, dtype=None, rng=None):
     """
     Generate random array from standard normal distribution with given dtype.
 
@@ -61,18 +65,20 @@ def random_normal_array(shape, dtype=np.complex128, rng=None):
     Returns:
         np.ndarray: Random array with specified dtype.
     """
-    rng = np.random.default_rng() if rng is None else rng
-    if np.issubdtype(dtype, np.complexfloating):
-        real = rng.normal(size=shape)
-        imag = rng.normal(size=shape)
-        return ((real + 1j * imag)/np.sqrt(2)).astype(dtype)
-    elif np.issubdtype(dtype, np.floating):
-        return rng.normal(size=shape).astype(dtype)
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
+    kind = np().dtype(dtype).kind
+    if kind == 'c':
+        real = normal(rng, size=shape)
+        imag = normal(rng, size=shape)
+        return ((real + 1j * imag)/np().sqrt(2)).astype(dtype)
+    elif kind == 'f':
+        return normal(rng, size=shape).astype(dtype)
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-def sparse_complex_array(shape, sparsity, dtype=np.complex128, rng=None):
+def sparse_complex_array(shape, sparsity, dtype=None, rng=None):
     """
     Generate a sparse complex-valued array where a fraction of entries
     (defined by `sparsity`) are drawn from CN(0,1), and the rest are zero.
@@ -86,22 +92,22 @@ def sparse_complex_array(shape, sparsity, dtype=np.complex128, rng=None):
     Returns:
         np.ndarray: Complex array with sparse non-zero entries.
     """
-    if rng is None:
-        raise ValueError("rng must be provided for sparse_complex_array.")
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
 
-    N = np.prod(shape)
+    N = np().prod(shape)
     num_nonzero = int(sparsity * N)
 
-    sample = np.zeros(N, dtype=dtype)
-    idx = rng.choice(N, size=num_nonzero, replace=False)
-    real = rng.normal(0.0, np.sqrt(0.5), num_nonzero)
-    imag = rng.normal(0.0, np.sqrt(0.5), num_nonzero)
+    sample = np().zeros(N, dtype=dtype)
+    idx = choice(rng = rng, a = N, size=num_nonzero, replace=False)
+    real = normal(rng = rng, mean = 0.0, std = np().sqrt(0.5), size = num_nonzero)
+    imag = normal(rng = rng, mean = 0.0, std = np().sqrt(0.5), size = num_nonzero)
     sample[idx] = real + 1j * imag
 
     return sample.reshape(shape)
 
 
-def random_unitary_matrix(n, dtype=np.complex128, rng=None):
+def random_unitary_matrix(n, dtype=None, rng=None):
     """
     Generate a random unitary matrix of shape (n, n) using SVD
     of a circularly-symmetric complex Gaussian matrix.
@@ -116,8 +122,10 @@ def random_unitary_matrix(n, dtype=np.complex128, rng=None):
     Returns:
         np.ndarray: Unitary matrix of shape (n, n).
     """
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
     A = complex_normal_random_array((n, n), dtype=dtype, rng=rng)
-    U, _, _ = np.linalg.svd(A)
+    U, _, _ = np().linalg.svd(A)
     return U
 
 
@@ -135,18 +143,17 @@ def random_binary_mask(shape, subsampling_rate, rng=None):
     """
     if not (0.0 <= subsampling_rate <= 1.0):
         raise ValueError("subsampling_rate must be between 0.0 and 1.0")
-    if rng is None:
-        raise ValueError("rng must be provided for random sampling.")
+    rng = get_rng() if rng is None else rng
 
-    total = np.prod(shape)
+    total = np().prod(shape)
     num_true = int(total * subsampling_rate)
-    flat_mask = np.zeros(total, dtype=bool)
+    flat_mask = np().zeros(total, dtype=bool)
     flat_mask[:num_true] = True
-    rng.shuffle(flat_mask)
+    shuffle(rng = rng, x = flat_mask)
     return flat_mask.reshape(shape)
 
 
-def random_phase_mask(shape, dtype=np.complex128, rng=None):
+def random_phase_mask(shape, dtype=None, rng=None):
     """
     Generate a complex-valued random phase mask with unit magnitude.
 
@@ -160,10 +167,10 @@ def random_phase_mask(shape, dtype=np.complex128, rng=None):
     Returns:
         ndarray: Complex array with unit modulus (e.g., exp(1j * theta)).
     """
-    if rng is None:
-        rng = np.random.default_rng()
-    theta = rng.uniform(0, 2 * np.pi, size=shape)
-    return np.exp(1j * theta).astype(dtype)
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
+    theta = uniform(rng, low=0.0, high=2 * np().pi, size=shape)
+    return np().exp(1j * theta).astype(dtype)
 
 def circular_aperture(shape, radius, center=None):
     """
@@ -195,7 +202,7 @@ def circular_aperture(shape, radius, center=None):
     if not (0 <= cy_pix < H and 0 <= cx_pix < W):
         raise ValueError("center out of bounds")
 
-    yy, xx = np.ogrid[:H, :W]
+    yy, xx = np().ogrid[:H, :W]
     dist2 = (yy - cy_pix) ** 2 + (xx - cx_pix) ** 2
     return dist2 <= abs_radius ** 2
 
@@ -234,23 +241,23 @@ def square_aperture(shape, radius, center=None):
     if y0 < 0 or y1 >= H or x0 < 0 or x1 >= W:
         raise ValueError("square aperture goes out of bounds")
 
-    mask = np.zeros((H, W), dtype=bool)
+    mask = np().zeros((H, W), dtype=bool)
     mask[y0:y1 + 1, x0:x1 + 1] = True
     return mask
 
-def fft2_centered(x: np.ndarray) -> np.ndarray:
+def fft2_centered(x: ArrayLike) -> ArrayLike:
     """
     Centered 2D FFT (with fftshift and ifftshift).
     """
-    return np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(np().fft.fft2(np().fft.ifftshift(x), norm="ortho"))
 
-def ifft2_centered(x: np.ndarray) -> np.ndarray:
+def ifft2_centered(x: ArrayLike) -> ArrayLike:
     """
     Centered 2D inverse FFT (with fftshift and ifftshift).
     """
-    return np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(np().fft.ifft2(np().fft.ifftshift(x), norm="ortho"))
 
-def masked_random_array(support: np.ndarray, dtype=np.complex128, rng=None):
+def masked_random_array(support: ArrayLike, dtype=None, rng=None):
     """
     Generate a random array masked by the given boolean support.
 
@@ -262,15 +269,14 @@ def masked_random_array(support: np.ndarray, dtype=np.complex128, rng=None):
     Returns:
         np.ndarray: Array where entries are random in support region, zero elsewhere.
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    dtype = np().complex128 if dtype is None else dtype
+    rng = get_rng() if rng is None else rng
     shape = support.shape
     full = random_normal_array(shape, dtype=dtype, rng=rng)
-    return np.where(support, full, 0)
+    return np().where(support, full, 0)
 
-import numpy as np
 
-def angular_spectrum_phase_mask(shape, wavelength, distance, dx, dy=None, dtype=np.complex128):
+def angular_spectrum_phase_mask(shape, wavelength, distance, dx, dy=None, dtype=None):
     """
     Generate a 2D angular spectrum propagation phase mask.
 
@@ -287,17 +293,18 @@ def angular_spectrum_phase_mask(shape, wavelength, distance, dx, dy=None, dtype=
     Returns:
         np.ndarray: Complex-valued 2D phase mask (same shape as input).
     """
+    dtype = np().complex128 if dtype is None else dtype
     H, W = shape
     dy = dx if dy is None else dy
 
-    fx = np.fft.fftfreq(W, d=dx)  # [Hz]
-    fy = np.fft.fftfreq(H, d=dy)
+    fx = np().fft.fftfreq(W, d=dx)  # [Hz]
+    fy = np().fft.fftfreq(H, d=dy)
 
-    FX, FY = np.meshgrid(fx, fy)
+    FX, FY = np().meshgrid(fx, fy)
     k = 1.0 / wavelength  # spatial frequency
 
     # Argument under the square root may become negative (evanescent waves)
-    root = np.maximum(0.0, 1.0 / wavelength**2 - FX**2 - FY**2)
-    phase = 2j * np.pi * distance * np.sqrt(root)
+    root = np().maximum(0.0, k**2 - FX**2 - FY**2)
+    phase = 2j * np().pi * distance * np().sqrt(root)
 
-    return np.exp(phase).astype(dtype)
+    return np().exp(phase).astype(dtype)
