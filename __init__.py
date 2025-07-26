@@ -12,6 +12,19 @@ from .core import (
     BinaryPropagatorPrecisionMode,
 )
 
+# Backend control (set_backend, get_backend)
+from .core.backend import set_backend, get_backend
+
+from .core.linalg_utils import (
+    random_normal_array,
+    random_unitary_matrix,
+    random_binary_mask,
+    random_phase_mask,
+    masked_random_array,
+    fft2_centered,
+    ifft2_centered,
+)
+
 # Graph structure and base components
 from .graph.structure import Graph
 from .graph.wave import Wave

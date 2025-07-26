@@ -44,8 +44,8 @@ def complex_normal_random_array(shape, dtype=None, rng=None):
     )
     dtype = np().complex128 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
-    real = rng.normal(size=shape)
-    imag = rng.normal(size=shape)
+    real = normal(rng = rng, size=shape)
+    imag = normal(rng = rng, size=shape)
     return (real + 1j * imag).astype(dtype)
 
 

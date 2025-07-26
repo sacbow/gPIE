@@ -1,5 +1,7 @@
 from enum import Enum
-
+from typing import Union
+from numpy.typing import NDArray
+from .backend import np
 # === Precision Modes ===
 
 class PrecisionMode(Enum):
@@ -35,13 +37,14 @@ class BinaryPropagatorPrecisionMode(Enum):
 
 # === Backend-agnostic Array Type Hints ===
 
-try:
-    from numpy.typing import NDArray
-    import numpy as _np
-    ArrayLike = NDArray[_np.generic]
-except ImportError:
-    ArrayLike = "Any"  # fallback for environments without numpy.typing
+# dtype-agnostic array
+ArrayLike = Union[
+    NDArray["float64"], 
+    NDArray["complex128"]
+]
 
-# Optional: more specific aliases
-FloatArray = ArrayLike
-ComplexArray = ArrayLike
+# Scalar or array-valued precision
+Precision = Union[
+    float,
+    NDArray["float64"]
+]
