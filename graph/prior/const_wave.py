@@ -1,5 +1,5 @@
-import numpy as np
-from typing import Optional
+from ...core.backend import np
+from typing import Optional, Any
 
 from .base import Prior
 from ...core.uncertain_array import UncertainArray as UA
@@ -9,7 +9,7 @@ from ...core.types import PrecisionMode
 class ConstWave(Prior):
     def __init__(
         self,
-        data: np.ndarray,
+        data: Any,
         large_value: float = 1e12,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
@@ -23,7 +23,7 @@ class ConstWave(Prior):
             precision_mode: "scalar", "array", or None.
             label: Optional wave label.
         """
-        self._data: np.ndarray = np.asarray(data)
+        self._data = data
         self.large_value: float = large_value
 
         super().__init__(
@@ -32,19 +32,38 @@ class ConstWave(Prior):
             precision_mode=precision_mode,
             label=label
         )
+    
+    def to_backend(self) -> None:
+        """
+        Convert stored data array to current backend (e.g. CuPy or NumPy).
+        Called during Graph.compile().
+        """
+        self._data = np().asarray(self._data)
 
     def _compute_message(self, incoming: UA) -> UA:
         mode = self.output.precision_mode_enum
         if mode == PrecisionMode.SCALAR:
             return UA(self._data, dtype=self.dtype, precision=self.large_value)
         elif mode == PrecisionMode.ARRAY:
-            prec_array = np.full(self._data.shape, self.large_value, dtype=np.float64)
+            prec_array = np().full(self._data.shape, self.large_value, dtype=np().float64)
             return UA(self._data, dtype=self.dtype, precision=prec_array)
         else:
             raise RuntimeError("Precision mode not determined for ConstWave output.")
 
-    def generate_sample(self, rng: Optional[np.random.Generator]) -> None:
+    def generate_sample(self, rng: Optional[Any]) -> None:
         self.output.set_sample(self._data)
+    
+    def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
+        """
+        Return the fixed sample stored in this constant prior.
+
+        Args:
+            rng (Optional): Unused; included for compatibility.
+
+        Returns:
+            np().ndarray: The constant data array.
+        """
+        return self._data
 
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"

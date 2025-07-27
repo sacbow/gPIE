@@ -143,6 +143,11 @@ class Graph:
         for wave in self._waves:
             if hasattr(wave, "finalize_structure"):
                 wave.finalize_structure()
+        
+        # --- Step 7: Send data in nodes to backend
+        for node in self._nodes:
+            if hasattr(node, "to_backend"):
+                node.to_backend()
     
     def get_wave(self, label: str):
         """
