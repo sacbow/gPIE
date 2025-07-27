@@ -1,13 +1,21 @@
+import importlib.util
 import numpy as np
 import pytest
-import cupy as cp
+cupy_spec = importlib.util.find_spec("cupy")
+has_cupy = cupy_spec is not None
+if has_cupy:
+    import cupy as cp
+
+backend_libs = [np]
+if has_cupy:
+    backend_libs.append(cp)
 
 from gpie.core import backend
 from gpie.core.uncertain_array import UncertainArray
 from gpie.core.types import PrecisionMode
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_scalar_precision_properties(backend_lib):
     backend.set_backend(backend_lib)
     ua = UncertainArray(backend_lib.ones((4, 4)), precision=2.0)
@@ -18,7 +26,7 @@ def test_scalar_precision_properties(backend_lib):
     assert np.allclose(ua.precision(), 2.0)
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_array_precision_properties(backend_lib):
     backend.set_backend(backend_lib)
     precision = backend_lib.full((4, 4), 3.0)
@@ -27,7 +35,7 @@ def test_array_precision_properties(backend_lib):
     assert np.allclose(ua.precision(), 3.0)
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_astype_real_to_complex_and_back(backend_lib):
     backend.set_backend(backend_lib)
     ua = UncertainArray(backend_lib.ones((2, 2), dtype=backend_lib.float64), dtype = backend_lib.float64, precision=4.0)
@@ -40,7 +48,7 @@ def test_astype_real_to_complex_and_back(backend_lib):
     assert np.allclose(ua_back.precision(raw=True), 4.0)
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_mul_div_operations(backend_lib):
     backend.set_backend(backend_lib)
     ua1 = UncertainArray(backend_lib.ones((2, 2)), precision=1.0)
@@ -51,7 +59,7 @@ def test_mul_div_operations(backend_lib):
     assert np.allclose(ua4.precision(), ua1.precision())
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_damp_with_behavior(backend_lib):
     backend.set_backend(backend_lib)
     ua1 = UncertainArray(backend_lib.ones((2, 2)), precision=1.0)
@@ -61,7 +69,7 @@ def test_damp_with_behavior(backend_lib):
     assert ua_damped.precision_mode == PrecisionMode.SCALAR
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_random_and_zeros_constructors(backend_lib):
     backend.set_backend(backend_lib)
     ua_r = UncertainArray.random((3, 3), dtype=backend_lib.float64, precision=2.0)
@@ -71,7 +79,7 @@ def test_random_and_zeros_constructors(backend_lib):
     assert np.allclose(ua_z.data, 0.0)
 
 
-@pytest.mark.parametrize("backend_lib", [np, cp])
+@pytest.mark.parametrize("backend_lib", backend_libs)
 def test_as_precision_conversions(backend_lib):
     backend.set_backend(backend_lib)
     prec_array = backend_lib.full((2, 2), 5.0)

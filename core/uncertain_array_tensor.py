@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import List, Union, Literal
 from numpy.typing import NDArray
-import numpy as np
+from .backend import np
+from .types import ArrayLike, PrecisionMode, Precision
+from .linalg_utils import reduce_precision_to_scalar, random_normal_array
 
 from .uncertain_array import UncertainArray
 from .types import PrecisionMode
@@ -28,9 +30,9 @@ class UncertainArrayTensor:
     - Enabling efficient vectorized operations on groups of UncertainArray
 
     Attributes:
-        data (np.ndarray): Mean values of shape (B, ...), where B is the batch size.
-        precision (np.ndarray): Precision values of shape (B,) or (B, ...).
-        dtype (np.dtype): Data type of the belief means.
+        data (np().ndarray): Mean values of shape (B, ...), where B is the batch size.
+        precision (np().ndarray): Precision values of shape (B,) or (B, ...).
+        dtype (np().dtype): Data type of the belief means.
         shape (tuple): Shape of an individual UncertainArray (i.e., excluding batch dim).
         batch_size (int): Number of UncertainArrays in the batch.
         precision_mode (str): Either 'scalar' or 'array'.
@@ -40,8 +42,8 @@ class UncertainArrayTensor:
     def __init__(
         self,
         data: NDArray,
-        precision: Union[NDArray, NDArray[np.float64]],
-        dtype: np.dtype = np.complex128
+        precision: Union[NDArray, NDArray[np().float64]],
+        dtype: np().dtype = np().complex128
     ) -> None:
         """
         Initialize an UncertainArrayTensor from stacked data and precision arrays.
@@ -50,13 +52,13 @@ class UncertainArrayTensor:
             data: Mean values of shape (B, ...), stacked across batch dimension.
             precision: Precision values. Shape (B,) implies scalar precision,
                    shape (B, ...) implies array precision.
-            dtype: Data type of the mean values (default: np.complex128).
+            dtype: Data type of the mean values (default: np().complex128).
 
         Raises:
             ValueError: If shape mismatch between data and precision.
         """
-        data = np.asarray(data, dtype=dtype)
-        precision = np.asarray(precision, dtype=np.float64)
+        data = np().asarray(data, dtype=dtype)
+        precision = np().asarray(precision, dtype=np().float64)
 
         if precision.shape != data.shape:
             if precision.ndim == 1 and precision.shape[0] == data.shape[0]:
@@ -69,7 +71,7 @@ class UncertainArrayTensor:
 
         self.data: NDArray = data
         self.precision: NDArray = precision
-        self.dtype: np.dtype = dtype
+        self.dtype: np().dtype = dtype
         self.batch_size: int = data.shape[0]
         self.shape: tuple[int, ...] = data.shape[1:]
     
@@ -167,15 +169,17 @@ class UncertainArrayTensor:
             raise ValueError("Empty list provided.")
 
         ref = ua_list[0]
-        data = []
-        prec = []
+        data = [ua.data for ua in ua_list]
+        prec = [np().asarray(ua.precision(raw=True), dtype=np().float64) for ua in ua_list]
 
+        # 仮インスタンス（未検証）
+        tmp = cls(np().stack(data), np().stack(prec), dtype=ref.dtype)
+
+        # 各要素が互換かどうか確認
         for i, ua in enumerate(ua_list):
-            ref.assert_compatible(ua, idx=i, context="from_list")  # reuse UA's own checker
-            data.append(ua.data)
-            prec.append(ua.precision(raw=True))
+            tmp.assert_compatible(ua, idx=i, context="from_list")
 
-        return cls(np.stack(data), np.stack(prec), dtype=ref.dtype)
+        return tmp
 
 
     def to_list(self) -> list[UncertainArray]:
@@ -208,16 +212,16 @@ class UncertainArrayTensor:
         """
 
         if self._scalar_precision:
-            precision_sum = np.sum(self.precision)  # scalar
+            precision_sum = np().sum(self.precision)  # scalar
             broadcast_shape = (self.batch_size,) + (1,) * (self.data.ndim - 1)
             weights = self.precision.reshape(broadcast_shape)
-            weighted_sum = np.sum(weights * self.data, axis=0)
+            weighted_sum = np().sum(weights * self.data, axis=0)
             mean = weighted_sum / precision_sum
             return UncertainArray(mean, dtype=self.dtype, precision=precision_sum)
 
         else:
-            total_precision = np.sum(self.precision, axis=0)
-            weighted_sum = np.sum(self.precision * self.data, axis=0)
+            total_precision = np().sum(self.precision, axis=0)
+            weighted_sum = np().sum(self.precision * self.data, axis=0)
             mean = weighted_sum / total_precision
             return UncertainArray(mean, dtype=self.dtype, precision=total_precision)
 

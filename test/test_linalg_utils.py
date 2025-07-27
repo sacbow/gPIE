@@ -1,6 +1,14 @@
+import importlib.util
 import pytest
 import numpy as np
-import cupy as cp
+cupy_spec = importlib.util.find_spec("cupy")
+has_cupy = cupy_spec is not None
+if has_cupy:
+    import cupy as cp
+
+backend_libs = [np]
+if has_cupy:
+    backend_libs.append(cp)
 
 from gpie.core import backend
 from gpie.core.linalg_utils import (
@@ -9,7 +17,7 @@ from gpie.core.linalg_utils import (
     reduce_precision_to_scalar,
 )
 
-@pytest.mark.parametrize("xp", [np, cp])
+@pytest.mark.parametrize("xp", backend_libs)
 def test_random_normal_array_shape_and_dtype(xp):
     backend.set_backend(xp)
     shape = (16, 16)
@@ -18,7 +26,7 @@ def test_random_normal_array_shape_and_dtype(xp):
     assert arr.dtype == xp.complex128
     assert isinstance(arr, xp.ndarray)
 
-@pytest.mark.parametrize("xp", [np, cp])
+@pytest.mark.parametrize("xp", backend_libs)
 def test_random_unitary_matrix_unitarity(xp):
     backend.set_backend(xp)
     n = 8
@@ -28,7 +36,7 @@ def test_random_unitary_matrix_unitarity(xp):
     I = xp.eye(n, dtype=xp.complex128)
     assert xp.allclose(identity, I, atol=1e-6)
 
-@pytest.mark.parametrize("xp", [np, cp])
+@pytest.mark.parametrize("xp", backend_libs)
 def test_reduce_precision_to_scalar_correctness(xp):
     backend.set_backend(xp)
     precisions = xp.array([1.0, 2.0, 4.0])

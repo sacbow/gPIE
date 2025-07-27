@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
-from ..core.types import PrecisionMode
-import numpy as np
+from typing import Optional, TYPE_CHECKING, Any
+from ..core.rng_utils import get_rng
+from ..core.backend import np
+from ..core.types import ArrayLike, PrecisionMode, Precision
+from ..core.linalg_utils import reduce_precision_to_scalar, random_normal_array
 from numpy.typing import NDArray
-
-from ..core.linalg_utils import random_normal_array
 from ..core.uncertain_array import UncertainArray
 from ..core.uncertain_array_tensor import UncertainArrayTensor
 
@@ -44,7 +44,7 @@ class Wave:
 
     Attributes:
         shape (tuple[int, ...]): Shape of the variable (excluding batch).
-        dtype (np.dtype): Data type of values (e.g., np.complex128).
+        dtype (np().dtype): Data type of values (e.g., np().complex128).
         label (str | None): Optional name identifier for graph visualization/debugging.
         parent (Factor | None): Connected parent factor node.
         children (list[Factor]): Connected child factors.
@@ -58,7 +58,7 @@ class Wave:
     def __init__(
         self,
         shape: tuple[int, ...],
-        dtype: np.dtype = np.complex128,
+        dtype: np().dtype = np().complex128,
         precision_mode: Optional[str | PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
@@ -68,7 +68,7 @@ class Wave:
             PrecisionMode(precision_mode) if isinstance(precision_mode, str) else precision_mode
         )
         self.label = label
-        self._init_rng: Optional[np.random.Generator] = None
+        self._init_rng: Optional[Any] = None
 
         self.parent: Optional["Factor"] = None
         self.parent_message: Optional[UncertainArray] = None
@@ -173,9 +173,9 @@ class Wave:
         data = random_normal_array(shape, dtype=self.dtype, rng=self._init_rng)
 
         if self._precision_mode == PrecisionMode.SCALAR:
-            precision = np.ones(n_child, dtype=np.float64)
+            precision = np().ones(n_child, dtype=np().float64)
         else:
-            precision = np.ones(shape, dtype=np.float64)
+            precision = np().ones(shape, dtype=np().float64)
 
         self.child_messages_tensor = UncertainArrayTensor(data, precision, dtype=self.dtype)
 
@@ -192,9 +192,9 @@ class Wave:
             ValueError: If factor is not connected to this wave.
         """
         if message.dtype != self.dtype:
-            if np.issubdtype(self.dtype, np.floating) and np.issubdtype(message.dtype, np.complexfloating):
+            if np().issubdtype(self.dtype, np().floating) and np().issubdtype(message.dtype, np().complexfloating):
                 message = message.real  # Complex → Real
-            elif np.issubdtype(self.dtype, np.complexfloating) and np.issubdtype(message.dtype, np.floating):
+            elif np().issubdtype(self.dtype, np().complexfloating) and np().issubdtype(message.dtype, np().floating):
                 message = message.astype(self.dtype)  # Real → Complex
             else:
                 raise TypeError(
@@ -270,14 +270,25 @@ class Wave:
 
         self.parent.receive_message(self, msg)
 
-    def set_init_rng(self, rng: np.random.Generator) -> None:
-        """Set random generator for child message initialization."""
+    def set_init_rng(self, rng) -> None:
+        """Set backend-agnostic random generator."""
         self._init_rng = rng
+
 
     @property
     def ndim(self) -> int:
         """Return number of dimensions of the wave variable."""
         return len(self.shape)
+    
+    
+    def generate_sample_wave(self) -> None:
+        """Pull sample from parent factor if not already set."""
+        if self._sample is not None:
+            return
+        if self.parent and hasattr(self.parent, "get_sample_for_output"):
+            sample = self.parent.get_sample_for_output()
+            self.set_sample(sample)
+    
 
     def get_sample(self) -> Optional[NDArray]:
         """Return the current sample (if set)."""
@@ -305,7 +316,7 @@ class Wave:
         if isinstance(other, Wave):
             return AddPropagator() @ (self, other)
 
-        if np.isscalar(other) or isinstance(other, ndarray):
+        if np().isscalar(other) or isinstance(other, ndarray):
             return AddConstPropagator(const=other) @ self
 
         return NotImplemented
@@ -336,7 +347,7 @@ class Wave:
 
         if isinstance(other, Wave):
             return MultiplyPropagator() @ (self, other)
-        elif isinstance(other, (int, float, complex, np.ndarray)):
+        elif isinstance(other, (int, float, complex, np().ndarray)):
             return MultiplyConstPropagator(other) @ self
         return NotImplemented
 
@@ -355,7 +366,7 @@ class Wave:
 
     def __repr__(self) -> str:
         label_str = f", label='{self.label}'" if self.label else ""
-        dtype_str = f", dtype={np.dtype(self.dtype).name}" if self.dtype else ""
+        dtype_str = f", dtype={np().dtype(self.dtype).name}" if self.dtype else ""
         precision_str = f", precision={self.precision_mode}" if self.precision_mode else ""
         return f"Wave(shape={self.shape}{label_str}{dtype_str}{precision_str})"
 

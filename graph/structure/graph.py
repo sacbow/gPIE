@@ -1,6 +1,6 @@
 from ..wave import Wave
 from ..factor import Factor
-import numpy as np
+from ...core.rng_utils import get_rng
 import contextlib
 import threading
 
@@ -49,7 +49,7 @@ class Graph:
         self._nodes_sorted = None
         self._nodes_sorted_reverse = None
 
-        self._rng = np.random.default_rng()  # default RNG for sampling
+        self._rng = get_rng()  # default RNG for sampling
     
     @contextlib.contextmanager
     def observe(self):

@@ -1,10 +1,11 @@
-import numpy as np
-from typing import Optional, Tuple
+from ...core.backend import np
+from typing import Optional, Tuple, Any
 
 from .base import Prior
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode
 from ...core.linalg_utils import random_normal_array
+from ...core.rng_utils import get_rng
 
 class GaussianPrior(Prior):
     """
@@ -25,7 +26,7 @@ class GaussianPrior(Prior):
     Args:
         var (float): Variance of the Gaussian (must be positive).
         shape (tuple[int, ...]): Shape of the latent variable.
-        dtype (np.dtype): Output dtype; supports np.float64 or np.complex128.
+        dtype (np().dtype): Output dtype; supports np().float64 or np().complex128.
         precision_mode (PrecisionMode | None): Scalar or array mode (or inferred).
         label (str | None): Optional name for the associated Wave.
 
@@ -37,7 +38,7 @@ class GaussianPrior(Prior):
         self,
         var: float = 1.0,
         shape: Tuple[int, ...] = (1,),
-        dtype: np.dtype = np.complex128,
+        dtype: np().dtype = np().complex128,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:
@@ -62,15 +63,34 @@ class GaussianPrior(Prior):
         else:
             raise RuntimeError("Precision mode not determined for GaussianPrior output.")
 
-    def generate_sample(self, rng: Optional[np.random.Generator]) -> None:
+    def generate_sample(self, rng: Optional[Any]) -> None:
         """
         Generate a sample from N(0, var) or CN(0, var) depending on dtype.
+        Note:
+            This method is deprecated and will be replaced by `get_sample_for_output()`
+            in future versions. New sampling logic should rely on Wave.generate_sample().
         """
         if rng is None:
-            rng = np.random.default_rng()
+            rng = get_rng()
 
-        sample = np.sqrt(self.var) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
+        sample = np().sqrt(self.var) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
         self.output.set_sample(sample)
+    
+    def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
+        """
+        Return a sample from the Gaussian prior.
+
+        Args:
+            rng (Optional[Any]): Optional random generator.
+
+        Returns:
+            np().ndarray: Sampled array with shape and dtype matching the prior.
+        """
+        if rng is None:
+            rng = get_rng()
+
+        return np().sqrt(self.var) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
+
 
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"

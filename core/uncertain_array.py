@@ -61,7 +61,7 @@ class UncertainArray:
     def __init__(
         self,
         array: ArrayLike,
-        dtype: np().dtype = np().complex128,
+        dtype: np().dtype = None,
         precision: Precision = 1.0   # scalar precision implies self._scalar_precision = True.
     ) -> None:
         """
@@ -76,9 +76,13 @@ class UncertainArray:
         Raises:
             ValueError: If precision is non-positive or shape mismatch occurs.
         """
-        self.data: NDArray = np().asarray(array, dtype=dtype)
+        if dtype is None:
+            self.data: NDArray = np().asarray(array)
+        else:
+            self.data: NDArray = np().asarray(array, dtype=dtype)
+
         self.dtype: np().dtype = self.data.dtype
-        self._scalar_precision: bool = self.is_scalar(precision) 
+        self._scalar_precision: bool = self.is_scalar(precision)
         self._set_precision_internal(precision)
     
     def is_scalar(self, value):

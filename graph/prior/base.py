@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Optional
-import numpy as np
+from typing import Optional, Any
+from ...core.backend import np
+from ...core.rng_utils import get_rng
 
 from ..factor import Factor
 from ..wave import Wave
@@ -34,10 +35,10 @@ class Prior(Factor, ABC):
 
     Attributes:
         shape (tuple[int, ...]): Shape of the variable to be generated.
-        dtype (np.dtype): Data type (default: np.complex128).
+        dtype (np().dtype): Data type (default: np().complex128).
         output (Wave): The Wave node this prior generates.
         _precision_mode (PrecisionMode | None): Precision mode, if set or inferred.
-        _init_rng (np.random.Generator | None): RNG used for random message generation.
+        _init_rng (np().random.Generator | None): RNG used for random message generation.
     """
     
     def __invert__(self) -> Wave:
@@ -52,14 +53,14 @@ class Prior(Factor, ABC):
     def __init__(
         self,
         shape: tuple[int, ...],
-        dtype: np.dtype = np.complex128,
+        dtype: np().dtype = np().complex128,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.shape: tuple[int, ...] = shape
-        self.dtype: np.dtype = dtype
-        self._init_rng: Optional[np.random.Generator] = None
+        self.dtype: np().dtype = dtype
+        self._init_rng: Optional[Any] = None
 
         if precision_mode is not None:
             self._set_precision_mode(precision_mode)
@@ -80,7 +81,7 @@ class Prior(Factor, ABC):
         """
         return self._precision_mode
 
-    def set_init_rng(self, rng: np.random.Generator) -> None:
+    def set_init_rng(self, rng: Optional[Any]) -> None:
         """
         Set RNG used for initial sampling of this prior.
         """
