@@ -3,7 +3,7 @@ from numbers import Number
 from typing import Union, Optional, Literal, overload
 
 from .backend import np
-from .types import ArrayLike, PrecisionMode, Precision
+from .types import ArrayLike, PrecisionMode, Precision, get_real_dtype
 from .linalg_utils import reduce_precision_to_scalar, random_normal_array
 
 from numpy.typing import NDArray
@@ -148,48 +148,49 @@ class UncertainArray:
         """
         if self.is_real():
             return self
-        real_data = self.data.real.astype(np().float64)
+        real_data = self.data.real.astype(get_real_dtype(self.dtype))
         new_precision = 2.0 * self.precision(raw = True) # Complex → Real: Real part carries half the variance, so precision doubles
-        return UncertainArray(real_data, dtype=np().float64, precision=new_precision)
+        return UncertainArray(real_data, dtype = get_real_dtype(self.dtype), precision=new_precision)
 
 
     def _set_precision_internal(self, value: Precision) -> None:
         if self.is_scalar(value):
             if value <= 0:
                 raise ValueError("Precision must be positive.")
-            self._precision: Precision = float(value)
+            self._precision: np().ndarray = np().array(value, dtype=get_real_dtype(self.dtype))  # rank-0 array
         else:
             arr: NDArray[np().float64] = (
-                value if isinstance(value, np().ndarray) and value.dtype == np().float64
-                else np().asarray(value, dtype=np().float64)
+                value if isinstance(value, np().ndarray) and value.dtype == get_real_dtype(self.dtype)
+                else np().asarray(value, dtype=get_real_dtype(self.dtype))
             )
             if arr.shape != self.data.shape:
                 raise ValueError("Precision array must match data shape.")
             self._precision = arr
+
 
     @overload
     def precision(self, raw: Literal[False] = False) -> NDArray[np().float64]: ...
     @overload
     def precision(self, raw: Literal[True]) -> Precision: ...
 
-    def precision(self, raw: bool = False) -> Union[NDArray[np().float64], Precision]:
+    def precision(self, raw: bool = False) -> Union[float, NDArray[np().float64]]:
         """
-        Access the precision (inverse variance) associated with this array.
-
-        Args:
-            raw: 
-                - If False (default), returns a broadcasted ndarray matching `data.shape`.
-                - If True, returns the raw internal value (`float` or `ndarray`) directly.
-
-        Returns:
-            Either a broadcasted precision array (when raw=False),
-            or the internal precision representation (when raw=True).
+        Return precision value (float or ndarray), depending on scalar mode.
         """
         if raw:
-            return self._precision
+            return float(self._precision) if self._scalar_precision else self._precision
         if self._scalar_precision:
-            return np().full(self.shape, self._precision, dtype=np().float64)
+            return np().full(self.shape, float(self._precision), dtype=get_real_dtype(self.dtype))
         return self._precision
+    
+    def to_backend(self) -> None:
+        """
+        Convert `data` and `_precision` to current backend (NumPy/CuPy).
+        """
+        self.data = np().asarray(self.data)
+        self.dtype = self.data.dtype
+        self._precision = np().asarray(self._precision, dtype=get_real_dtype(self.dtype))
+
 
     @property
     def precision_mode(self) -> PrecisionMode:
@@ -261,7 +262,7 @@ class UncertainArray:
         if scalar_precision:
             return cls(data, dtype=dtype, precision=precision)
         else:
-            arr_precision = np().full(shape, precision, dtype=np().float64)
+            arr_precision = np().full(shape, precision, dtype=get_real_dtype(dtype))
             return cls(data, dtype=dtype, precision=arr_precision)
 
 
@@ -290,7 +291,7 @@ class UncertainArray:
         if scalar_precision:
             return cls(data, dtype=dtype, precision=precision)
         else:
-            arr_precision = np().full(shape, precision, dtype=np().float64)
+            arr_precision = np().full(shape, precision, dtype=get_real_dtype(dtype))
             return cls(data, dtype=dtype, precision=arr_precision)
         
     def assert_compatible(self, other: UncertainArray, context: str = "") -> None:
@@ -447,7 +448,7 @@ class UncertainArray:
         if not self._scalar_precision:
             return self
 
-        array_precision = np().full_like(self.data, fill_value=self._precision, dtype=np().float64)
+        array_precision = np().full_like(self.data, fill_value=self._precision, dtype=get_real_dtype(self.dtype))
         return UncertainArray(self.data, dtype=self.dtype, precision=array_precision)
 
 

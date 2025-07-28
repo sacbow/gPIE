@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Union
-import numpy as np
+from typing import Optional, Union, Any
+from ...core.backend import np
 
 from ..factor import Factor
 from ..wave import Wave
@@ -25,29 +25,29 @@ class Measurement(Factor, ABC):
         - Can handle scalar or array precision modes.
 
     Attributes:
-        input_dtype (np.dtype):
+        input_dtype (Any):
             Required dtype for the input wave. Must be defined in subclass or __init__.
-        expected_observed_dtype (np.dtype | None):
+        expected_observed_dtype (Any | None):
             Optional constraint on the dtype of observed data.
         observed (UncertainArray | None):
             The observed data as an UncertainArray (mean and precision).
-        _sample (np.ndarray | None):
+        _sample (np().ndarray | None):
             Cached simulated sample from the latent variable, for use in forward modeling.
-        _mask (np.ndarray | None):
+        _mask (np().ndarray | None):
             Optional boolean array masking valid observed entries (True = valid).
         label (str | None):
             Optional identifier registered to the graph when `@` operator is used.
     """
 
 
-    input_dtype: np.dtype                          # must be defined in subclass or __init__
-    expected_observed_dtype: Optional[np.dtype] = None  # can be defined in subclass
+    input_dtype: Any                          # must be defined in subclass or __init__
+    expected_observed_dtype: Optional[Any] = None  # can be defined in subclass
 
     def __init__(
         self,
         observed: Optional[UncertainArray] = None,
         precision_mode: Optional[Union[str, PrecisionMode]] = None,
-        mask: Optional[np.ndarray] = None,
+        mask: Optional[np().ndarray] = None,
     ) -> None:
         super().__init__()
 
@@ -61,9 +61,9 @@ class Measurement(Factor, ABC):
                     f"but received {observed.dtype}"
                 )
 
-        self._sample: Optional[np.ndarray] = None
+        self._sample: Optional[np().ndarray] = None
         self.observed: Optional[UncertainArray] = observed
-        self._mask: Optional[np.ndarray] = mask
+        self._mask: Optional[np().ndarray] = mask
         self.label: Optional[str] = None
 
         # infer precision mode from mask if needed
@@ -73,7 +73,7 @@ class Measurement(Factor, ABC):
             self._set_precision_mode(precision_mode)
 
         # inferred default observed dtype
-        self.observed_dtype: np.dtype = (
+        self.observed_dtype: Any = (
             observed.dtype if observed is not None
             else self.expected_observed_dtype or self.input_dtype
         )
@@ -134,7 +134,7 @@ class Measurement(Factor, ABC):
 
 
     @property
-    def mask(self) -> Optional[np.ndarray]:
+    def mask(self) -> Optional[np().ndarray]:
         return self._mask
 
     @property
@@ -177,10 +177,10 @@ class Measurement(Factor, ABC):
         if self.observed is None:
             raise RuntimeError("Observed data is not set for this measurement.")
 
-    def get_sample(self) -> Optional[np.ndarray]:
+    def get_sample(self) -> Optional[np().ndarray]:
         return self._sample
 
-    def set_sample(self, sample: np.ndarray) -> None:
+    def set_sample(self, sample: np().ndarray) -> None:
         if sample.shape != self.input.shape:
             raise ValueError(f"Sample shape mismatch: expected {self.input.shape}, got {sample.shape}")
         self._sample = sample
@@ -190,9 +190,9 @@ class Measurement(Factor, ABC):
 
     def set_observed(
         self,
-        data: np.ndarray,
-        precision: Union[float, np.ndarray],
-        dtype: Optional[np.dtype] = None
+        data: np().ndarray,
+        precision: Union[float, np().ndarray],
+        dtype: Optional[Any] = None
     ) -> None:
         """
         Manually provide the observed data and its precision.
@@ -217,7 +217,7 @@ class Measurement(Factor, ABC):
                 f"but got {dtype}"
             )
 
-        if data.shape != self.input.shape or (isinstance(precision, np.ndarray) and precision.shape != data.shape):
+        if data.shape != self.input.shape or (isinstance(precision, np().ndarray) and precision.shape != data.shape):
             raise ValueError("Observed data and precision must match input shape.")
 
         if self._mask is not None and self._mask.shape != data.shape:
@@ -241,7 +241,7 @@ class Measurement(Factor, ABC):
         dtype = self.expected_observed_dtype or self.input_dtype
 
         if self._mask is not None:
-            precision = np.where(self._mask, 1.0 / var, 0.0)
+            precision = np().where(self._mask, 1.0 / var, 0.0)
         else:
             precision = 1.0 / var
 

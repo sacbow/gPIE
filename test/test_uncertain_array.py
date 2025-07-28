@@ -13,7 +13,15 @@ if has_cupy:
 from gpie.core import backend
 from gpie.core.uncertain_array import UncertainArray
 from gpie.core.types import PrecisionMode
+from gpie.core.types import get_real_dtype
 
+def dtype_cases(lib):
+    return [
+        (lib.float32, lib.float32),
+        (lib.float64, lib.float64),
+        (lib.complex64, lib.float32),
+        (lib.complex128, lib.float64),
+    ]
 
 @pytest.mark.parametrize("backend_lib", backend_libs)
 def test_scalar_precision_properties(backend_lib):
@@ -88,3 +96,42 @@ def test_as_precision_conversions(backend_lib):
     assert ua_scalar.precision_mode == PrecisionMode.SCALAR
     ua_back = ua_scalar.as_array_precision()
     assert ua_back.precision_mode == PrecisionMode.ARRAY
+
+def test_to_backend_updates_dtype_correctly():
+    from gpie.core.backend import set_backend
+    import numpy as np
+    import cupy as cp
+
+    set_backend(np)
+    ua = UncertainArray(np.ones((2, 2), dtype=np.complex128), precision=1.0)
+
+    set_backend(cp)
+    ua.to_backend()
+
+    assert isinstance(ua.data, cp.ndarray)
+    assert ua.dtype == cp.complex128
+
+@pytest.mark.parametrize("backend_lib", backend_libs)
+@pytest.mark.parametrize("dtype, expected_real_dtype", dtype_cases(np))
+def test_get_real_dtype_matches_expectation(backend_lib, dtype, expected_real_dtype):
+    backend.set_backend(backend_lib)
+    assert get_real_dtype(dtype) == expected_real_dtype
+
+@pytest.mark.parametrize("backend_lib", backend_libs)
+@pytest.mark.parametrize("dtype, expected_real_dtype", dtype_cases(np))
+def test_uncertain_array_dtype_and_precision_alignment(backend_lib, dtype, expected_real_dtype):
+    backend.set_backend(backend_lib)
+    shape = (2, 2)
+    ua = UncertainArray(backend_lib.ones(shape, dtype=dtype), dtype=dtype, precision=1.0)
+    
+    # 型チェック
+    assert ua.dtype == dtype
+    assert ua.data.dtype == dtype
+    
+    # precision の型が対応する実数型
+    raw_prec = ua.precision(raw=True)
+    if ua.precision_mode.name == "SCALAR":
+        assert isinstance(raw_prec, (float, int, backend_lib.ndarray))  # rank-0 array
+    else:
+        assert raw_prec.dtype == expected_real_dtype
+        assert raw_prec.shape == shape

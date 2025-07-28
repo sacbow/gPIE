@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Union, Literal
 from numpy.typing import NDArray
 from .backend import np
-from .types import ArrayLike, PrecisionMode, Precision
+from .types import ArrayLike, PrecisionMode, Precision, get_real_dtype
 from .linalg_utils import reduce_precision_to_scalar, random_normal_array
 
 from .uncertain_array import UncertainArray
@@ -58,12 +58,13 @@ class UncertainArrayTensor:
             ValueError: If shape mismatch between data and precision.
         """
         data = np().asarray(data, dtype=dtype)
-        precision = np().asarray(precision, dtype=np().float64)
+        precision = np().asarray(precision, dtype=get_real_dtype(dtype))
 
         if precision.shape != data.shape:
             if precision.ndim == 1 and precision.shape[0] == data.shape[0]:
                 # Precision is scalar per instance (B,)
                 self._scalar_precision = True
+                precision = np().reshape(precision, (precision.shape[0],) + (1,) * (data.ndim - 1))
             else:
                 raise ValueError("Shape mismatch between data and precision.")
         else:
@@ -74,6 +75,16 @@ class UncertainArrayTensor:
         self.dtype: np().dtype = dtype
         self.batch_size: int = data.shape[0]
         self.shape: tuple[int, ...] = data.shape[1:]
+    
+    def to_backend(self) -> None:
+        """
+        Move data and precision to current backend (NumPy or CuPy).
+        Updates dtype based on backend-casted array.
+        """
+        self.data = np().asarray(self.data)
+        self.precision = np().asarray(self.precision, dtype=get_real_dtype(self.dtype))
+        self.dtype = self.data.dtype  # Update dtype after backend switch
+
     
     @property
     def precision_mode(self) -> PrecisionMode:
@@ -170,12 +181,10 @@ class UncertainArrayTensor:
 
         ref = ua_list[0]
         data = [ua.data for ua in ua_list]
-        prec = [np().asarray(ua.precision(raw=True), dtype=np().float64) for ua in ua_list]
+        prec = [np().asarray(ua.precision(raw=True), dtype=get_real_dtype(ref.dtype)) for ua in ua_list]
 
-        # 仮インスタンス（未検証）
         tmp = cls(np().stack(data), np().stack(prec), dtype=ref.dtype)
 
-        # 各要素が互換かどうか確認
         for i, ua in enumerate(ua_list):
             tmp.assert_compatible(ua, idx=i, context="from_list")
 
@@ -188,15 +197,18 @@ class UncertainArrayTensor:
 
         Returns:
             List[UncertainArray]: Individual components corresponding to each batch entry.
-        
-        Note:
-        This method is primarily intended for testing and debugging.
-        In production pipelines, prefer constructing tensors directly for performance.
         """
-        return [
-            UncertainArray(self.data[i], dtype=self.dtype, precision=self.precision[i])
-            for i in range(self.batch_size)
-        ]
+        if self._scalar_precision:
+            # precision[i] is shape (1, ..., 1), so convert to scalar
+            return [
+                UncertainArray(self.data[i], dtype=self.dtype, precision=float(self.precision[i].reshape(-1)[0]))
+                for i in range(self.batch_size)
+            ]
+        else:
+            return [
+                UncertainArray(self.data[i], dtype=self.dtype, precision=self.precision[i])
+                for i in range(self.batch_size)
+            ]
 
     def combine(self) -> UncertainArray:
         """
@@ -212,12 +224,13 @@ class UncertainArrayTensor:
         """
 
         if self._scalar_precision:
-            precision_sum = np().sum(self.precision)  # scalar
-            broadcast_shape = (self.batch_size,) + (1,) * (self.data.ndim - 1)
-            weights = self.precision.reshape(broadcast_shape)
-            weighted_sum = np().sum(weights * self.data, axis=0)
+            # precision: shape (B, 1, ..., 1)
+            precision_sum = np().sum(self.precision, axis=0)  # shape: (1, ..., 1)
+            weighted_sum = np().sum(self.precision * self.data, axis=0)
             mean = weighted_sum / precision_sum
-            return UncertainArray(mean, dtype=self.dtype, precision=precision_sum)
+            scalar_precision = float(precision_sum.reshape(-1)[0])
+            return UncertainArray(mean, dtype=self.dtype, precision=scalar_precision)
+
 
         else:
             total_precision = np().sum(self.precision, axis=0)
@@ -235,7 +248,10 @@ class UncertainArrayTensor:
         Returns:
             UncertainArray: The UncertainArray at the given batch index.
         """
-        return UncertainArray(self.data[idx], dtype=self.dtype, precision=self.precision[idx])
+        prec = self.precision[idx]
+        if self._scalar_precision:
+            prec = float(prec.reshape(-1)[0])  # flattenしてスカラー化
+        return UncertainArray(self.data[idx], dtype=self.dtype, precision=prec)
 
     def __len__(self) -> int:
         """Return the number of UncertainArrays in the tensor (batch size)."""

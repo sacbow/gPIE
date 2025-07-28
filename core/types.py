@@ -48,3 +48,12 @@ Precision = Union[
     float,
     NDArray["float64"]
 ]
+
+# complex128/64 to float 64/32
+def get_real_dtype(dtype: np().dtype) -> np().dtype:
+    if np().issubdtype(dtype, np().complexfloating):
+        return np().float32 if dtype == np().complex64 else np().float64
+    elif np().issubdtype(dtype, np().floating):
+        return dtype
+    else:
+        raise TypeError(f"Unsupported dtype: {dtype}")
