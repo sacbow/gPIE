@@ -78,6 +78,27 @@ class Wave:
         self.belief: Optional[UncertainArray] = None
         self._generation: int = 0
         self._sample: Optional[NDArray] = None
+    
+    def to_backend(self) -> None:
+        """
+        Convert internal arrays (e.g. child message tensor) to current backend.
+
+        This should be called when switching from NumPy to CuPy or vice versa.
+        """
+        if self.child_messages_tensor is not None:
+            self.child_messages_tensor.to_backend()
+            self.dtype = self.child_messages_tensor.dtype  # Update dtype after backend cast
+
+        if self.belief is not None:
+            self.belief.to_backend()
+            self.dtype = self.belief.dtype  # Update to match backend-updated belief
+
+        if self.parent_message is not None:
+            self.parent_message.to_backend()
+
+        # Optional: sample を backend に移す（可能なら）
+        if self._sample is not None:
+            self._sample = np().asarray(self._sample)
 
     def set_label(self, label: str) -> None:
         """Assign label to this wave (for debugging or visualization)."""
@@ -281,7 +302,7 @@ class Wave:
         return len(self.shape)
     
     
-    def generate_sample_wave(self) -> None:
+    def _generate_sample(self) -> None:
         """Pull sample from parent factor if not already set."""
         if self._sample is not None:
             return
@@ -291,7 +312,7 @@ class Wave:
     
 
     def get_sample(self) -> Optional[NDArray]:
-        """Return the current sample (if set)."""
+        """Return the current sample (if set). To be deplicated."""
         return self._sample
 
     def set_sample(self, sample: NDArray) -> None:

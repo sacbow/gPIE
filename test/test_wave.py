@@ -67,3 +67,26 @@ def test_wave_compute_belief_fuses_messages(xp):
     belief = w.compute_belief()
     assert isinstance(belief, UncertainArray)
     assert xp.allclose(belief.data.shape, (2, 2))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_wave_to_backend_updates_dtype_and_storage(xp):
+    backend.set_backend(xp)
+    w = Wave(shape=(2, 2), dtype=xp.complex128)
+    w._set_precision_mode("array")
+    w.children = [object(), object()]
+    w.finalize_structure()
+    # 明示的に belief / parent_message もセット
+    w.set_parent(object())
+    parent_msg = UncertainArray(xp.full((2, 2), 1.0), precision=xp.ones((2, 2)))
+    w.receive_message(w.parent, parent_msg)
+
+    w.compute_belief()
+
+    # CPUからGPUへ（またはその逆）移す
+    new_backend = cp if xp is np else np
+    backend.set_backend(new_backend)
+    w.to_backend()
+
+    assert isinstance(w.child_messages_tensor.data, new_backend.ndarray)
+    assert isinstance(w.belief.data, new_backend.ndarray)
+    assert w.dtype == new_backend.complex128

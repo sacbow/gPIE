@@ -62,21 +62,26 @@ class SupportPrior(Prior):
         Convert internal numpy arrays (support mask, fixed messages) to current backend.
         Should be called during Graph.compile() to ensure compatibility with the selected backend.
         """
+        if hasattr(self.support, "get") and not hasattr(np(), "cuda"):  
+            # numpy backendの場合のみ get() してCPUへ転送
+            self.support = self.support.get()
         self.support = np().asarray(self.support, dtype=bool)
         self._fixed_msg_array = self._create_fixed_array(self.dtype)
-
+        self.dtype = self._fixed_msg_array.dtype
 
     def _create_fixed_array(self, dtype: np().dtype) -> UA:
+        self.support = np().asarray(self.support, dtype=bool)  
         mean = np().zeros_like(self.support, dtype=dtype)
         precision = np().where(self.support, 1.0, self.large_value)
         return UA(mean, dtype=dtype, precision=precision)
+
 
     def _compute_message(self, incoming: UA) -> UA:
         mode = self.output.precision_mode_enum
         if mode == PrecisionMode.ARRAY:
             return self._fixed_msg_array
         elif mode == PrecisionMode.SCALAR:
-            combined = self._fixed_msg_array * incoming
+            combined = self._fixed_msg_array * incoming.as_array_precision()
             reduced = combined.as_scalar_precision()
             return reduced / incoming
         else:

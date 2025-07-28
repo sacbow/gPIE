@@ -10,7 +10,7 @@ class ConstWave(Prior):
     def __init__(
         self,
         data: Any,
-        large_value: float = 1e12,
+        large_value: float = 1e8,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:
@@ -35,10 +35,28 @@ class ConstWave(Prior):
     
     def to_backend(self) -> None:
         """
-        Convert stored data array to current backend (e.g. CuPy or NumPy).
-        Called during Graph.compile().
+        Convert stored data array to current backend (e.g., CuPy or NumPy).
+        Ensures backend-safe transfer and dtype synchronization.
         """
-        self._data = np().asarray(self._data)
+        import importlib
+
+        # 現在のbackend名を取得
+        backend_name = np().__name__
+
+        if backend_name == "numpy":
+            if importlib.util.find_spec("cupy"):
+                import cupy as cp
+                if isinstance(self._data, cp.ndarray):
+                    self._data = self._data.get()
+                else:
+                    self._data = np().asarray(self._data)
+            else:
+                self._data = np().asarray(self._data)
+        else:
+            self._data = np().asarray(self._data)
+
+        self.dtype = self._data.dtype
+
 
     def _compute_message(self, incoming: UA) -> UA:
         mode = self.output.precision_mode_enum

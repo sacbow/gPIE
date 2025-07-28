@@ -126,3 +126,16 @@ class Prior(Factor, ABC):
         Compute the message based on incoming observation (used in structured priors).
         """
         pass
+
+    @abstractmethod
+    def get_sample_for_output(self) -> np().ndarray:
+        """
+        Return a sample corresponding to this prior's generative distribution.
+
+        This is used by `Wave._generate_sample()` when sampling from the prior.
+
+        Returns:
+            np().ndarray: A sampled array from this prior's distribution, matching
+                          shape and dtype.
+        """
+        pass

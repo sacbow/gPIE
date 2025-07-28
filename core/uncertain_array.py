@@ -185,11 +185,29 @@ class UncertainArray:
     
     def to_backend(self) -> None:
         """
-        Convert `data` and `_precision` to current backend (NumPy/CuPy).
+        Convert `data` and `_precision` to current backend (NumPy/CuPy),
+        handling explicit transfers between CPU (NumPy) and GPU (CuPy).
         """
-        self.data = np().asarray(self.data)
+        import cupy as cp
+        current_backend = np()
+
+        # --- data ---
+        if isinstance(self.data, cp.ndarray) and current_backend.__name__ == "numpy":
+            # CuPy → NumPy
+            self.data = self.data.get()
+        else:
+            # NumPy → CuPy or same-backend
+            self.data = current_backend.asarray(self.data)
+
         self.dtype = self.data.dtype
-        self._precision = np().asarray(self._precision, dtype=get_real_dtype(self.dtype))
+
+        # --- precision ---
+        if isinstance(self._precision, cp.ndarray) and current_backend.__name__ == "numpy":
+            # CuPy → NumPy
+            self._precision = self._precision.get()
+        else:
+            # NumPy → CuPy or same-backend
+            self._precision = current_backend.asarray(self._precision, dtype=get_real_dtype(self.dtype))
 
 
     @property

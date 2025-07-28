@@ -144,6 +144,35 @@ class Graph:
             if hasattr(wave, "finalize_structure"):
                 wave.finalize_structure()
     
+    def to_backend(self) -> None:
+        """
+        Move all graph data (Waves, Factors, and their internal arrays) to the current backend (NumPy or CuPy).
+
+        This ensures that all UncertainArray, UncertainArrayTensor, and node-specific
+        data (e.g., observed in Measurement) are moved consistently to the active backend.
+
+        Raises:
+            ImportError: If attempting to move to CuPy but CuPy is not installed.
+        """
+        from ...core.backend import np
+        import importlib.util
+
+        # check if cupy is installed
+        if np().__name__ == "cupy":
+            if importlib.util.find_spec("cupy") is None:
+                raise ImportError("CuPy backend selected but CuPy is not installed.")
+
+        # Waves: belief, parent_message, child_messages_tensor, etc.
+        for wave in self._waves:
+            if hasattr(wave, "to_backend"):
+                wave.to_backend()
+
+        # Factors: Prior, Measurement, Propagators, etc.
+        for factor in self._factors:
+            if hasattr(factor, "to_backend"):
+                factor.to_backend()
+
+    
     def get_wave(self, label: str):
         """
         Retrieve the Wave instance with the given label.

@@ -81,9 +81,22 @@ class UncertainArrayTensor:
         Move data and precision to current backend (NumPy or CuPy).
         Updates dtype based on backend-casted array.
         """
-        self.data = np().asarray(self.data)
-        self.precision = np().asarray(self.precision, dtype=get_real_dtype(self.dtype))
-        self.dtype = self.data.dtype  # Update dtype after backend switch
+        import cupy as cp
+        current_backend = np()
+
+        # data
+        if isinstance(self.data, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.data = self.data.get()  # CuPy → NumPy 明示変換
+        else:
+            self.data = current_backend.asarray(self.data)
+
+        # precision
+        if isinstance(self.precision, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.precision = self.precision.get()
+        else:
+            self.precision = current_backend.asarray(self.precision, dtype=get_real_dtype(self.dtype))
+
+        self.dtype = self.data.dtype
 
     
     @property

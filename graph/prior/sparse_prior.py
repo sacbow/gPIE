@@ -94,11 +94,11 @@ class SparsePrior(Prior):
             slab = self.rho * np().exp(-np().abs(m)**2 / (1 + v)) / ((1 + v))
             spike = (1 - self.rho) * np().exp(-np().abs(m)**2 / v) / v
 
-        Z = slab + spike + 1e-12  # normalization constant
+        Z = slab + spike + 1e-8  # normalization constant
 
         mu = (slab / Z) * m_post
         e_x2 = (slab / Z) * (np().abs(m_post) ** 2 + v_post)
-        var = np().maximum(e_x2 - np().abs(mu) ** 2, 1e-10)
+        var = np().maximum(e_x2 - np().abs(mu) ** 2, 1e-8)
         precision = 1.0 / var
 
         if self.output.precision_mode_enum == PrecisionMode.SCALAR:
