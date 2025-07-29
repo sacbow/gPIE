@@ -64,10 +64,11 @@ def normal(rng, size, mean=0.0, std=1.0):
     elif backend == "cupy":
         import cupy as cp
         _sync_cupy_rng(rng)
-        return std * cp.random.randn(*size) + mean
+        if isinstance(size, int):
+            return std * cp.random.randn(size) + mean
+        else:
+            return std * cp.random.randn(*size) + mean
 
-    else:
-        raise NotImplementedError(f"normal() not implemented for backend '{backend}'")
 
 
 def choice(rng, a, size, replace=True):

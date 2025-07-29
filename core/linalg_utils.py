@@ -94,12 +94,12 @@ def sparse_complex_array(shape, sparsity, dtype=None, rng=None):
     """
     dtype = np().complex128 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
-
-    N = np().prod(shape)
+    shape = (shape,) if isinstance(shape, int) else shape
+    N = int(np().prod(np().array(shape)).item()) 
     num_nonzero = int(sparsity * N)
 
     sample = np().zeros(N, dtype=dtype)
-    idx = choice(rng = rng, a = N, size=num_nonzero, replace=False)
+    idx = choice(rng = rng, a = N, size=(num_nonzero,), replace=False)
     real = normal(rng = rng, mean = 0.0, std = np().sqrt(0.5), size = num_nonzero)
     imag = normal(rng = rng, mean = 0.0, std = np().sqrt(0.5), size = num_nonzero)
     sample[idx] = real + 1j * imag
@@ -134,15 +134,13 @@ def random_binary_mask(shape, subsampling_rate=0.5, rng=None):
     Generate a random binary mask with a given subsampling rate.
     """
     shape = (shape,) if isinstance(shape, int) else shape
-    total = int(np().prod(np().array(shape)).item())  # ← CuPyでもint化
+    total = int(np().prod(np().array(shape)).item())  
     rng = get_rng() if rng is None else rng
 
-    indices = rng.choice(total, int(total * subsampling_rate), replace=False)
+    indices = choice(a = total, size = int(total * subsampling_rate), replace=False, rng = rng)
     mask = np().zeros(total, dtype=bool)
     mask[indices] = True
     return mask.reshape(shape)
-
-
 
 
 def random_phase_mask(shape, dtype=None, rng=None):
