@@ -1,7 +1,7 @@
-import numpy as np
 from typing import Optional
 from .base import Propagator
 from ..wave import Wave
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import reduce_precision_to_scalar
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
@@ -37,20 +37,20 @@ class UnitaryPropagator(Propagator):
         - ARRAY_TO_SCALAR: maps array precision input → scalar output
 
     Args:
-        U (np.ndarray): Unitary matrix of shape (N, N).
+        U (np().ndarray): Unitary matrix of shape (N, N).
         precision_mode (UnaryPropagatorPrecisionMode | None): Optional precision mode.
-        dtype (np.dtype): Data type (real or complex), default: np.complex128.
+        dtype (np().dtype): Data type (real or complex), default: np().complex128.
 
     Raises:
         ValueError: If U is not a square 2D unitary matrix.
     """
 
-    def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np.complex128):
+    def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np().complex128):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
 
         if U is None:
             raise ValueError("Unitary matrix U must be explicitly provided.")
-        self.U = np.asarray(U)
+        self.U = np().asarray(U, dtype = self.dtype)
         self.Uh = self.U.conj().T
 
         if self.U.ndim != 2 or self.U.shape[0] != self.U.shape[1]:
@@ -60,6 +60,30 @@ class UnitaryPropagator(Propagator):
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
+    
+    def to_backend(self) -> None:
+        """
+        Transfer internal arrays (U, Uh) to the current backend (NumPy/CuPy),
+        and synchronize dtype.
+        """
+        import cupy as cp
+        current_backend = np()
+
+        # Transfer U
+        if isinstance(self.U, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.U = self.U.get()
+        else:
+            self.U = current_backend.asarray(self.U)
+
+        # Transfer Uh
+        if isinstance(self.Uh, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.Uh = self.Uh.get()
+        else:
+            self.Uh = current_backend.asarray(self.Uh)
+
+        # Sync dtype
+        self.dtype = current_backend.dtype(self.dtype)
+
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
         if isinstance(mode, str):
@@ -114,8 +138,8 @@ class UnitaryPropagator(Propagator):
         x_wave = self.inputs["input"]
         msg_x = self.input_messages.get(x_wave)
 
-        if np.issubdtype(msg_x.dtype, np.floating):
-            msg_x = msg_x.astype(np.complex128)  # or self.dtype if必要
+        if np().issubdtype(msg_x.dtype, np().floating):
+            msg_x = msg_x.astype(np().complex128)  # or self.dtype if必要
 
         msg_y = self.output_message
 
@@ -180,12 +204,27 @@ class UnitaryPropagator(Propagator):
         self._init_rng = rng
 
     def generate_sample(self, rng):
+        """
+        to be deplicated
+        """
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
         y = self.U @ x
         self.output.set_sample(y)
+    
+    def get_sample_for_output(self, rng):
+        """
+        Return the propagated sample for the output wave.
+        This replaces generate_sample and delegates sample setting to Graph.
+        """
+        x_wave = self.inputs["input"]
+        x = x_wave.get_sample()
+        if x is None:
+            raise RuntimeError("Input sample not set.")
+        return self.U @ x
+
 
     def __matmul__(self, wave: Wave) -> Wave:
         if wave.ndim != 1:

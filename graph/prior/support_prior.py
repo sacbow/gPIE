@@ -68,6 +68,7 @@ class SupportPrior(Prior):
         self.support = np().asarray(self.support, dtype=bool)
         self._fixed_msg_array = self._create_fixed_array(self.dtype)
         self.dtype = self._fixed_msg_array.dtype
+        
 
     def _create_fixed_array(self, dtype: np().dtype) -> UA:
         self.support = np().asarray(self.support, dtype=bool)  

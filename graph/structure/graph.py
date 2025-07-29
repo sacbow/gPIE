@@ -248,12 +248,13 @@ class Graph:
 
         for node in self._nodes_sorted:
             if hasattr(node, "_generate_sample"):
-                node._generate_sample(rng)
-
+                if node._sample is None:
+                    node._generate_sample(rng)
         if update_observed:
             for factor in self._factors:
                 if hasattr(factor, "update_observed_from_sample"):
                     factor.update_observed_from_sample()
+
 
 
     def set_init_rng(self, rng):

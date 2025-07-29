@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Union
-import numpy as np
 
 from ..factor import Factor
 from ..wave import Wave
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import UnaryPropagatorPrecisionMode
+from ...core.backend import np
 
 
 class Propagator(Factor, ABC):
@@ -36,19 +36,19 @@ class Propagator(Factor, ABC):
 
     Args:
         input_names (tuple[str, ...]): Keys for input variables (e.g., ("a", "b")).
-        dtype (np.dtype): Expected dtype for inputs/outputs (default: np.complex128).
+        dtype (np().dtype): Expected dtype for inputs/outputs (default: np().complex128).
         precision_mode (str | UnaryPropagatorPrecisionMode | None): Optional mode.
 
     Attributes:
         input_names (tuple[str, ...]): Keys identifying inputs.
-        dtype (np.dtype): Common dtype used for messages.
+        dtype (np().dtype): Common dtype used for messages.
         _precision_mode (UnaryPropagatorPrecisionMode | None): Precision configuration.
     """
 
     def __init__(
         self,
         input_names: tuple[str, ...] = ("input",),
-        dtype: np.dtype = np.complex128,
+        dtype: np().dtype = np().complex128,
         precision_mode: Optional[Union[str, UnaryPropagatorPrecisionMode]] = None,
     ):
 
@@ -58,6 +58,12 @@ class Propagator(Factor, ABC):
 
         if precision_mode is not None:
             self._set_precision_mode(precision_mode)
+
+    def to_backend(self) -> None:
+        """Synchronize dtype with current backend."""
+        current_backend = np()
+        if self.dtype is not None:
+            self.dtype = current_backend.dtype(self.dtype)
 
     @property
     def precision_mode_enum(self) -> Optional[UnaryPropagatorPrecisionMode]:

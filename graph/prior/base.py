@@ -67,6 +67,13 @@ class Prior(Factor, ABC):
 
         wave = Wave(shape, dtype=dtype, precision_mode=precision_mode, label=label)
         self.connect_output(wave)
+    
+    def to_backend(self) -> None:
+        """Synchronize dtype with current backend."""
+        current_backend = np()
+        if self.dtype is not None:
+            self.dtype = current_backend.dtype(self.dtype)
+
 
     def set_precision_mode_backward(self) -> None:
         """
@@ -128,7 +135,7 @@ class Prior(Factor, ABC):
         pass
 
     @abstractmethod
-    def get_sample_for_output(self) -> np().ndarray:
+    def get_sample_for_output(self, rng) -> np().ndarray:
         """
         Return a sample corresponding to this prior's generative distribution.
 

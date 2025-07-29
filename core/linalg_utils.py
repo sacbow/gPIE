@@ -124,33 +124,25 @@ def random_unitary_matrix(n, dtype=None, rng=None):
     """
     dtype = np().complex128 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
-    A = complex_normal_random_array((n, n), dtype=dtype, rng=rng)
+    A = random_normal_array((n, n), dtype=dtype, rng=rng)
     U, _, _ = np().linalg.svd(A)
     return U
 
 
-def random_binary_mask(shape, subsampling_rate, rng=None):
+def random_binary_mask(shape, subsampling_rate=0.5, rng=None):
     """
-    Generate a random boolean mask with given shape and subsampling rate.
-
-    Args:
-        shape (tuple): Shape of the mask.
-        subsampling_rate (float): Ratio of True entries (between 0 and 1).
-        rng (np.random.Generator): Random number generator (required)
-
-    Returns:
-        np.ndarray: Boolean mask array.
+    Generate a random binary mask with a given subsampling rate.
     """
-    if not (0.0 <= subsampling_rate <= 1.0):
-        raise ValueError("subsampling_rate must be between 0.0 and 1.0")
+    shape = (shape,) if isinstance(shape, int) else shape
+    total = int(np().prod(np().array(shape)).item())  # ← CuPyでもint化
     rng = get_rng() if rng is None else rng
 
-    total = np().prod(shape)
-    num_true = int(total * subsampling_rate)
-    flat_mask = np().zeros(total, dtype=bool)
-    flat_mask[:num_true] = True
-    shuffle(rng = rng, x = flat_mask)
-    return flat_mask.reshape(shape)
+    indices = rng.choice(total, int(total * subsampling_rate), replace=False)
+    mask = np().zeros(total, dtype=bool)
+    mask[indices] = True
+    return mask.reshape(shape)
+
+
 
 
 def random_phase_mask(shape, dtype=None, rng=None):

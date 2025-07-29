@@ -299,12 +299,12 @@ class Wave:
         return len(self.shape)
     
     
-    def _generate_sample(self) -> None:
+    def _generate_sample(self, rng) -> None:
         """Pull sample from parent factor if not already set."""
         if self._sample is not None:
             return
         if self.parent and hasattr(self.parent, "get_sample_for_output"):
-            sample = self.parent.get_sample_for_output()
+            sample = self.parent.get_sample_for_output(rng = rng)
             self.set_sample(sample)
     
 
