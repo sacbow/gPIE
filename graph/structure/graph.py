@@ -247,8 +247,8 @@ class Graph:
             rng = self._rng
 
         for node in self._nodes_sorted:
-            if hasattr(node, "generate_sample"):
-                node.generate_sample(rng)
+            if hasattr(node, "_generate_sample"):
+                node._generate_sample(rng)
 
         if update_observed:
             for factor in self._factors:

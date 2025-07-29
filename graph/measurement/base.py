@@ -55,10 +55,10 @@ class Measurement(Factor, ABC):
             raise NotImplementedError("Subclasses must define `input_dtype`")
 
         if observed is not None and self.expected_observed_dtype is not None:
-            if observed.dtype != self.expected_observed_dtype:
+            if not np().issubdtype(observed.dtype, np().dtype(self.expected_observed_dtype).type):
                 raise TypeError(
-                    f"{type(self).__name__} expects observed dtype {self.expected_observed_dtype}, "
-                    f"but received {observed.dtype}"
+                    f"{type(self).__name__} expects observed dtype compatible with "
+                    f"{self.expected_observed_dtype}, but received {observed.dtype}"
                 )
 
         self._sample: Optional[np().ndarray] = None
@@ -131,6 +131,36 @@ class Measurement(Factor, ABC):
                     i += 1
 
         return self
+    
+    def to_backend(self) -> None:
+        """
+        Transfer internal data (observed UA, mask) to the current backend (NumPy/CuPy),
+        and align dtype attributes (input_dtype, expected_observed_dtype) with current backend.
+
+        This is typically called after observed data has been injected
+        (e.g., via `set_observed` or `update_observed_from_sample`).
+        """
+        import cupy as cp
+        current_backend = np()
+
+        # --- observed (UncertainArray) ---
+        if self.observed is not None:
+            self.observed.to_backend()
+
+        # --- mask (ndarray[bool]) ---
+        if self._mask is not None:
+            if isinstance(self._mask, cp.ndarray) and current_backend.__name__ == "numpy":
+                # CuPy → NumPy
+                self._mask = self._mask.get()
+            else:
+                # NumPy → CuPy or same-backend
+                self._mask = current_backend.asarray(self._mask, dtype=bool)
+
+        # --- dtype alignment ---
+        if self.input_dtype is not None:
+            self.input_dtype = current_backend.dtype(self.input_dtype)
+        if self.expected_observed_dtype is not None:
+            self.expected_observed_dtype = current_backend.dtype(self.expected_observed_dtype)
 
 
     @property
@@ -196,26 +226,16 @@ class Measurement(Factor, ABC):
     ) -> None:
         """
         Manually provide the observed data and its precision.
-
-        Useful for injecting experimental or synthetic measurements.
-
-        Args:
-            data: The observed values (same shape as input wave).
-            precision: Inverse variance; scalar or per-element array.
-            dtype: Optional override of dtype. Must match expected_observed_dtype.
-
-        Raises:
-            TypeError: If dtype does not match expected_observed_dtype.
-            ValueError: If shape of data, precision, or mask are inconsistent.
         """
-
         dtype = dtype or self.observed_dtype
 
-        if self.expected_observed_dtype is not None and dtype != self.expected_observed_dtype:
-            raise TypeError(
-                f"{type(self).__name__} expects observed dtype {self.expected_observed_dtype}, "
-                f"but got {dtype}"
-            )
+        # Use issubdtype for relaxed compatibility (e.g., float32 vs float64)
+        if self.expected_observed_dtype is not None:
+            if not np().issubdtype(dtype, np().dtype(self.expected_observed_dtype).type):
+                raise TypeError(
+                    f"{type(self).__name__} expects observed dtype compatible with "
+                    f"{self.expected_observed_dtype}, but got {dtype}"
+                )
 
         if data.shape != self.input.shape or (isinstance(precision, np().ndarray) and precision.shape != data.shape):
             raise ValueError("Observed data and precision must match input shape.")
@@ -225,6 +245,7 @@ class Measurement(Factor, ABC):
 
         self.observed = UncertainArray(data, dtype=dtype, precision=precision)
         self.observed_dtype = dtype
+
 
     def update_observed_from_sample(self) -> None:
         """
@@ -252,5 +273,23 @@ class Measurement(Factor, ABC):
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
         """
         Compute backward message based on current observation and incoming message.
+        """
+        pass
+
+    @abstractmethod
+    def _generate_sample(self, rng: Any) -> None:
+        """
+        Abstract method to generate a synthetic observation sample.
+
+        Each subclass must implement this method, typically by:
+            - Accessing the latent sample from `self.input.get_sample()`
+            - Adding observation noise based on the measurement model
+            - Storing the result in `self._sample` for later promotion to observed data
+
+        Args:
+            rng: Backend-agnostic random number generator (from `rng_utils.get_rng`).
+
+        Raises:
+            RuntimeError: If the connected input wave has no sample available.
         """
         pass

@@ -96,9 +96,6 @@ class Wave:
         if self.parent_message is not None:
             self.parent_message.to_backend()
 
-        # Optional: sample を backend に移す（可能なら）
-        if self._sample is not None:
-            self._sample = np().asarray(self._sample)
 
     def set_label(self, label: str) -> None:
         """Assign label to this wave (for debugging or visualization)."""
