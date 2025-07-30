@@ -1,9 +1,9 @@
-import numpy as np
 from typing import Optional
 from .base import Propagator
+from ...core.backend import np
 from ..wave import Wave
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode
+from ...core.types import PrecisionMode, get_complex_dtype
 
 
 class PhaseMaskPropagator(Propagator):
@@ -25,32 +25,46 @@ class PhaseMaskPropagator(Propagator):
         - Mode is propagated forward/backward from input/output
 
     Forward message:
-        - y = x \odot phase_mask
+        - y = x \\odot phase_mask
 
     Backward message:
         - x ≈ y / phase_mask
 
     Args:
-        phase_mask (np.ndarray): Complex-valued array of shape (H, W) with unit magnitude.
-        dtype (np.dtype): Data type for internal computation (default: np.complex128).
+        phase_mask (np().ndarray): Complex-valued array of shape (H, W) with unit magnitude.
+        dtype (np().dtype): Data type for internal computation (default: np().complex128).
 
     Raises:
         ValueError: If phase_mask is not unit-magnitude or shape mismatch occurs.
     """
 
-    def __init__(self, phase_mask, dtype=np.complex128):
+    def __init__(self, phase_mask, dtype=np().complex128):
         """
         Args:
             phase_mask (ndarray): Complex array of shape (H, W) with unit magnitude.
-            dtype (np.dtype): Complex dtype (default: complex128).
+            dtype (np().dtype): Complex dtype (default: complex128).
         """
         super().__init__(input_names=("input",), dtype=dtype)
 
-        if not np.allclose(np.abs(phase_mask), 1.0):
+        if not np().allclose(np().abs(phase_mask), 1.0):
             raise ValueError("Phase mask must have unit magnitude.")
 
         self.phase_mask = phase_mask
         self.shape = phase_mask.shape
+    
+    def to_backend(self):
+        import cupy as cp
+        current_backend = np()
+        
+        # Transfer phase mask first
+        if isinstance(self.phase_mask, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.phase_mask = self.phase_mask.get().astype(self.dtype)
+        else:
+            self.phase_mask = current_backend.asarray(self.phase_mask, dtype=self.dtype)
+        
+        # Sync dtype attributes
+        self.dtype = current_backend.dtype(self.dtype)
+
 
     def _set_precision_mode(self, mode: str | PrecisionMode) -> None:
         """
@@ -109,19 +123,20 @@ class PhaseMaskPropagator(Propagator):
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
-
+        self.dtype = get_complex_dtype(wave.dtype)
+        self.phase_mask = self.phase_mask.astype(self.dtype)
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
-
-    def generate_sample(self, rng):
+    
+    def get_sample_for_output(self, rng):
         x = self.inputs["input"].get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
         x = x.astype(self.dtype, copy=False)
-        self.output.set_sample(x * self.phase_mask)
+        return x * self.phase_mask
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

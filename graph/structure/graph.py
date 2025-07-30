@@ -146,31 +146,65 @@ class Graph:
     
     def to_backend(self) -> None:
         """
-        Move all graph data (Waves, Factors, and their internal arrays) to the current backend (NumPy or CuPy).
-
-        This ensures that all UncertainArray, UncertainArrayTensor, and node-specific
-        data (e.g., observed in Measurement) are moved consistently to the active backend.
-
-        Raises:
-            ImportError: If attempting to move to CuPy but CuPy is not installed.
+        Move all graph data (Waves, Factors, and their internal arrays) to the current backend (NumPy or CuPy),
+        explicitly converting samples and observed values to avoid implicit conversion errors.
         """
         from ...core.backend import np
-        import importlib.util
+        from ...core.rng_utils import get_rng
+        import importlib
 
-        # check if cupy is installed
-        if np().__name__ == "cupy":
-            if importlib.util.find_spec("cupy") is None:
-                raise ImportError("CuPy backend selected but CuPy is not installed.")
+        has_cupy = importlib.util.find_spec("cupy") is not None
+        if has_cupy:
+            import cupy as cp
 
-        # Waves: belief, parent_message, child_messages_tensor, etc.
+        # Waves: belief, samples, etc.
         for wave in self._waves:
             if hasattr(wave, "to_backend"):
                 wave.to_backend()
+
+            # Explicitly handle wave._sample conversion
+            if hasattr(wave, "_sample") and wave._sample is not None:
+                if has_cupy and isinstance(wave._sample, (cp.ndarray,)):
+                    if np().__name__ == "numpy":  # CuPy→NumPy
+                        wave._sample = wave._sample.get()
+                    else:  # CuPy→CuPy (dtype sync)
+                        wave._sample = cp.asarray(wave._sample, dtype=wave.dtype)
+                else:
+                    if np().__name__ == "cupy":  # NumPy→CuPy
+                        wave._sample = cp.asarray(wave._sample)
+                    else:  # NumPy→NumPy (dtype sync)
+                        wave._sample = np().asarray(wave._sample, dtype=wave.dtype)
 
         # Factors: Prior, Measurement, Propagators, etc.
         for factor in self._factors:
             if hasattr(factor, "to_backend"):
                 factor.to_backend()
+
+            # Measurement-specific: observed/sample arrays
+            if hasattr(factor, "observed") and factor.observed is not None:
+                factor.observed.to_backend()
+
+            if hasattr(factor, "_sample") and factor._sample is not None:
+                if has_cupy and isinstance(factor._sample, (cp.ndarray,)):
+                    if np().__name__ == "numpy":
+                        factor._sample = factor._sample.get()
+                    else:
+                        factor._sample = cp.asarray(factor._sample, dtype=factor.expected_observed_dtype)
+                else:
+                    if np().__name__ == "cupy":
+                        factor._sample = cp.asarray(factor._sample)
+                    else:
+                        factor._sample = np().asarray(factor._sample, dtype=factor.expected_observed_dtype)
+
+        # RNG sync
+        self._rng = get_rng()
+        for factor in self._factors:
+            if hasattr(factor, "_init_rng"):
+                factor._init_rng = get_rng()
+        for wave in self._waves:
+            if hasattr(wave, "_init_rng"):
+                wave._init_rng = get_rng()
+
 
     
     def get_wave(self, label: str):

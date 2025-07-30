@@ -158,7 +158,7 @@ class AmplitudeMeasurement(Measurement):
         tau = incoming.precision(raw=True)
         v0 = 1.0 / tau
         y = self.observed.data
-        v = self.observed.precision(raw=True)
+        v = 1.0 / np().sqrt(self.observed.precision(raw=True))
 
         abs_z0 = np().abs(z0)
         abs_z0_safe = np().maximum(abs_z0, 1e-12)

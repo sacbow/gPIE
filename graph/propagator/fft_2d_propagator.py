@@ -1,10 +1,10 @@
-import numpy as np
 from typing import Optional
 from .base import Propagator
 from ..wave import Wave
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
-from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
 
 
 class FFT2DPropagator(Propagator):
@@ -33,7 +33,7 @@ class FFT2DPropagator(Propagator):
     Args:
         shape (tuple[int, int] | None): Shape of the 2D variable (inferred during `@` if None).
         precision_mode (UnaryPropagatorPrecisionMode | None): Precision model (optional).
-        dtype (np.dtype): Data type (default: np.complex128).
+        dtype (np().dtype): Data type (default: np().complex128).
     
     Raises:
         ValueError: If input is not 2D or precision mode is incompatible.
@@ -47,13 +47,20 @@ class FFT2DPropagator(Propagator):
         self,
         shape=None,
         precision_mode: Optional[UnaryPropagatorPrecisionMode] = None,
-        dtype=np.complex128
+        dtype=np().complex128
     ):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
         self.shape = shape
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
+    
+    def to_backend(self):
+        """
+        synchronize dtype
+        """
+        current_backend = np()
+        self.dtype = current_backend.dtype(self.dtype)
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
         if isinstance(mode, str):
@@ -117,8 +124,8 @@ class FFT2DPropagator(Propagator):
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
-        if not np.issubdtype(msg_x.data.dtype, np.complexfloating):
-            msg_x = msg_x.astype(np.complex128)
+        if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
+            msg_x = msg_x.astype(np().complex128)
 
         r = msg_x.data
         p = msg_y.data
@@ -177,13 +184,13 @@ class FFT2DPropagator(Propagator):
     def set_init_rng(self, rng):
         self._init_rng = rng
 
-    def generate_sample(self, rng):
+    def get_sample_for_output(self, rng):
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        y = fft2_centered(x)
-        self.output.set_sample(y)
+        return fft2_centered(x)
+
 
     def __matmul__(self, wave: Wave) -> Wave:
         if wave.ndim != 2:
@@ -191,6 +198,7 @@ class FFT2DPropagator(Propagator):
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
+        self.dtype = get_complex_dtype(wave.dtype)
         self.shape = wave.shape
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)

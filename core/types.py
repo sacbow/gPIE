@@ -57,3 +57,12 @@ def get_real_dtype(dtype: np().dtype) -> np().dtype:
         return dtype
     else:
         raise TypeError(f"Unsupported dtype: {dtype}")
+
+# float 64/32 to complex 128/64
+def get_complex_dtype(dtype: np().dtype) -> np().dtype:
+    if np().issubdtype(dtype, np().complexfloating):
+        return dtype
+    elif np().issubdtype(dtype, np().floating):
+        return np().complex64 if dtype == np().float32 else np().complex128
+    else:
+        raise TypeError(f"Unsupported dtype: {dtype}")

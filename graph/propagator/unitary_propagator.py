@@ -4,7 +4,7 @@ from ..wave import Wave
 from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import reduce_precision_to_scalar
-from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
 
 
 class UnitaryPropagator(Propagator):
@@ -123,16 +123,11 @@ class UnitaryPropagator(Propagator):
         x_wave = self.inputs["input"]
         if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
-        elif x_wave.precision_mode_enum == PrecisionMode.SCALAR:
-            self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
 
     def set_precision_mode_backward(self):
         y_wave = self.output
         if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
-        elif y_wave.precision_mode_enum == PrecisionMode.SCALAR:
-            if self._precision_mode is None:
-                self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
 
     def compute_belief(self):
         x_wave = self.inputs["input"]
@@ -233,7 +228,7 @@ class UnitaryPropagator(Propagator):
         self.add_input("input", wave)
         input_gen = wave.generation
         self._set_generation(input_gen + 1)
-
+        self.dtype = get_complex_dtype(wave.dtype)
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
