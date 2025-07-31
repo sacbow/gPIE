@@ -1,8 +1,8 @@
 from ..wave import Wave
 from .base import Propagator
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode
-import numpy as np
+from ...core.types import PrecisionMode, get_complex_dtype, get_real_dtype, get_lower_precision_dtype
+from ...core.backend import np
 from typing import Union, Optional
 
 
@@ -16,7 +16,7 @@ class AddConstPropagator(Propagator):
     Supports:
         - Scalar (float, complex) or array-valued constants
         - Broadcasting of const to match Wave shape
-        - Safe dtype promotion using np.result_type
+        - Safe dtype promotion using np().result_type
         - Preserves input precision mode (scalar/array)
         - Compatible with EP-style forward/backward message passing
 
@@ -25,9 +25,18 @@ class AddConstPropagator(Propagator):
         >>> y = x + 3.0
     """
 
-    def __init__(self, const: Union[float, complex, np.ndarray]):
+    def __init__(self, const: Union[float, complex, np().ndarray]):
         super().__init__(input_names=("input",))
-        self.const = np.asarray(const)
+        self.const = np().asarray(const)
+        self.const_dtype = self.const.dtype
+    
+    def to_backend(self):
+        import cupy as cp
+        current_backend = np()
+        if isinstance(self.const, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.const = self.const.get().astype(self.const_dtype)
+        else:
+            self.const = current_backend.asarray(self.const, dtype=self.const_dtype)
         self.const_dtype = self.const.dtype
 
     def _set_precision_mode(self, mode: Union[str, PrecisionMode]) -> None:
@@ -55,7 +64,6 @@ class AddConstPropagator(Propagator):
         mode = self.inputs["input"].precision_mode_enum
         if mode is not None:
             self._set_precision_mode(mode)
-            self.output._set_precision_mode(mode)
 
     def set_precision_mode_backward(self) -> None:
         """
@@ -64,7 +72,6 @@ class AddConstPropagator(Propagator):
         mode = self.output.precision_mode_enum
         if mode is not None:
             self._set_precision_mode(mode)
-            self.inputs["input"]._set_precision_mode(mode)
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
         return self._precision_mode
@@ -77,7 +84,7 @@ class AddConstPropagator(Propagator):
         Add constant to input data with correct dtype promotion and precision adjustment.
         """
         x = inputs["input"]
-        target_dtype = np.result_type(x.dtype, self.const_dtype)
+        target_dtype = np().result_type(x.dtype, self.const_dtype)
 
         # Promote UA to target_dtype, with proper precision scaling
         if x.dtype != target_dtype:
@@ -99,18 +106,22 @@ class AddConstPropagator(Propagator):
     def __matmul__(self, wave: Wave) -> Wave:
         """
         Connect the propagator to a Wave and create an output Wave.
-        Automatically promotes dtype and handles shape broadcasting.
+        Use lower precision policy: downstream propagators inherit upstream dtype.
         """
-        self.dtype = np.result_type(wave.dtype, self.const_dtype)
+        # Pick lower precision dtype
+        self.dtype = get_lower_precision_dtype(wave.dtype, self.const_dtype)
 
-        if isinstance(self.const, np.ndarray):
-            if self.const.shape != wave.shape:
-                try:
-                    self.const = np.broadcast_to(self.const, wave.shape)
-                except ValueError:
-                    raise ValueError(
-                        f"AddConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {wave.shape}"
-                    )
+        # Cast const if higher precision than target
+        if self.const.dtype != self.dtype:
+            self.const = np().asarray(self.const, dtype=self.dtype)
+            self.const_dtype = self.const.dtype
+
+        # Broadcast const if needed
+        if isinstance(self.const, np().ndarray) and self.const.shape != wave.shape:
+            try:
+                self.const = np().broadcast_to(self.const, wave.shape)
+            except ValueError:
+                raise ValueError(f"AddConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {wave.shape}")
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
@@ -121,11 +132,16 @@ class AddConstPropagator(Propagator):
         self.output = out_wave
         return self.output
 
-    def generate_sample(self, rng=None):
+    def get_sample_for_output(self, rng=None):
         """
         Generate a sample by adding constant to input sample.
         """
         x_sample = self.inputs["input"].get_sample()
-        if x_sample is not None:
-            const = self.const.astype(x_sample.dtype) if x_sample.dtype != self.const_dtype else self.const
-            self.output.set_sample(x_sample + const)
+        if x_sample is None:
+            raise RuntimeError("Input sample not set.")
+        const = self.const.astype(x_sample.dtype) if x_sample.dtype != self.const_dtype else self.const
+        return x_sample + const
+    
+    def __repr__(self):
+        gen = self._generation if self._generation is not None else "-"
+        return f"AddConst(gen={gen}, mode={self.precision_mode})"

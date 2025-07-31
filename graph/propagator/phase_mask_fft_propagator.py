@@ -1,9 +1,9 @@
-import numpy as np
 from typing import Optional
 from .base import Propagator
 from ..wave import Wave
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
 from ...core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
 
 
@@ -33,24 +33,43 @@ class PhaseMaskFFTPropagator(Propagator):
         - All modulation is performed in the frequency domain
 
     Args:
-        phase_mask (np.ndarray): Complex array of shape (H, W), with unit magnitude.
+        phase_mask (np().ndarray): Complex array of shape (H, W), with unit magnitude.
         precision_mode (UnaryPropagatorPrecisionMode, optional): Desired precision configuration.
-        dtype (np.dtype): Data type, typically np.complex128.
+        dtype (np().dtype): Data type, typically np().complex128.
     """
 
     def __init__(
         self,
-        phase_mask: np.ndarray,
+        phase_mask: np().ndarray,
         precision_mode: Optional[UnaryPropagatorPrecisionMode] = None,
-        dtype: np.dtype = np.complex128
+        dtype: np().dtype = np().complex128
     ):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
+        if phase_mask.ndim != 2:
+            raise ValueError("phase_mask must be 2D.")
+        if not np().allclose(np().abs(phase_mask), 1.0, atol=1e-6):
+            raise ValueError("phase_mask must be unit-magnitude.")
         self.phase_mask = phase_mask
         self.phase_mask_conj = phase_mask.conj()
         self.shape = phase_mask.shape
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
+    
+    def to_backend(self):
+        import cupy as cp
+        current_backend = np()
+        
+        # Transfer phase mask first
+        if isinstance(self.phase_mask, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.phase_mask = self.phase_mask.get().astype(self.dtype)
+            self.phase_mask_conj = self.phase_mask_conj.get().astype(self.dtype)
+        else:
+            self.phase_mask = current_backend.asarray(self.phase_mask, dtype=self.dtype)
+            self.phase_mask_conj = current_backend.asarray(self.phase_mask_conj, dtype=self.dtype)
+        
+        # Sync dtype attributes
+        self.dtype = current_backend.dtype(self.dtype)
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
         if isinstance(mode, str):
@@ -114,7 +133,7 @@ class PhaseMaskFFTPropagator(Propagator):
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required.")
 
-        if not np.issubdtype(msg_x.dtype, np.complexfloating):
+        if not np().issubdtype(msg_x.dtype, np().complexfloating):
             msg_x = msg_x.astype(self.dtype)
 
         r = msg_x.data
@@ -161,7 +180,10 @@ class PhaseMaskFFTPropagator(Propagator):
         if self.output_message is None or self.y_belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng)
+            if self.output.precision_mode == "scalar":
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = True)
+            else:
+                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
         else:
             msg = self.y_belief / self.output_message
         self.output.receive_message(self, msg)
@@ -177,22 +199,22 @@ class PhaseMaskFFTPropagator(Propagator):
 
     def set_init_rng(self, rng):
         self._init_rng = rng
-
-    def generate_sample(self, rng):
+    
+    def get_sample_for_output(self, rng):
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        y = ifft2_centered(self.phase_mask * fft2_centered(x))
-        self.output.set_sample(y)
+        return ifft2_centered(self.phase_mask * fft2_centered(x))
 
     def __matmul__(self, wave: Wave) -> Wave:
-        if wave.ndim != 2:
-            raise ValueError("PhaseMaskFFTPropagator only supports 2D wave input.")
+        if wave.shape != self.shape:
+            raise ValueError("Input wave shape does not match phase mask shape.")
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
-        self.shape = wave.shape
+        self.dtype = get_complex_dtype(wave.dtype)
+        self.phase_mask = self.phase_mask.astype(self.dtype)
         out_wave = Wave(self.shape, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)

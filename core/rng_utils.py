@@ -44,10 +44,6 @@ def get_rng(seed=None):
             warnings.warn("CuPy backend selected but CuPy not installed. Falling back to NumPy RNG.")
             return np.random.default_rng(seed)
 
-    elif "jax" in backend_name:
-        import jax
-        return jax.random.PRNGKey(seed or 0)
-
     raise NotImplementedError(f"get_rng not implemented for backend '{backend_name}'")
 
 

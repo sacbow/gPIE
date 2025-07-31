@@ -1,0 +1,145 @@
+import importlib.util
+import warnings
+import pytest
+import sys
+import numpy as np
+
+from gpie.core import backend
+from gpie.core import rng_utils
+
+# Check CuPy availability
+cupy_spec = importlib.util.find_spec("cupy")
+has_cupy = cupy_spec is not None
+if has_cupy:
+    import cupy as cp
+
+
+def test_sync_cupy_rng_with_numpy(monkeypatch):
+    """Test that _sync_cupy_rng calls cp.random.seed with correct seed."""
+    if not has_cupy:
+        pytest.skip("CuPy not available")
+
+    rng = np.random.default_rng(42)
+    called = {}
+
+    def mock_seed(val):
+        called["seed"] = val
+
+    monkeypatch.setattr(cp.random, "seed", mock_seed)
+    rng_utils._sync_cupy_rng(rng)
+    assert "seed" in called
+    assert isinstance(called["seed"], int)
+
+
+def test_sync_cupy_rng_no_numpy_rng(monkeypatch):
+    """Test _sync_cupy_rng does nothing if RNG has no bit_generator."""
+    if not has_cupy:
+        pytest.skip("CuPy not available")
+
+    class DummyRNG:
+        pass
+
+    # モジュールインポート時にcupyをImportErrorにするようパッチ
+    monkeypatch.setitem(sys.modules, "cupy", None)
+
+    dummy = DummyRNG()
+    # CuPyがインポートできない状態をシミュレート
+    rng_utils._sync_cupy_rng(dummy)  # 何も起きず終了
+
+
+def test_get_rng_cupy_fallback(monkeypatch):
+    """Test get_rng warns and falls back to numpy if CuPy not installed."""
+    backend.set_backend(type("FakeCupy", (), {"__name__": "cupy"})())
+
+    # cupyをsys.modulesから取り除いてImportErrorを発生させる
+    import sys
+    monkeypatch.setitem(sys.modules, "cupy", None)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        rng = rng_utils.get_rng(seed=1)
+        assert isinstance(rng, np.random.Generator)
+        assert any("CuPy backend selected" in str(warn.message) for warn in w)
+
+def test_get_rng_numpy():
+    """Test get_rng returns NumPy RNG when backend is numpy."""
+    backend.set_backend(np)
+    rng = rng_utils.get_rng(seed=123)
+    assert isinstance(rng, np.random.Generator)
+    val = rng.integers(0, 10)
+    assert 0 <= val < 10
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy required")
+def test_get_rng_cupy_real():
+    """Test get_rng returns CuPy RNG when CuPy backend is active."""
+    backend.set_backend(cp)
+    rng = rng_utils.get_rng(seed=1)
+    assert isinstance(rng, cp.random.Generator)
+
+def test_get_rng_invalid_backend():
+    """Test get_rng raises for unsupported backend."""
+    backend.set_backend(type("FakeBackend", (), {"__name__": "unknown"})())
+    with pytest.raises(NotImplementedError):
+        rng_utils.get_rng()
+
+
+def test_ensure_rng_backend_warns_numpy():
+    """Test _ensure_rng_backend warns if RNG mismatches NumPy backend."""
+    backend.set_backend(np)
+    rng = object()  # Not a numpy RNG
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        out = rng_utils._ensure_rng_backend(rng)
+        assert isinstance(out, np.random.Generator)
+        assert any("[rng_utils] RNG backend mismatch" in str(warn.message) for warn in w)
+
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy required")
+def test_ensure_rng_backend_warns_cupy():
+    """Test _ensure_rng_backend warns if RNG mismatches CuPy backend."""
+    backend.set_backend(cp)
+    rng = object()  # Not a cupy RNG
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        out = rng_utils._ensure_rng_backend(rng)
+        assert isinstance(out, cp.random.Generator)
+        assert any("[rng_utils] RNG backend mismatch" in str(warn.message) for warn in w)
+
+
+def test_normal_choice_shuffle_uniform_numpy():
+    """Test normal, choice, shuffle, and uniform functions under numpy backend."""
+    backend.set_backend(np)
+    rng = np.random.default_rng(0)
+
+    vals = rng_utils.normal(rng, size=5)
+    assert vals.shape == (5,)
+
+    choices = rng_utils.choice(rng, [1, 2, 3], size=2)
+    assert len(choices) == 2
+
+    arr = np.arange(5)
+    shuffled = rng_utils.shuffle(rng, arr.copy())
+    assert set(shuffled) == set(arr)
+
+    unif = rng_utils.uniform(rng, low=0.0, high=1.0, size=3)
+    assert unif.shape == (3,)
+
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy required")
+def test_normal_choice_shuffle_uniform_cupy():
+    """Test normal, choice, shuffle, and uniform functions under cupy backend."""
+    backend.set_backend(cp)
+    rng = cp.random.default_rng(0)
+
+    vals = rng_utils.normal(rng, size=5)
+    assert vals.shape == (5,)
+
+    choices = rng_utils.choice(rng, cp.array([1, 2, 3]), size=2)
+    assert choices.shape == (2,)
+
+    arr = cp.arange(5)
+    shuffled = rng_utils.shuffle(rng, arr.copy())
+    assert shuffled.shape == arr.shape
+
+    unif = rng_utils.uniform(rng, low=0.0, high=1.0, size=3)
+    assert unif.shape == (3,)

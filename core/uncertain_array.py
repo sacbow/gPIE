@@ -103,9 +103,10 @@ class UncertainArray:
         - If dtype is unchanged, return self.
         - Complex → Real: extract real part, scale precision by 2, with warning.
         - Real → Complex: promote to complex type, scale precision by 0.5.
+        - Complex → Complex (different precision): direct cast, precision unchanged.
 
         Args:
-            dtype: Target NumPy dtype (np().float64 or np().complex128)
+            dtype: Target NumPy dtype (e.g., np().float32, np().float64, np().complex64, np().complex128)
 
         Returns:
             New UncertainArray with converted data and adjusted precision.
@@ -116,6 +117,7 @@ class UncertainArray:
         if dtype == self.dtype:
             return self
 
+        # Complex → Real
         if np().issubdtype(dtype, np().floating) and self.is_complex():
             if not np().allclose(self.data.imag, 0):
                 import warnings
@@ -124,15 +126,23 @@ class UncertainArray:
                     category=UserWarning
                 )
             real_data = self.data.real.astype(dtype)
-            new_precision = 2.0 * self.precision(raw = True)  # Complex → Real: Real part carries half the variance, so precision doubles
+            new_precision = 2.0 * self.precision(raw=True)
             return UncertainArray(real_data, dtype=dtype, precision=new_precision)
 
+        # Real → Complex
         if np().issubdtype(dtype, np().complexfloating) and self.is_real():
             complex_data = self.data.astype(dtype)
-            new_precision = 0.5 * self.precision(raw = True)  # Real → Complex: Spreads variance over two dimensions, so precision halves
+            new_precision = 0.5 * self.precision(raw=True)
             return UncertainArray(complex_data, dtype=dtype, precision=new_precision)
 
+        # Complex → Complex (precision change: e.g., complex64 ↔ complex128)
+        if np().issubdtype(dtype, np().complexfloating) and self.is_complex():
+            complex_data = self.data.astype(dtype)
+            # Precision remains unchanged (variance unaffected by precision scaling)
+            return UncertainArray(complex_data, dtype=dtype, precision=self.precision(raw=True))
+
         raise TypeError(f"Unsupported dtype conversion: {self.dtype} → {dtype}")
+
 
     
     @property
