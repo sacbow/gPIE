@@ -1,9 +1,9 @@
 from typing import Optional
-import numpy as np
 from .base import Propagator
 from ..wave import Wave
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPM
+from ...core.backend import np
+from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPM, get_lower_precision_dtype
 
 
 class BinaryPropagator(Propagator):
@@ -62,15 +62,12 @@ class BinaryPropagator(Propagator):
         self.add_input("a", a)
         self.add_input("b", b)
 
-        if np.issubdtype(a.dtype, np.floating) and np.issubdtype(b.dtype, np.floating):
-            output_dtype = np.result_type(a.dtype, b.dtype)
-        else:
-            output_dtype = np.complex128
+        self.dtype = get_lower_precision_dtype(a.dtype, b.dtype)
 
         if a.shape != b.shape:
             raise ValueError(f"Input shapes must match: got {a.shape} and {b.shape}")
 
-        output = Wave(a.shape, dtype=output_dtype)
+        output = Wave(a.shape, dtype=self.dtype)
         self.connect_output(output)
         return output
 
@@ -141,10 +138,11 @@ class BinaryPropagator(Propagator):
             elif a_mode == PrecisionMode.ARRAY or b_mode == PrecisionMode.ARRAY:
                 return
 
-        raise ValueError(
-            f"Unhandled combination in set_precision_mode_backward(): "
-            f"a={a_mode}, b={b_mode}, output={z_mode}"
-        )
+        else:
+            raise ValueError(
+                f"Unhandled combination in set_precision_mode_backward(): "
+                f"a={a_mode}, b={b_mode}, output={z_mode}"
+            )
 
     def get_output_precision_mode(self) -> Optional[str]:
         mode = self.precision_mode_enum
