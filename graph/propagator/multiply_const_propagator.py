@@ -1,9 +1,9 @@
-import numpy as np
 from typing import Union, Optional
 from ..wave import Wave
 from .base import Propagator
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from ...core.backend import np
+from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_lower_precision_dtype, get_real_dtype
 
 
 class MultiplyConstPropagator(Propagator):
@@ -31,21 +31,36 @@ class MultiplyConstPropagator(Propagator):
     """
 
 
-    def __init__(self, const: Union[float, complex, np.ndarray]):
+    def __init__(self, const: Union[float, complex, np().ndarray]):
         super().__init__(input_names=("input",))
-        self.const = np.asarray(const)
+        self.const = np().asarray(const)
         self.const_dtype = self.const.dtype
         self._init_rng = None
 
         # Safe constant to prevent div-by-zero
-        abs_vals = np.abs(self.const)
-        self.uniform = np.allclose(abs_vals, abs_vals.flat[0], atol=abs_vals.flat[0] * 1e-2)
+        abs_vals = np().abs(self.const)
+        self.uniform = np().allclose(abs_vals, abs_vals.flat[0], atol=abs_vals.flat[0] * 1e-2)
 
         # Replace zero or near-zero elements with small magnitude values
         self.const_safe = self.const.copy()
-        self.const_safe[abs_vals < 1e-10] = 1e-10 * np.exp(1j * np.angle(self.const_safe[abs_vals < 1e-10]))
-        self.inv_amp_sq = 1.0 / np.abs(self.const_safe)**2
-        self.inv_amp_sq_scalar = 1.0 / np.mean(np.abs(self.const_safe)**2)
+        self.const_safe[abs_vals < 1e-10] = 1e-10 * np().exp(1j * np().angle(self.const_safe[abs_vals < 1e-10]))
+        self.inv_amp_sq = 1.0 / np().abs(self.const_safe)**2
+        self.inv_amp_sq_scalar = 1.0 / np().mean(np().abs(self.const_safe)**2)
+    
+    def to_backend(self):
+        import cupy as cp
+        current_backend = np()
+        if isinstance(self.const, cp.ndarray) and current_backend.__name__ == "numpy":
+            self.const = self.const.get().astype(self.const_dtype)
+            self.const_safe = self.const_safe.get().astype(self.const_dtype)
+            self.inv_amp_sq  =  self.inv_amp_sq.get().astype(get_real_dtype(self.const_dtype))
+            self.inv_amp_sq_scalar = self.inv_amp_sq_scalar.get().astype(get_real_dtype(self.const_dtype))
+        else:
+            self.const = current_backend.asarray(self.const, dtype=self.const_dtype)
+            self.const_safe = current_backend.asarray(self.const_safe, dtype=self.const_dtype)
+            self.inv_amp_sq = current_backend.asarray(self.inv_amp_sq, get_real_dtype(self.const_dtype))
+            self.inv_amp_sq_scalar = current_backend.asarray(self.inv_amp_sq_scalar, get_real_dtype(self.const_dtype))
+        self.const_dtype = self.const.dtype
 
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
         if isinstance(mode, str):
@@ -146,7 +161,7 @@ class MultiplyConstPropagator(Propagator):
         """
 
         x = inputs["input"]
-        target_dtype = np.result_type(x.dtype, self.const_dtype)
+        target_dtype = np().result_type(x.dtype, self.const_dtype)
         if x.dtype != target_dtype:
             x = x.astype(target_dtype)
         const = self.const_safe.astype(target_dtype) if self.const_dtype != target_dtype else self.const_safe
@@ -175,7 +190,7 @@ class MultiplyConstPropagator(Propagator):
             UA: Backward message for the input wave.
         """
 
-        target_dtype = np.result_type(output_msg.dtype, self.const_dtype)
+        target_dtype = np().result_type(output_msg.dtype, self.const_dtype)
         const = self.const_safe.astype(target_dtype) if self.const_dtype != target_dtype else self.const_safe
 
         mu = output_msg.data / const
@@ -199,14 +214,18 @@ class MultiplyConstPropagator(Propagator):
 
 
     def __matmul__(self, wave: Wave) -> Wave:
-        self.dtype = np.result_type(wave.dtype, self.const_dtype)
+        self.dtype = get_lower_precision_dtype(wave.dtype, self.const_dtype)
+        self.const = np().asarray(self.const, dtype=self.dtype)
+        self.const_dtype = self.const.dtype
+        self.const_safe = self.const_safe.astype(self.dtype)
+        self.inv_amp_sq = self.inv_amp_sq.astype(get_real_dtype(self.dtype))
 
-        if isinstance(self.const, np.ndarray):
+        if isinstance(self.const, np().ndarray):
             if self.const.shape != wave.shape:
                 try:
-                    self.const = np.broadcast_to(self.const, wave.shape)
-                    self.const_safe = np.broadcast_to(self.const_safe, wave.shape)
-                    self.inv_amp_sq = np.broadcast_to(self.inv_amp_sq, wave.shape)
+                    self.const = np().broadcast_to(array = self.const, shape = wave.shape)
+                    self.const_safe = np().broadcast_to(array = self.const_safe, shape = wave.shape)
+                    self.inv_amp_sq = np().broadcast_to(array = self.inv_amp_sq, shape = wave.shape)
                 except ValueError:
                     raise ValueError(
                         f"MultiplyConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {wave.shape}"
@@ -221,16 +240,20 @@ class MultiplyConstPropagator(Propagator):
         self.output = out_wave
         return self.output
 
-    def generate_sample(self, rng=None):
-        x = self.inputs["input"].get_sample()
-        if x is not None:
-            const = self.const.astype(x.dtype) if self.const_dtype != x.dtype else self.const
-            self.output.set_sample(x * const)
+    def get_sample_for_output(self, rng=None):
+        """
+        Generate a sample by multiplying constant to input sample.
+        """
+        x_sample = self.inputs["input"].get_sample()
+        if x_sample is None:
+            raise RuntimeError("Input sample not set.")
+        const = self.const.astype(x_sample.dtype) if self.const_dtype != x_sample.dtype else self.const
+        return x_sample * const
     
     def __repr__(self) -> str:
         mode = self.precision_mode or "unset"
         shape_str = (
-            f"scalar" if np.isscalar(self.const) or self.const.shape == ()
+            f"scalar" if np().isscalar(self.const) or self.const.shape == ()
             else f"shape={self.const.shape}"
         )
-        return f"MultiplyConstProp(mode={mode}, {shape_str})"
+        return f"MultiplyConst(mode={mode}, {shape_str})"

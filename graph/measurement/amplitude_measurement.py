@@ -210,17 +210,17 @@ class AmplitudeMeasurement(Measurement):
         if not np().issubdtype(data.dtype, np().floating):
             raise TypeError("Observed data must be real-valued.")
 
-        # --- dtype handling ---
+        # --- dtype handling (make sure get_real_dtype(input_dtype) == expected_observed_dtype == data.dtype)---
         if self.expected_observed_dtype is None:
-            self.expected_observed_dtype = data.dtype
-        else:
-            if data.dtype != self.expected_observed_dtype:
+            if self.input_dtype is None:
+                self.expected_observed_dtype = data.dtype
+            else:
+                self.expected_observed_dtype = get_real_dtype(self.input_dtype)
                 data = data.astype(self.expected_observed_dtype)
 
         # --- consistency with input_dtype ---
         if self.input_dtype is not None:
             if np().issubdtype(self.input_dtype, np().complexfloating):
-                from ...core.types import get_real_dtype
                 if not np().issubdtype(get_real_dtype(self.input_dtype), self.expected_observed_dtype):
                     raise TypeError("Observed dtype must be real (with sufficient precision) for complex input wave.")
             else:

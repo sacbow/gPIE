@@ -329,12 +329,10 @@ class Wave:
         """
         from .propagator.add_propagator import AddPropagator
         from .propagator.add_const_propagator import AddConstPropagator
-        from numpy import ndarray
-
         if isinstance(other, Wave):
             return AddPropagator() @ (self, other)
 
-        if np().isscalar(other) or isinstance(other, ndarray):
+        if np().isscalar(other) or isinstance(other, np().ndarray):
             return AddConstPropagator(const=other) @ self
 
         return NotImplemented
