@@ -1,11 +1,10 @@
 from __future__ import annotations
 from typing import Optional
-import numpy as np
-
 from .binary_propagator import BinaryPropagator
 from ..wave import Wave
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPMM
+from ...core.types import PrecisionMode, BinaryPropagatorPrecisionMode as BPMM, get_lower_precision_dtype
 
 
 class MultiplyPropagator(BinaryPropagator):
@@ -100,21 +99,17 @@ class MultiplyPropagator(BinaryPropagator):
             raise RuntimeError("Belief not available for forward computation.")
 
         # Ensure matching dtype
-        out_dtype = np.result_type(x.dtype, y.dtype)
-        if x.dtype != out_dtype:
-            x = x.astype(out_dtype)
-        if y.dtype != out_dtype:
-            y = y.astype(out_dtype)
-
+        
+        x, y = x.astype(self.dtype), y.astype(self.dtype)
         x_m, y_m = x.data, y.data
-        sx2 = 1.0 / x._precision
-        sy2 = 1.0 / y._precision
+        sx2 = 1.0 / x.precision(raw = True)
+        sy2 = 1.0 / y.precision(raw = True)
 
         mu = x_m * y_m
-        var = (np.abs(x_m) ** 2 + sx2) * (np.abs(y_m) ** 2 + sy2) - np.abs(x_m * y_m) ** 2
-        prec = 1.0 / np.maximum(var, 1e-12)
+        var = (np().abs(x_m) ** 2 + sx2) * (np().abs(y_m) ** 2 + sy2) - np().abs(x_m * y_m) ** 2
+        prec = 1.0 / np().maximum(var, 1e-12)
 
-        return UA(mu, dtype=out_dtype, precision=prec)
+        return UA(mu, dtype=self.dtype, precision=prec)
 
     def _compute_backward(self, output: UA, exclude: str) -> tuple[UA, UA]:
         """
@@ -133,7 +128,7 @@ class MultiplyPropagator(BinaryPropagator):
             RuntimeError: If necessary beliefs or messages are missing.
         """
 
-        z_m, gamma_z = output.data, output._precision
+        z_m, gamma_z = output.data, output.precision(raw = True)
         other_wave = self.inputs["b" if exclude == "a" else "a"]
 
         if other_wave.belief is None:
@@ -141,10 +136,10 @@ class MultiplyPropagator(BinaryPropagator):
         belief_y = other_wave.belief
 
         y_q = belief_y.data
-        sy2 = 1.0 / belief_y._precision
-        abs_y2_plus_var = np.abs(y_q) ** 2 + sy2
+        sy2 = 1.0 / belief_y.precision(raw = True)
+        abs_y2_plus_var = np().abs(y_q) ** 2 + sy2
 
-        mean_msg = np.conj(y_q) * z_m / abs_y2_plus_var
+        mean_msg = np().conj(y_q) * z_m / abs_y2_plus_var
         prec_msg = gamma_z * abs_y2_plus_var
         msg = UA(mean_msg, dtype=output.dtype, precision=prec_msg)
 
@@ -153,7 +148,7 @@ class MultiplyPropagator(BinaryPropagator):
 
         if self.precision_mode in {BPMM.SCALAR_AND_ARRAY_TO_ARRAY, BPMM.ARRAY_AND_SCALAR_TO_ARRAY}:
             if target_wave.precision_mode_enum == PrecisionMode.SCALAR:
-                q_x = (msg * msg_in).as_scalar_precision()
+                q_x = (msg * msg_in.as_array_precision()).as_scalar_precision()
                 return q_x / msg_in, q_x
 
         q_x = msg * msg_in
