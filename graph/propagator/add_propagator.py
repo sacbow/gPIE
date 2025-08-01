@@ -1,8 +1,7 @@
-import numpy as np
 from typing import Optional
 from .binary_propagator import BinaryPropagator
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import BinaryPropagatorPrecisionMode as BPM
+from ...core.types import BinaryPropagatorPrecisionMode as BPM, get_lower_precision_dtype, get_complex_dtype
 
 
 class AddPropagator(BinaryPropagator):
@@ -48,16 +47,12 @@ class AddPropagator(BinaryPropagator):
         if a is None or b is None:
             raise RuntimeError("Missing input messages: a or b is None.")
 
-        target_dtype = np.result_type(a.dtype, b.dtype)
-        if a.dtype != target_dtype:
-            a = a.astype(target_dtype)
-        if b.dtype != target_dtype:
-            b = b.astype(target_dtype)
+        a, b = a.astype(self.dtype), b.astype(self.dtype)
 
         mu = a.data + b.data
-        precision = 1.0 / (1.0 / a._precision + 1.0 / b._precision)
+        precision = 1.0 / (1.0 / a.precision(raw = True) + 1.0 / b.precision(raw = True))
 
-        return UA(mu, dtype=target_dtype, precision=precision)
+        return UA(mu, dtype=self.dtype, precision=precision)
 
 
     def _compute_backward(self, output: UA, exclude: str) -> UA:
@@ -85,8 +80,8 @@ class AddPropagator(BinaryPropagator):
             raise RuntimeError(f"Missing message from input wave '{other_name}'.")
 
         mu = output.data - other_msg.data
-        precision = 1.0 / (1.0 / output._precision + 1.0 / other_msg._precision)
-        out_dtype = np.result_type(output.dtype, other_msg.dtype)
+        precision = 1.0 / (1.0 / output.precision(raw = True) + 1.0 / other_msg.precision(raw = True))
+        out_dtype = get_lower_precision_dtype(output.dtype, other_msg.dtype)
         msg = UA(mu, dtype=out_dtype, precision=precision)
 
         mode = self.precision_mode_enum
@@ -97,23 +92,23 @@ class AddPropagator(BinaryPropagator):
             a_msg = self.input_messages.get(a_wave)
             if a_msg is None:
                 raise RuntimeError("Missing input message from wave 'a'.")
-            return (a_msg * msg).as_scalar_precision() / a_msg
+            return (a_msg.as_array_precision() * msg).as_scalar_precision() / a_msg
 
         if mode == BPM.ARRAY_AND_SCALAR_TO_ARRAY and exclude == "b":
             b_wave = self.inputs.get("b")
             b_msg = self.input_messages.get(b_wave)
             if b_msg is None:
                 raise RuntimeError("Missing input message from wave 'b'.")
-            return (b_msg * msg).as_scalar_precision() / b_msg
+            return (b_msg.as_array_precision() * msg).as_scalar_precision() / b_msg
 
         return msg
 
-    def generate_sample(self, rng):
+    def get_sample_for_output(self, rng):
         a = self.inputs["a"].get_sample()
         b = self.inputs["b"].get_sample()
         if a is None or b is None:
             raise RuntimeError("Input sample(s) not set for AddPropagator.")
-        self.output.set_sample(a + b)
+        return a + b
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

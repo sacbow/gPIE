@@ -2,6 +2,7 @@ from ...core.backend import np
 from typing import Optional, Any
 
 from .base import Prior
+from ...core.linalg_utils import random_normal_array
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode
 
@@ -67,9 +68,6 @@ class ConstWave(Prior):
             return UA(self._data, dtype=self.dtype, precision=prec_array)
         else:
             raise RuntimeError("Precision mode not determined for ConstWave output.")
-
-    def generate_sample(self, rng: Optional[Any]) -> None:
-        self.output.set_sample(self._data)
     
     def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
         """
@@ -81,7 +79,7 @@ class ConstWave(Prior):
         Returns:
             np().ndarray: The constant data array.
         """
-        return self._data
+        return self._data + np().sqrt(1.0/self.large_value) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
 
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"
