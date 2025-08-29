@@ -133,7 +133,7 @@ class AmplitudeMeasurement(Measurement):
             raise RuntimeError("Input sample not available.")
 
         abs_x = np().abs(x)
-        noise = normal(std = self._var, size=abs_x.shape, rng = rng)
+        noise = normal(std = self._var**0.5, size=abs_x.shape, rng = rng)
         self._sample = abs_x + noise
 
     def approximate_posterior(self, incoming: UA) -> UA:
@@ -158,7 +158,7 @@ class AmplitudeMeasurement(Measurement):
         tau = incoming.precision(raw=True)
         v0 = 1.0 / tau
         y = self.observed.data
-        v = 1.0 / np().sqrt(self.observed.precision(raw=True))
+        v = 1.0 / self.observed.precision(raw=True)
 
         abs_z0 = np().abs(z0)
         abs_z0_safe = np().maximum(abs_z0, 1e-12)

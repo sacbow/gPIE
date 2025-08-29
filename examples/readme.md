@@ -15,11 +15,10 @@ This experiment demonstrates inline holography using a factor graph with the fol
 - **Forward model**: Inline interference → Fourier transform
 - **Measurement**: Amplitude-only detector with additive Gaussian noise
 
-The corresponding experiment script is:
+### 📌 Script Location
 
-```
-examples/holography/holography.py
-```
+- **Path**: `examples/holography/holography.py`
+- **Results**: `examples/holography/results/`
 
 ### 🔧 Command-line options
 
@@ -46,10 +45,58 @@ python examples/holography/holography.py --obj-img cameraman --ref-img moon --ob
 
 ---
 
-## 2. Coded Diffraction Pattern
+## 2. Coded Diffraction Pattern (CDP)
 
-**[To be completed]**  
-Will demonstrate the EP reconstruction of CDP datasets using random phase masks.
+Coded Diffraction Pattern (CDP) is a phase retrieval model where a complex-valued image is recovered from multiple intensity-only observations obtained through different random phase masks. In gPIE, this model is constructed using multiple `PhaseMaskPropagator` and `AmplitudeMeasurement` factors connected through a shared latent `Wave` node.
+
+### 📌 Script Location
+
+- **Path**: `examples/coded_diffraction_pattern/coded_diffraction_pattern.py`
+- **Results**: `examples/coded_diffraction_pattern/results/`
+
+### 🖼️ Used Images
+
+- `camera` (from `skimage.data`) → used as **amplitude**
+- `moon` (from `skimage.data`) → used as **phase**
+
+These are combined into a complex-valued image used as the ground truth sample for reconstruction.
+
+### 🧪 Example Command
+
+```bash
+python examples/coded_diffraction_pattern/coded_diffraction_pattern.py \
+  --n-iter 200 \
+  --size 256 \
+  --measurements 3 \
+  --save-graph
+```
+
+### 💡 Command Line Options
+
+| Option             | Description                                            |
+|--------------------|--------------------------------------------------------|
+| `--n-iter`         | Number of EP iterations                                |
+| `--size`           | Image size (H = W)                                     |
+| `--measurements`   | Number of phase masks used in CDP                      |
+| `--save-graph`     | Save interactive factor graph as `graph.html`          |
+
+### 💾 Output Files
+
+| File Name                  | Description                             |
+|----------------------------|-----------------------------------------|
+| `true_amp.png`             | Ground truth amplitude                  |
+| `true_phase.png`           | Ground truth phase                      |
+| `reconstructed_amp.png`    | Reconstructed amplitude                 |
+| `reconstructed_phase.png`  | Reconstructed phase                     |
+| `convergence.png`          | PMSE over iterations                    |
+| `graph.html`               | Graph structure visualization (optional) |
+
+
+> 📖 **Reference**:  
+> Candès, E. J., Li, X., & Soltanolkotabi, M. (2015).  
+> *Phase retrieval from coded diffraction patterns*.  
+> Applied and Computational Harmonic Analysis, 39(2), 277–299.  
+> https://doi.org/10.1016/j.acha.2014.09.004
 
 ---
 

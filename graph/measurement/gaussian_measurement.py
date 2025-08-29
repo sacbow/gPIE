@@ -45,7 +45,7 @@ class GaussianMeasurement(Measurement):
         var: float = 1.0,
         precision_mode: Optional[Union[str, PrecisionMode]] = None,
         mask: Optional[np().ndarray] = None,
-        dtype: Optional[np().dtype] = None,  # input_dtype を明示指定する場合
+        dtype: Optional[np().dtype] = None,  
     ) -> None:
         self._var = var
         self._precision_value = 1.0 / var
@@ -112,7 +112,7 @@ class GaussianMeasurement(Measurement):
             raise RuntimeError("Input sample not available.")
 
         noise = random_normal_array(x.shape, dtype=self.input_dtype, rng=rng)
-        self._sample = x + np().sqrt(self._var) * noise
+        self._sample = (x + np().sqrt(self._var) * noise).astype(self.input_dtype)
 
     def _compute_message(self, incoming: UA) -> UA:
         """

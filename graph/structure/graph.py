@@ -321,7 +321,7 @@ class Graph:
         print(f"- {len(self._factors)} Factor nodes")
     
 
-    def visualize(self):
+    def visualize(self, output_path="graph.html"):
         import networkx as nx
         from networkx.drawing.nx_agraph import graphviz_layout
         from bokeh.plotting import figure, show, save, output_file
@@ -406,5 +406,9 @@ class Graph:
         p.legend.visible = False
 
         # === 6. 画像ファイルに保存 ===
-        output_file("graph.html")
+        from pathlib import Path
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        output_file(str(output_path))
         save(p)

@@ -1,3 +1,19 @@
+Metadata-Version: 2.4
+Name: gpie
+Version: 0.0.1
+Summary: Graph-based Probabilistic Inference Engine
+Author: Hajime Ueda
+Author-email: Hajime Ueda <nd.hajimeueda@gmail.com>
+License: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: author
+Dynamic: license-file
+Dynamic: requires-python
+
 # gPIE: Graph-based Probabilistic Inference Engine
 
 **gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs.

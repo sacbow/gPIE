@@ -10,43 +10,46 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 SAMPLE_DATA_DIR = ROOT_DIR / "examples" / "sample_data"
 
 
-def load_sample_image(name="cameraman", shape=(512, 512), save_dir: Path = SAMPLE_DATA_DIR) -> np.ndarray:
+def load_sample_image(name="cameraman", shape=(512, 512), save_dir=Path("examples/sample_data")) -> np.ndarray:
     """
     Load and normalize a sample image from skimage.data.
-
-    This function always returns an image resized to the specified shape,
-    regardless of the cached version's resolution.
 
     Parameters
     ----------
     name : str
-        Name of the image to load from skimage.data (e.g., "camera", "moon").
+        The name of the image to load from skimage.data (e.g., "cameraman", "moon", "eagle").
     shape : tuple
-        Desired image shape (height, width).
+        The shape (height, width) to resize the image to.
     save_dir : Path
-        Directory to store the original image as PNG (used as cache).
+        Directory to cache the image as a .png file.
 
     Returns
     -------
     img : np.ndarray
-        Float32 array of shape `shape`, normalized to [0, 1].
+        A float32 NumPy array of shape `shape`, normalized to [0, 1].
     """
     save_dir.mkdir(parents=True, exist_ok=True)
-    path = save_dir / f"{name}.png"
+    path = save_dir / f"{name}_{shape[0]}x{shape[1]}.png"
 
-    if not path.exists():
+    if path.exists():
+        # Load from cached uint8 image and normalize to [0, 1]
+        img = imread(path, as_gray=True).astype(np.float32) / 255.0
+    else:
         # Load from skimage.data
         if not hasattr(data, name):
             raise ValueError(f"Image '{name}' is not available in skimage.data")
         img = getattr(data, name)()
+
+        # Convert to grayscale if RGB
         if img.ndim == 3:
             img = rgb2gray(img)
-        img = (img - img.min()) / (img.max() - img.min())
-        imsave(path, (img * 255).astype(np.uint8))  # Save normalized 8-bit version
 
-    # Always reload, normalize, and resize
-    img = imread(path, as_gray=True).astype(np.float32) / 255.0
-    if img.shape != shape:
+        # Resize and normalize
         img = resize(img, shape, mode="reflect", anti_aliasing=True)
+        img = (img - img.min()) / (img.max() - img.min())
+
+        # Save as uint8 PNG to avoid mode='F' errors
+        img_uint8 = (img * 255).clip(0, 255).astype(np.uint8)
+        imsave(path, img_uint8)
 
     return img.astype(np.float32)

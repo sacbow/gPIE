@@ -1,4 +1,5 @@
 import argparse
+from gpie.core.rng_utils import get_rng
 import numpy as np
 from numpy.typing import NDArray
 from gpie import Graph, GaussianPrior, fft2, PhaseMaskPropagator, AmplitudeMeasurement, pmse
@@ -19,13 +20,13 @@ class CodedDiffractionPattern(Graph):
 
 
 def build_cdp_graph(H=512, W=512, noise=1e-4, n_measurements=4):
-    rng = np.random.default_rng(seed=42)
+    rng = get_rng(seed=42)
     shape = (H, W)
     phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
 
     g = CodedDiffractionPattern(noise=noise, n_measurements=n_measurements, phase_masks=phase_masks, shape=shape)
-    g.set_init_rng(np.random.default_rng(seed=1))
-    g.generate_sample(rng=np.random.default_rng(seed=999), update_observed=True)
+    g.set_init_rng(get_rng(seed=1))
+    g.generate_sample(rng=get_rng(seed=999), update_observed=True)
     return g
 
 
