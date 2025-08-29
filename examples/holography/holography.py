@@ -1,65 +1,75 @@
-# examples/holography/holography.py
-
 import os
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
 from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, mse
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
+from gpie.examples.io_utils import load_sample_image
 
-# Create result directory
-os.makedirs("examples/holography/results", exist_ok=True)
+RESULTS_DIR = "examples/holography/results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
 class HolographyGraph(Graph):
     """
     A factor graph model for inline holography using EP.
-    The graph consists of:
-    - A complex object with known support
-    - A reference wave
-    - FFT-based forward model
-    - Amplitude-only measurement
     """
     def __init__(self, var, ref_wave, support):
         super().__init__()
         obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
         with self.observe():
-            AmplitudeMeasurement(var=var) @ (fft2(ref_wave + obj))
+            AmplitudeMeasurement(var=var, damping = 0.05) @ (fft2(ref_wave + obj))
         self.compile()
 
 
-def build_holography_graph(H=512, W=512, noise=1e-4):
+def build_holography_graph(H=512, W=512, noise=1e-4,
+                            obj_image=None, ref_image=None,
+                            obj_radius=0.2, ref_radius=0.2):
     """
-    Construct the holography graph with a circular object and reference wave.
+    Construct the holography graph from either real image or random data.
     """
     rng = np.random.default_rng(seed=42)
 
-    # Create reference wave (data_x) on the left
-    support_x = circular_aperture((H, W), radius=0.2, center=(-0.2, -0.2))
-    data_x = masked_random_array(support_x, dtype=np.complex64, rng=rng)
+    support_x = circular_aperture((H, W), radius=ref_radius, center=(-0.2, -0.2))
 
-    # Create object support on the right
-    support_y = circular_aperture((H, W), radius=0.2, center=(0.2, 0.2))
+    if ref_image:
+        amp = load_sample_image(ref_image, shape=(H, W))
+        data_x = amp.astype(np.complex64) * support_x  
+    else:
+        data_x = masked_random_array(support_x, dtype=np.complex64, rng=rng)
 
-    # Construct the graph
+    support_y = circular_aperture((H, W), radius=obj_radius, center=(0.2, 0.2))
+    if obj_image:
+        amp = load_sample_image(obj_image, shape=(H, W))
+        data_y = amp.astype(np.complex64) * support_y
+    else:
+        data_y = masked_random_array(support_y, dtype=np.complex64, rng=rng)
+
+
+    # Construct graph
     g = HolographyGraph(var=noise, ref_wave=data_x, support=support_y)
     g.set_init_rng(np.random.default_rng(11))
+    g.get_wave("obj").set_sample(data_y)  # Inject ground truth
     g.generate_sample(rng=np.random.default_rng(9), update_observed=True)
-    return g
+    return g, data_x, data_y
 
 
-def run_holography(n_iter=100):
+def run_holography(n_iter=100, obj_image=None, ref_image=None,
+                   obj_radius=0.2, ref_radius=0.2, save_graph=False):
+
     """
-    Run EP inference for the holography problem and save results.
+    Run EP inference and save result images and convergence curve.
     """
-    g = build_holography_graph()
+    g, ref_sample, true_obj = build_holography_graph(obj_image=obj_image,
+                                         ref_image=ref_image,
+                                         obj_radius=obj_radius,
+                                         ref_radius=ref_radius)
     obj_wave = g.get_wave("obj")
-    true_obj = obj_wave.get_sample()
-
     pse_list = []
 
     def monitor(graph, t):
-        if t % 5 == 0 or t == n_iter - 1:
+        if t % 10 == 0 or t == n_iter - 1:
             est = graph.get_wave("obj").compute_belief().data
             err = mse(est, true_obj)
             pse_list.append(err)
@@ -67,26 +77,62 @@ def run_holography(n_iter=100):
 
     g.run(n_iter=n_iter, callback=monitor)
 
-    # Get final estimate
+    # Save output images
     est = obj_wave.compute_belief().data
-
-    # Save amplitude and phase images
     amp = np.abs(est)
-    phase = np.angle(est)
+    phase = np.angle(est) * (np.abs(true_obj) > 1e-5)
 
-    plt.imsave("examples/holography/results/reconstructed_amp.png", amp, cmap="gray")
-    plt.imsave("examples/holography/results/reconstructed_phase.png", phase, cmap="twilight")
+    # Reconstructed images
+    plt.imsave(f"{RESULTS_DIR}/reconstructed_amp.png", amp, cmap="gray")
+    plt.imsave(f"{RESULTS_DIR}/reconstructed_phase.png", phase, cmap="twilight")
 
-    # Save convergence curve
+    # Ground truth (obj)
+    true_amp = np.abs(true_obj)
+    true_phase = np.angle(true_obj) * (true_amp > 1e-5)
+
+    plt.imsave(f"{RESULTS_DIR}/true_amp.png", true_amp, cmap="gray")
+    plt.imsave(f"{RESULTS_DIR}/true_phase.png", true_phase, cmap="twilight")
+
+    # Reference wave (ref_wave)
+
+    if ref_sample is not None:
+        ref_amp = np.abs(ref_sample)
+        ref_phase = np.angle(ref_sample) * (ref_amp > 1e-5)
+
+        plt.imsave(f"{RESULTS_DIR}/ref_amp.png", ref_amp, cmap="gray")
+        plt.imsave(f"{RESULTS_DIR}/ref_phase.png", ref_phase, cmap="twilight")
+
+    # Convergence curve
     plt.figure()
-    plt.plot(np.arange(0, n_iter, 5), pse_list, marker="o")
+    plt.plot(np.arange(0, len(pse_list) * 5, 5), pse_list, marker="o")
     plt.xlabel("Iteration")
     plt.ylabel("PSE (MSE)")
+    plt.yscale('log')
     plt.title("Convergence Curve")
     plt.grid(True)
-    plt.savefig("examples/holography/results/convergence.png")
+    plt.savefig(f"{RESULTS_DIR}/convergence.png")
     plt.close()
+
+    if save_graph:
+        print(f"Saving factor graph visualization to {RESULTS_DIR}/graph.html ...")
+        g.visualize(output_path=os.path.join(RESULTS_DIR, "graph.html"))
+
 
 
 if __name__ == "__main__":
-    run_holography(n_iter=100)
+    parser = argparse.ArgumentParser(description="Inline holography EP experiment")
+    parser.add_argument("--obj-img", type=str, default=None, help="Name of object image from skimage.data")
+    parser.add_argument("--ref-img", type=str, default=None, help="Name of reference image from skimage.data")
+    parser.add_argument("--obj-radius", type=float, default=0.1, help="Radius of object support (if not using image)")
+    parser.add_argument("--ref-radius", type=float, default=0.1, help="Radius of reference support (if not using image)")
+    parser.add_argument("--n-iter", type=int, default=100, help="Number of EP iterations")
+    parser.add_argument("--save-graph", action="store_true", help="Save factor graph visualization as HTML")
+
+
+    args = parser.parse_args()
+    run_holography(n_iter=args.n_iter,
+               obj_image=args.obj_img,
+               ref_image=args.ref_img,
+               obj_radius=args.obj_radius,
+               ref_radius=args.ref_radius,
+               save_graph=args.save_graph)
