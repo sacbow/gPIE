@@ -7,7 +7,8 @@ from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, mse
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
 from gpie.examples.io_utils import load_sample_image
 
-RESULTS_DIR = "examples/holography/results"
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 

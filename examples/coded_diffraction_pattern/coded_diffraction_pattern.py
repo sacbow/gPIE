@@ -7,7 +7,8 @@ from gpie import Graph, GaussianPrior, fft2, PhaseMaskPropagator, AmplitudeMeasu
 from gpie.core.linalg_utils import random_phase_mask
 from gpie.examples.io_utils import load_sample_image
 
-RESULTS_DIR = "examples/coded_diffraction_pattern/results"
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 

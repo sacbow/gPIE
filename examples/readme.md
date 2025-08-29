@@ -2,135 +2,159 @@
 
 This directory contains example experiments using the **gPIE** framework.
 
-Each subdirectory corresponds to a different inverse problem or imaging model, implemented with expectation propagation (EP) on a factor graph.
+Each subdirectory corresponds to a different inverse problem or imaging model, implemented with Expectation Propagation (EP) on a factor graph.
 
 ---
 
 ## 1. Holography
 
-This experiment demonstrates inline holography using a factor graph with the following components:
+Inline holography is modeled using:
 
-- **Object**: Complex-valued image (either synthetic or loaded from `skimage.data`)
-- **Reference wave**: Predefined or loaded complex field
-- **Forward model**: Inline interference → Fourier transform
-- **Measurement**: Amplitude-only detector with additive Gaussian noise
+- **Object**: Complex-valued image (ground truth or synthetic)
+- **Reference wave**: Known reference pattern
+- **Model**: Interference + FFT + amplitude detection
+- **Inference**: EP-based recovery from amplitude-only measurements
 
-### 📌 Script Location
-
-- **Path**: `examples/holography/holography.py`
-- **Results**: `examples/holography/results/`
-
-### 🔧 Command-line options
+### 🔧 Script
 
 ```bash
-python examples/holography/holography.py --obj-img cameraman --ref-img moon --obj-radius 0.15 --ref-radius 0.2 --n-iter 100 --save-graph
+python examples/holography/holography.py --obj-img camera --ref-img moon --obj-radius 0.15 --ref-radius 0.2 --n-iter 100 --save-graph
 ```
 
 | Option         | Description                                         |
 |----------------|-----------------------------------------------------|
 | `--obj-img`    | Object image name from `skimage.data`              |
-| `--ref-img`    | Reference wave image (optional)                    |
+| `--ref-img`    | Reference image (optional)                         |
 | `--obj-radius` | Support mask radius for object (if not using image)|
 | `--ref-radius` | Support mask radius for reference wave             |
 | `--n-iter`     | Number of EP iterations                            |
-| `--save-graph` | Save factor graph visualization as HTML            |
+| `--save-graph` | Save factor graph as HTML                          |
 
-### 💾 Outputs (saved to `examples/holography/results/`)
+### 💾 Outputs (`examples/holography/results/`)
 
-- `true_amp.png`, `true_phase.png`: Ground truth object
-- `reconstructed_amp.png`, `reconstructed_phase.png`: Reconstructed object
+- `true_amp.png`, `true_phase.png`: Ground truth
+- `reconstructed_amp.png`, `reconstructed_phase.png`: Estimate
 - `ref_amp.png`, `ref_phase.png`: Reference wave
-- `convergence.png`: PSE convergence plot
-- `graph.html`: Interactive factor graph rendered with Bokeh
+- `convergence.png`: MSE plot
+- `graph.html`: Factor graph (optional)
 
 ---
 
 ## 2. Coded Diffraction Pattern (CDP)
 
-Coded Diffraction Pattern (CDP) is a phase retrieval model where a complex-valued image is recovered from multiple intensity-only observations obtained through different random phase masks. In gPIE, this model is constructed using multiple `PhaseMaskPropagator` and `AmplitudeMeasurement` factors connected through a shared latent `Wave` node.
+CDP performs phase retrieval from multiple masked FFT amplitude observations.
 
-### 📌 Script Location
+- Random phase masks modulate input
+- FFT applied before measurement
+- Ground truth: camera (amplitude), moon (phase)
 
-- **Path**: `examples/coded_diffraction_pattern/coded_diffraction_pattern.py`
-- **Results**: `examples/coded_diffraction_pattern/results/`
-
-### 🖼️ Used Images
-
-- `camera` (from `skimage.data`) → used as **amplitude**
-- `moon` (from `skimage.data`) → used as **phase**
-
-These are combined into a complex-valued image used as the ground truth sample for reconstruction.
-
-### 🧪 Example Command
+### 🔧 Script
 
 ```bash
-python examples/coded_diffraction_pattern/coded_diffraction_pattern.py \
-  --n-iter 200 \
-  --size 256 \
-  --measurements 3 \
-  --save-graph
+python examples/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 3 --save-graph
 ```
 
-### 💡 Command Line Options
+| Option           | Description                                      |
+|------------------|--------------------------------------------------|
+| `--n-iter`       | Number of EP iterations                          |
+| `--size`         | Image shape (H=W)                                |
+| `--measurements` | Number of phase masks                            |
+| `--save-graph`   | Save factor graph visualization                  |
 
-| Option             | Description                                            |
-|--------------------|--------------------------------------------------------|
-| `--n-iter`         | Number of EP iterations                                |
-| `--size`           | Image size (H = W)                                     |
-| `--measurements`   | Number of phase masks used in CDP                      |
-| `--save-graph`     | Save interactive factor graph as `graph.html`          |
+### 💾 Outputs (`examples/coded_diffraction_pattern/results/`)
 
-### 💾 Output Files
+- `true_amp.png`, `true_phase.png`
+- `reconstructed_amp.png`, `reconstructed_phase.png`
+- `convergence.png`
+- `graph.html`
 
-| File Name                  | Description                             |
-|----------------------------|-----------------------------------------|
-| `true_amp.png`             | Ground truth amplitude                  |
-| `true_phase.png`           | Ground truth phase                      |
-| `reconstructed_amp.png`    | Reconstructed amplitude                 |
-| `reconstructed_phase.png`  | Reconstructed phase                     |
-| `convergence.png`          | PMSE over iterations                    |
-| `graph.html`               | Graph structure visualization (optional) |
+### 📖 Reference
 
-
-> 📖 **Reference**:  
-> Candès, E. J., Li, X., & Soltanolkotabi, M. (2015).  
-> *Phase retrieval from coded diffraction patterns*.  
-> Applied and Computational Harmonic Analysis, 39(2), 277–299.  
-> https://doi.org/10.1016/j.acha.2014.09.004
+Candès, E. J., Li, X., & Soltanolkotabi, M. (2015).  
+**Phase retrieval from coded diffraction patterns**, *ACHA* 39(2), 277–299.  
+[DOI](https://doi.org/10.1016/j.acha.2014.09.004)
 
 ---
 
 ## 3. Random Structured CDI
 
-**[To be completed]**  
-Demonstrates inference in CDI models with randomized illumination and structured sparsity priors.
+Structured CDI applies multiple phase layers before amplitude detection.
+
+- Complex sample with known support
+- Forward model: Layered phase mask → FFT → amplitude
+
+### 🔧 Script
+
+```bash
+python examples/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 3 --radius 0.3 --save-graph
+```
+
+| Option         | Description                                      |
+|----------------|--------------------------------------------------|
+| `--n-iter`     | Number of EP iterations                          |
+| `--size`       | Image shape                                      |
+| `--layers`     | Number of phase masks                            |
+| `--radius`     | Support mask radius                              |
+| `--save-graph` | Save graph as HTML                               |
+
+### 💾 Outputs (`examples/random_structured_cdi/results/`)
+
+- `true_amp.png`, `true_phase.png`
+- `reconstructed_amp.png`, `reconstructed_phase.png`
+- `convergence.png`
+- `graph.html`
+
+### 📖 Reference
+
+Hu, Z., Tachella, J., Unser, M., Dong, J. (2025).  
+**Structured Random Model for Fast and Robust Phase Retrieval**, *ICASSP 2025*.
 
 ---
 
 ## 4. Compressed Sensing
 
-**[To be completed]**  
-Linear measurement with sparsity prior (e.g., wavelet), supporting both real and complex signal recovery.
+Compressed sensing using sparsity in Fourier domain.
+
+- SparsePrior → FFT → subsampled measurement (Gaussian)
+- Sample is pre-sparsified by retaining top-ρ values
+
+### 🔧 Script
+
+```bash
+python examples/compressed_sensing/compressed_sensing.py --n-iter 100 --rho 0.1 --subsample-rate 0.3 --size 256 --image camera --save-graph
+```
+
+| Option              | Description                                   |
+|---------------------|-----------------------------------------------|
+| `--n-iter`          | Number of EP iterations                       |
+| `--rho`             | Sparsity level (fraction of retained pixels)  |
+| `--subsample-rate`  | Fraction of Fourier coefficients observed     |
+| `--size`            | Image size                                    |
+| `--image`           | Image name (`camera`, `coins`, etc.)          |
+| `--save-graph`      | Save graph HTML                               |
+
+### 💾 Outputs (`examples/compressed_sensing/results/`)
+
+- `true_sparse.png`
+- `reconstructed.png`
+- `convergence.png`
+- `graph.html`
 
 ---
 
 ## 📁 Data
 
-Sample images are automatically downloaded and cached into:
+Sample images are downloaded via `skimage.data` into:
 
 ```
 examples/sample_data/
 ```
 
-via `skimage.data`.  
-No external datasets are required.
-
 ---
 
-## 🔧 Notes
+## ⚙️ Notes
 
-- All scripts assume NumPy backend.
-- GPU acceleration with CuPy can be enabled in future benchmarks.
-- Figures are saved using `matplotlib.pyplot.imsave()`.
-
----
+- Scripts assume NumPy backend
+- CuPy support is available but not enabled by default
+- Graphs saved using `Bokeh` + `graphviz`
+- Figures saved with `matplotlib.pyplot.imsave()`
