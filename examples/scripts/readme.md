@@ -18,7 +18,7 @@ Inline holography is modeled using:
 ### 🔧 Script
 
 ```bash
-python examples/holography/holography.py --obj-img camera --ref-img moon --obj-radius 0.15 --ref-radius 0.2 --n-iter 100 --save-graph
+python examples/scripts/holography/holography.py --obj-img camera --ref-img moon --obj-radius 0.15 --ref-radius 0.2 --n-iter 100 --save-graph
 ```
 
 | Option         | Description                                         |
@@ -30,7 +30,7 @@ python examples/holography/holography.py --obj-img camera --ref-img moon --obj-r
 | `--n-iter`     | Number of EP iterations                            |
 | `--save-graph` | Save factor graph as HTML                          |
 
-### 💾 Outputs (`examples/holography/results/`)
+### 💾 Outputs (`examples/scripts/holography/results/`)
 
 - `true_amp.png`, `true_phase.png`: Ground truth
 - `reconstructed_amp.png`, `reconstructed_phase.png`: Estimate
@@ -51,7 +51,7 @@ CDP performs phase retrieval from multiple masked FFT amplitude observations.
 ### 🔧 Script
 
 ```bash
-python examples/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 3 --save-graph
+python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 3 --save-graph
 ```
 
 | Option           | Description                                      |
@@ -61,7 +61,7 @@ python examples/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 
 | `--measurements` | Number of phase masks                            |
 | `--save-graph`   | Save factor graph visualization                  |
 
-### 💾 Outputs (`examples/coded_diffraction_pattern/results/`)
+### 💾 Outputs (`examples/scripts/coded_diffraction_pattern/results/`)
 
 - `true_amp.png`, `true_phase.png`
 - `reconstructed_amp.png`, `reconstructed_phase.png`
@@ -86,7 +86,7 @@ Structured CDI applies multiple phase layers before amplitude detection.
 ### 🔧 Script
 
 ```bash
-python examples/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 3 --radius 0.3 --save-graph
+python examples/scripts/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 3 --support-radius 0.3 --save-graph
 ```
 
 | Option         | Description                                      |
@@ -97,7 +97,7 @@ python examples/random_structured_cdi/random_structured_cdi.py --n-iter 200 --si
 | `--radius`     | Support mask radius                              |
 | `--save-graph` | Save graph as HTML                               |
 
-### 💾 Outputs (`examples/random_structured_cdi/results/`)
+### 💾 Outputs (`examples/scripts/random_structured_cdi/results/`)
 
 - `true_amp.png`, `true_phase.png`
 - `reconstructed_amp.png`, `reconstructed_phase.png`
@@ -121,7 +121,7 @@ Compressed sensing using sparsity in Fourier domain.
 ### 🔧 Script
 
 ```bash
-python examples/compressed_sensing/compressed_sensing.py --n-iter 100 --rho 0.1 --subsample-rate 0.3 --size 256 --image camera --save-graph
+python examples/scripts/compressed_sensing/compressed_sensing.py --n-iter 100 --rho 0.1 --subsample-rate 0.3 --size 256 --image camera --save-graph
 ```
 
 | Option              | Description                                   |
@@ -133,7 +133,7 @@ python examples/compressed_sensing/compressed_sensing.py --n-iter 100 --rho 0.1 
 | `--image`           | Image name (`camera`, `coins`, etc.)          |
 | `--save-graph`      | Save graph HTML                               |
 
-### 💾 Outputs (`examples/compressed_sensing/results/`)
+### 💾 Outputs (`examples/scripts/compressed_sensing/results/`)
 
 - `true_sparse.png`
 - `reconstructed.png`
