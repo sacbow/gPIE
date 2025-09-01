@@ -12,7 +12,7 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
  │ ├── uncertain_array_tensor.py
  │ ├── types.py
  │ ├── linalg_utils.py
- │ ├── rng_utils.py       # Random number utilities (added recently)
+ │ ├── rng_utils.py       # Random number utilities
  │ └── metrics.py
  │
  ├── graph/              # Factor graph and EP message passing
