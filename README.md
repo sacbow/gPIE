@@ -115,7 +115,7 @@ pip install numpy>=2.2.6
 Clone and install the repository in editable mode:
 
 ```bash
-git clone https://github.com/sacbow/gPIE.git
+git clone https://github.com/sacbow/gpie.git
 cd gpie
 pip install -e .
 ```
