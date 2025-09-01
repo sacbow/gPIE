@@ -1,7 +1,7 @@
 # gPIE: Graph-based Probabilistic Inference Engine
 
 **gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs.
-It provides built-in support for complex-valued variables, NumPy/CuPy backend switching, and specialized components for computational imaging models such as holography, coherent diffractive imaging (CDI), and ptychography.
+It provides built-in support for complex-valued variables, NumPy/CuPy backend switching, and specialized components for computational imaging models.
 
 ## Project Structure
 ```
@@ -34,9 +34,7 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
 
 ## Features
 - **Expectation Propagation (EP)** on factor graphs.
-- **Wave multiplication** factor for modeling probe × object coupling in ptychography.
 - **UncertainArray abstraction** for representing complex Gaussian distributions
-- Batch support via `UncertainArrayTensor`
 - NumPy/CuPy backend support: switch seamlessly between CPU and GPU with:
 ```bash
   import numpy as np, cupy as cp, gpie
@@ -48,8 +46,24 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
   - Unary and binary propagators (e.g., FFT2D, phase modulation, multiplication)
   - Measurement models (e.g., Gaussian, amplitude-based)
 
-- Built-in **sampling**, **message damping**, and **precision control** (scalar/array)
+- Built-in **sampling** and **expectation propagation** based on topological sort
 - Visual graph inspection via `graph.visualize()`
+
+## Tutorials & Notebooks
+A set of demonstration notebooks is available under:
+``
+examples/notebooks/
+``
+
+Each notebook corresponds to a different inverse problem or imaging model:
+
+- `holography_demo.ipynb`
+- `cdp_demo.ipynb`
+- `random_structured_cdi_demo.ipynb`
+- `compressed_sensing_demo.ipynb`
+
+These illustrate the use of gPIE for EP-based inference on realistic synthetic data.
+
 
 ## Benchmarks & profiling
 - GPU acceleration via CuPy
@@ -101,7 +115,7 @@ pip install numpy>=2.2.6
 Clone and install the repository in editable mode:
 
 ```bash
-git clone https://github.com/your-org/gpie.git
+git clone https://github.com/sacbow/gPIE.git
 cd gpie
 pip install -e .
 ```
@@ -114,5 +128,7 @@ This project is licensed under the **MIT License**.
 See the [LICENSE](./LICENSE) file for details.
 
 
-
+## Contact
+For questions, please open an issue or contact:
+- Hajime Ueda (ueda@mns.k.u-tokyo.ac.jp)
 
