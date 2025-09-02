@@ -1,8 +1,8 @@
 # test/test_metric.py
 import pytest
 import numpy as np
-from ..core import metrics
-from ..core.backend import set_backend, get_backend
+from gpie.core import metrics
+from gpie.core.backend import set_backend, get_backend
 
 try:
     import cupy as cp

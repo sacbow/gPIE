@@ -1,7 +1,13 @@
 import pytest
 import numpy as np
 from pathlib import Path
-from gpie.examples.io_utils import load_sample_image, SAMPLE_DATA_DIR  # <- 追加
+# test/test_io_utils.py
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "examples")))
+
+from io_utils import load_sample_image, SAMPLE_DATA_DIR
+
 
 @pytest.mark.parametrize("name", ["camera", "moon", "coins"])
 def test_load_sample_image(name):

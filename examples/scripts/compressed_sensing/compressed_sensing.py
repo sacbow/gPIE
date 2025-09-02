@@ -1,11 +1,14 @@
-import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
 from gpie import Graph, SparsePrior, GaussianMeasurement, fft2, mse
 from gpie.core.linalg_utils import random_binary_mask
-from gpie.examples.io_utils import load_sample_image
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from io_utils import load_sample_image
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)

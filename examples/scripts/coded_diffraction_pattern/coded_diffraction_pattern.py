@@ -1,11 +1,15 @@
-import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
 from gpie import Graph, GaussianPrior, fft2, PhaseMaskPropagator, AmplitudeMeasurement, pmse
 from gpie.core.linalg_utils import random_phase_mask
-from gpie.examples.io_utils import load_sample_image
+
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from io_utils import load_sample_image
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
