@@ -5,30 +5,43 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
 
 ## Project Structure
 ```
- gpie/
- │
- ├── core/               # Core data structures and utilities
- │ ├── uncertain_array.py
- │ ├── uncertain_array_tensor.py
- │ ├── types.py
- │ ├── linalg_utils.py
- │ ├── rng_utils.py       # Random number utilities
- │ └── metrics.py
- │
- ├── graph/              # Factor graph and EP message passing
- │ ├── wave.py
- │ ├── factor.py
- │ ├── shortcuts.py
- │ ├── prior/
- │ ├── propagator/
- │ ├── measurement/
- │ ├── structure/
- │ │ └── graph.py
- │
-+├── examples/            # Example notebooks and demos (e.g., holography/CDI/CDP)
-+├── profile/             # Benchmarking and profiling scripts
- ├── test/                # Unit tests (pytest-based)
--└── setup.py             # Legacy setup file (consider pyproject.toml)
+gpie/
+├── gpie/ # Core package (importable as gpie)
+│ ├── __init__.py
+│ ├── core/ # Core data structures and utilities
+│ │ ├── uncertain_array.py
+│ │ ├── uncertain_array_tensor.py
+│ │ ├── types.py
+│ │ ├── linalg_utils.py
+│ │ ├── rng_utils.py
+│ │ └── metrics.py
+│ │
+│ ├── graph/ # Factor graph and EP components
+│ │ ├── wave.py
+│ │ ├── factor.py
+│ │ ├── shortcuts.py
+│ │ ├── prior/ # Priors: Gaussian, sparse, etc.
+│ │ ├── propagator/ # Binary/unary propagators: FFT, masks, etc.
+│ │ ├── measurement/ # Likelihood models: amplitude, Gaussian, etc.
+│ │ └── structure/ # Graph connectivity
+│ │         └── graph.py
+│ └── Others
+
+├── examples/ # Example scripts and notebooks
+│ ├── io_utils.py
+│ ├── sample_data/ # Output directory for example images
+│ ├── notebooks/ # Jupyter notebooks for tutorials
+│ └── scripts/ # Example Python scripts
+
+├── profile/ # Profiling & benchmarking scripts
+
+├── test/ # Unit tests (pytest-based)
+
+├── pyproject.toml # Build configuration (PEP 621)
+├── requirements.txt # Dependency pinning for development
+├── README.md
+└── LICENSE
+
 
 ```
 
@@ -58,7 +71,7 @@ examples/notebooks/
 Each notebook corresponds to a different inverse problem or imaging model:
 
 - `holography_demo.ipynb`
-- `cdp_demo.ipynb`
+- `coded_diffraction_pattern_demo.ipynb`
 - `random_structured_cdi_demo.ipynb`
 - `compressed_sensing_demo.ipynb`
 
@@ -69,8 +82,8 @@ These illustrate the use of gPIE for EP-based inference on realistic synthetic d
 - GPU acceleration via CuPy
 - Profiling utilities (profile/) include:
 ```bash
-  python gpie/profile/benchmark_holography.py --backend cupy --profile
-  python gpie/profile/benchmark_coded_diffraction_pattern.py --backend numpy
+  python profile/benchmark_holography.py --backend cupy --profile
+  python profile/benchmark_coded_diffraction_pattern.py --backend numpy
 ```
 See [profile/README.md](./profile/README.md) for detailed results and profiling insights.
 
@@ -107,7 +120,7 @@ This project has been tested on **Python 3.10.5**.
 **Minimum setup (core functionality only):**
 
 ```bash
-pip install numpy>=2.2.6
+pip install -e .
 ```
 
 ###  Development Setup
@@ -121,6 +134,14 @@ pip install -e .
 ```
 
 This will allow you to make changes to the source code without reinstalling the package.
+
+## Running Tests
+
+This project uses `pytest` for unit testing. To run the full test suite:
+
+```bash
+pytest -v --cov=test --cov-report=term-missing
+```
 
 ##  License
 
