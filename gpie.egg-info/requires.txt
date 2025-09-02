@@ -1,0 +1,11 @@
+numpy>=2.2.6
+cupy-cuda12x>=13.4.2
+networkx>=3.3
+pygraphviz>=1.10
+bokeh>=3.7
+
+[dev]
+pytest
+coverage
+tqdm
+scikit-image>=0.25

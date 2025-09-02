@@ -10,6 +10,16 @@ authors = [{ name="Hajime Ueda", email="nd.hajimeueda@gmail.com" }]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.9"
+dependencies = [
+    "numpy>=2.2.6",
+    "cupy-cuda12x>=13.4.2",
+    "networkx>=3.3",
+    "pygraphviz>=1.10",
+    "bokeh>=3.7"
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "coverage", "tqdm", "scikit-image>=0.25"]
 
 [tool.setuptools]
 packages = ["gpie"] 
