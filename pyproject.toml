@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpie"
+version = "0.0.1"
+description = "Graph-based Probabilistic Inference Engine"
+authors = [{ name="Hajime Ueda", email="nd.hajimeueda@gmail.com" }]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["gpie"] 
