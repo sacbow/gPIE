@@ -82,8 +82,12 @@ class UncertainArray:
 
         self.vectorize: bool = vectorize
         self.dtype: np().dtype = self.data.dtype
-        self._scalar_precision: bool = self.is_scalar(precision)
         self._set_precision_internal(precision)
+        self._scalar_precision = self.is_scalar(self._precision) or (
+            self.vectorize and self._precision.shape == (self.batch_size,) + (1,) * len(self.event_shape)
+        )
+
+
     
     def is_scalar(self, value):
         return isinstance(value, Number) or (
@@ -188,6 +192,9 @@ class UncertainArray:
                 value if isinstance(value, np().ndarray) and value.dtype == real_dtype
                 else np().asarray(value, dtype=real_dtype)
             )
+
+            if self.vectorize and arr.ndim == 1 and arr.shape[0] == self.batch_size:
+                arr = arr.reshape((self.batch_size,) + (1,) * len(self.event_shape))
 
             # Check broadcast compatibility
             try:
@@ -397,12 +404,13 @@ class UncertainArray:
         self.assert_compatible(other, context="__mul__")
 
         d1, d2 = self.data, other.data
-        p1, p2 = self.precision(), other.precision() 
+        p1, p2 = self.precision(raw = True), other.precision(raw = True) 
 
         precision_sum = p1 + p2
         result_data = (p1 * d1 + p2 * d2) / precision_sum
 
-        return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum)
+        return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum, vectorize=self.vectorize)
+
     
     def product_reduce_over_batch(self) -> "UncertainArray":
         """
@@ -419,7 +427,7 @@ class UncertainArray:
             raise ValueError("Cannot reduce a non-vectorized UncertainArray.")
 
         # Get broadcasted precision of shape (N, *event_shape)
-        precision = self.precision()       # shape: (N, ...)
+        precision = self.precision(raw = True)       # shape: (N, ...)
         weighted_data = precision * self.data  # shape: (N, ...)
 
         # Sum over batch axis (axis=0)
@@ -441,14 +449,14 @@ class UncertainArray:
         self.assert_compatible(other, context="__truediv__")
 
         d1, d2 = self.data, other.data
-        p1, p2 = self.precision(), other.precision()  # ← raw=False → shape == data.shape
+        p1, p2 = self.precision(raw = True), other.precision(raw = True)  # ← raw=False → shape == data.shape
 
         precision_diff = p1 - p2
         precision_safe = np().maximum(precision_diff, 1.0)  # ← element-wise safety
 
         result_data = (p1 * d1 - p2 * d2) / precision_safe
 
-        return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)
+        return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe, vectorize=self.vectorize)
 
 
     def damp_with(self, other: "UncertainArray", alpha: float) -> "UncertainArray":
@@ -485,7 +493,7 @@ class UncertainArray:
         damped_std = (1 - alpha) * std1 + alpha * std2
         damped_precision = 1.0 / (damped_std ** 2)
 
-        return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision)
+        return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision, vectorize=self.vectorize)
 
 
     def as_scalar_precision(self) -> "UncertainArray":
@@ -509,7 +517,13 @@ class UncertainArray:
             return self
 
         # Extract scalar value (guaranteed to be broadcastable constant)
-        scalar_value = float(self.precision(raw=True))
+        raw_prec = self.precision(raw=True)
+
+        if self.vectorize:
+            # raw_prec shape: (batch_size, 1, ..., 1)
+            scalar_value = raw_prec.reshape((self.batch_size,) + (1,) * len(self.event_shape))
+        else:
+            scalar_value = float(raw_prec)
 
         array_precision = np().full(self.data.shape, scalar_value, dtype=get_real_dtype(self.dtype))
 
