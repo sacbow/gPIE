@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import warnings
 from typing import Optional, TYPE_CHECKING, Any
 from ..core.rng_utils import get_rng
 from ..core.backend import np
@@ -57,12 +57,25 @@ class Wave:
 
     def __init__(
         self,
-        shape: tuple[int, ...],
-        dtype: np().dtype = np().complex128,
+        event_shape: tuple[int, ...],
+        *,
+        batch_size: int = 1,
+        dtype: np().dtype = np().complex64,
         precision_mode: Optional[str | PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
-        self.shape = shape
+        """
+        Initialize a Wave representing a vectorized latent variable node.
+
+        Args:
+            event_shape: Shape of each atomic variable (e.g. (64, 64)).
+            batch_size: Number of vectorized instances. Default: 1 (non-vectorized).
+            dtype: Data type of the variable. Default: complex64 (for GPU efficiency).
+            precision_mode: 'scalar' or 'array', or corresponding PrecisionMode enum.
+            label: Optional label for visualization or debugging.
+        """
+        self.event_shape = event_shape
+        self.batch_size = batch_size
         self.dtype = dtype
         self._precision_mode: Optional[PrecisionMode] = (
             PrecisionMode(precision_mode) if isinstance(precision_mode, str) else precision_mode
@@ -73,26 +86,30 @@ class Wave:
         self.parent: Optional["Factor"] = None
         self.parent_message: Optional[UncertainArray] = None
         self.children: list["Factor"] = []
-        self.child_messages_tensor: Optional[UncertainArrayTensor] = None
+
+        self.child_messages: dict["Factor", UncertainArray] = {}
 
         self.belief: Optional[UncertainArray] = None
         self._generation: int = 0
         self._sample: Optional[NDArray] = None
+
     
     def to_backend(self) -> None:
         """
-        Convert internal arrays (e.g. child message tensor) to current backend.
+        Convert all internal UncertainArrays (parent, children, belief) to current backend.
 
-        This should be called when switching from NumPy to CuPy or vice versa.
+        This should be called when switching between NumPy and CuPy backends.
         """
-        if self.child_messages_tensor is not None:
-            self.child_messages_tensor.to_backend()
-            self.dtype = self.child_messages_tensor.dtype  # Update dtype after backend cast
+        # Convert child messages
+        for msg in self.child_messages.values():
+            msg.to_backend()
 
+        # Convert belief if it exists
         if self.belief is not None:
             self.belief.to_backend()
-            self.dtype = self.belief.dtype  # Update to match backend-updated belief
+            self.dtype = self.belief.dtype  # Ensure dtype consistency
 
+        # Convert parent message if it exists
         if self.parent_message is not None:
             self.parent_message.to_backend()
 
@@ -170,32 +187,16 @@ class Wave:
     def set_parent(self, factor: Factor) -> None:
         """Assign a parent factor. Each wave can have only one parent."""
         if self.parent is not None:
-            raise RuntimeError("Parent factor is already set for this Wave.")
+            raise ValueError("Parent factor is already set for this Wave.")
         self.parent = factor
         self.parent_message = None
 
     def add_child(self, factor: Factor) -> None:
         """Register a child factor to this wave."""
-        idx = len(self.children)
+        if factor in self.child_messages:
+            raise ValueError(f"Factor {factor} already registered as child.")
         self.children.append(factor)
-        factor._child_index = idx  # optional usage
-
-    def finalize_structure(self) -> None:
-        """
-        Allocate child message tensor using the wave's precision mode.
-
-        This should be called once all children are connected (e.g. in Graph.compile()).
-        """
-        n_child = len(self.children)
-        shape = (n_child,) + self.shape
-        data = random_normal_array(shape, dtype=self.dtype, rng=self._init_rng)
-
-        if self._precision_mode == PrecisionMode.SCALAR:
-            precision = np().ones(n_child, dtype=np().float64)
-        else:
-            precision = np().ones(shape, dtype=np().float64)
-
-        self.child_messages_tensor = UncertainArrayTensor(data, precision, dtype=self.dtype)
+        self.child_messages[factor] = None
 
     def receive_message(self, factor: Factor, message: UncertainArray) -> None:
         """
@@ -209,6 +210,7 @@ class Wave:
             TypeError: If dtype mismatch cannot be reconciled.
             ValueError: If factor is not connected to this wave.
         """
+        # --- Dtype reconciliation ---
         if message.dtype != self.dtype:
             if np().issubdtype(self.dtype, np().floating) and np().issubdtype(message.dtype, np().complexfloating):
                 message = message.real  # Complex → Real
@@ -220,16 +222,58 @@ class Wave:
                     f"and cannot be safely converted."
                 )
 
+        # --- Assign message ---
         if factor == self.parent:
             self.parent_message = message
         elif factor in self.children:
-            idx = self.children.index(factor)
-            self.child_messages_tensor[idx] = message
+            self.child_messages[factor] = message
         else:
             raise ValueError(
                 f"Received message from unregistered factor: {factor}. "
                 f"Expected parent: {self.parent}, or one of children: {list(self.children)}"
             )
+
+    def combine_child_messages(self) -> UncertainArray:
+        """
+        Combine all messages from children into a single UncertainArray belief.
+
+        This performs weighted averaging:
+            - posterior_precision = sum_i p_i
+            - posterior_mean = sum_i (p_i * m_i) / sum_i p_i
+
+        Returns:
+            UncertainArray: Combined belief from children.
+        """
+        if not self.child_messages:
+            raise RuntimeError("No child messages to combine.")
+
+        iterator = iter(self.child_messages.values())
+        first = next(iterator)
+        dtype = first.dtype
+        vectorize = first.vectorize
+        p = first.precision(raw=True)
+        weighted = p * first.data
+
+        for ua in iterator:
+            if ua.vectorize != vectorize:
+                raise ValueError("Mismatched vectorization across child messages.")
+            p_i = ua.precision(raw=True)
+            weighted += p_i * ua.data
+            p += p_i
+
+        mean = weighted / p
+        return UncertainArray(mean, dtype=dtype, precision=p, vectorize=vectorize)
+    
+
+    def set_belief(self, belief: UncertainArray) -> None:
+        """Manually assign the belief (used in propagators with internal computation)."""
+        if belief.batch_size != self.batch_size:
+            raise ValueError(f"Belief batch_size mismatch: expected {self.batch_size}, got {belief.batch_size}")
+        if belief.event_shape != self.event_shape:
+            raise ValueError(f"Belief shape mismatch: expected {self.event_shape}, got {belief.event_shape}")
+        if belief.dtype != self.dtype:
+            raise ValueError(f"Belief dtype mismatch: expected {self.dtype}, got {belief.dtype}")
+        self.belief = belief
 
 
     def compute_belief(self) -> UncertainArray:
@@ -239,21 +283,16 @@ class Wave:
         Returns:
             Fused `UncertainArray` belief.
         """
+        child_belief = self.combine_child_messages()
+
         if self.parent_message is not None:
-            combined = self.parent_message * self.child_messages_tensor.combine()
+            combined = self.parent_message * child_belief
         else:
-            combined = self.child_messages_tensor.combine()
+            combined = child_belief
 
-        self.belief = combined
-        return self.belief
+        self.set_belief(combined)
+        return combined
 
-    def set_belief(self, belief: UncertainArray) -> None:
-        """Manually assign the belief (used in propagators with internal computation)."""
-        if belief.shape != self.shape:
-            raise ValueError(f"Belief shape mismatch: expected {self.shape}, got {belief.shape}")
-        if belief.dtype != self.dtype:
-            raise ValueError(f"Belief dtype mismatch: expected {self.dtype}, got {belief.dtype}")
-        self.belief = belief
 
     def forward(self) -> None:
         """
@@ -282,22 +321,24 @@ class Wave:
             return
 
         if len(self.children) == 1:
-            msg = self.child_messages_tensor[0]
+            msg = self.child_messages[self.children[0]]
         else:
-            msg = self.child_messages_tensor.combine()
+            msg = self.combine_child_messages()
 
         self.parent.receive_message(self, msg)
+
 
     def set_init_rng(self, rng) -> None:
         """Set backend-agnostic random generator."""
         self._init_rng = rng
 
-
     @property
     def ndim(self) -> int:
-        """Return number of dimensions of the wave variable."""
-        return len(self.shape)
-    
+        """
+        Deprecated: Use `len(.event_shape)` instead.
+        """
+        warnings.warn("Wave.ndim is deprecated. Use len(.event_shape) instead.", DeprecationWarning, stacklevel=2)
+        return len(self.event_shape)
     
     def _generate_sample(self, rng) -> None:
         """Pull sample from parent factor if not already set."""
@@ -314,8 +355,9 @@ class Wave:
 
     def set_sample(self, sample: NDArray) -> None:
         """Set sample value explicitly, with shape check."""
-        if sample.shape != self.shape:
-            raise ValueError(f"Sample shape mismatch: expected {self.shape}, got {sample.shape}")
+        expected_shape = (self.batch_size,) + self.event_shape
+        if sample.shape != expected_shape:
+            raise ValueError(f"Sample shape mismatch: expected {expected_shape}, got {sample.shape}")
         self._sample = sample
 
     def clear_sample(self) -> None:
@@ -384,7 +426,12 @@ class Wave:
         label_str = f", label='{self.label}'" if self.label else ""
         dtype_str = f", dtype={np().dtype(self.dtype).name}" if self.dtype else ""
         precision_str = f", precision={self.precision_mode}" if self.precision_mode else ""
-        return f"Wave(shape={self.shape}{label_str}{dtype_str}{precision_str})"
 
-
-
+        if self.batch_size == 1:
+            return f"Wave(event_shape={self.event_shape}{precision_str}{label_str}{dtype_str})"
+        else:
+            return (
+                f"Wave(batch_size={self.batch_size}, "
+                f"event_shape={self.event_shape}"
+                f"{precision_str}{label_str}{dtype_str})"
+            )
