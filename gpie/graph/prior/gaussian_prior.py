@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Any
 
 from .base import Prior
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.types import PrecisionMode
+from ...core.types import PrecisionMode, get_real_dtype
 from ...core.linalg_utils import random_normal_array
 from ...core.rng_utils import get_rng
 
@@ -37,59 +37,64 @@ class GaussianPrior(Prior):
     def __init__(
         self,
         var: float = 1.0,
-        shape: Tuple[int, ...] = (1,),
-        dtype: np().dtype = np().complex128,
+        event_shape: tuple[int, ...] = (1,),
+        *,
+        batch_size: int = 1,
+        dtype: np().dtype = np().complex64,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None
     ) -> None:
-
         if var <= 0:
             raise ValueError("Variance must be positive.")
         
-        self.var: float = var
+        real_dtype = get_real_dtype(dtype)
+        self.var: float = real_dtype(var)
         self.precision: float = 1.0 / var
 
-        super().__init__(shape=shape, dtype=dtype, precision_mode=precision_mode, label=label)
+        super().__init__(
+            event_shape=event_shape,
+            batch_size=batch_size,
+            dtype=dtype,
+            precision_mode=precision_mode,
+            label=label
+        )
+
 
     def _compute_message(self, incoming: UA) -> UA:
-        """
-        Return the fixed-precision zero-mean Gaussian prior as UncertainArray.
-        """
         mode = self.output.precision_mode_enum
         if mode == PrecisionMode.SCALAR:
-            return UA.zeros(self.shape, dtype=self.dtype, precision=self.precision, scalar_precision=True)
+            return UA.zeros(
+                event_shape=self.event_shape,
+                batch_size=self.batch_size,
+                dtype=self.dtype,
+                precision=self.precision,
+                scalar_precision=True,
+            )
         elif mode == PrecisionMode.ARRAY:
-            return UA.zeros(self.shape, dtype=self.dtype, precision=self.precision, scalar_precision=False)
+            return UA.zeros(
+                event_shape=self.event_shape,
+                batch_size=self.batch_size,
+                dtype=self.dtype,
+                precision=self.precision,
+                scalar_precision=False,
+            )
         else:
             raise RuntimeError("Precision mode not determined for GaussianPrior output.")
 
-    def generate_sample(self, rng: Optional[Any]) -> None:
-        """
-        Generate a sample from N(0, var) or CN(0, var) depending on dtype.
-        Note:
-            This method is deprecated and will be replaced by `get_sample_for_output()`
-            in future versions. New sampling logic should rely on Wave.generate_sample().
-        """
-        if rng is None:
-            rng = get_rng()
-
-        sample = np().sqrt(self.var) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
-        self.output.set_sample(sample)
     
     def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
         """
         Return a sample from the Gaussian prior.
 
-        Args:
-            rng (Optional[Any]): Optional random generator.
-
         Returns:
-            np().ndarray: Sampled array with shape and dtype matching the prior.
+            ndarray: shape = (batch_size, *event_shape), dtype = self.dtype
         """
         if rng is None:
             rng = get_rng()
 
-        return np().sqrt(self.var) * random_normal_array(self.shape, dtype=self.dtype, rng=rng)
+        shape = (self.batch_size,) + self.event_shape
+        return np().sqrt(self.var) * random_normal_array(shape, dtype=self.dtype, rng=rng)
+
 
 
     def __repr__(self) -> str:

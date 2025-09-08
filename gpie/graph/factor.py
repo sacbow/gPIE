@@ -194,5 +194,8 @@ class Factor(ABC):
         """
         Generate a sample on the output Wave (if applicable).
 
-        Subclasses like `Prior` or `Propagator`
+        Subclasses like `Prior` or `Propagator` should override this.
         """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement `generate_sample()` if it supports sampling."
+        )

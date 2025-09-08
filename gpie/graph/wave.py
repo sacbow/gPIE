@@ -7,7 +7,6 @@ from ..core.types import ArrayLike, PrecisionMode, Precision
 from ..core.linalg_utils import reduce_precision_to_scalar, random_normal_array
 from numpy.typing import NDArray
 from ..core.uncertain_array import UncertainArray
-from ..core.uncertain_array_tensor import UncertainArrayTensor
 
 if TYPE_CHECKING:
     from .propagator.add_propagator import AddPropagator
@@ -17,42 +16,60 @@ if TYPE_CHECKING:
 
 class Wave:
     """
-    A latent variable node in a Computational Factor Graph (CFG),
-    representing a Gaussian-distributed belief updated via message passing.
+    Represents a latent variable node in a Computational Factor Graph (CFG),
+    used in Expectation Propagation-based inference.
 
-    Each Wave corresponds to a vector-shaped random variable in the model.
-    It manages:
-        - A belief (mean and precision)
-        - Messages from a parent and multiple children
-        - Precision mode (scalar or array)
-        - Optional sample for generative use
+    Each Wave corresponds to a (batched) vector-shaped random variable whose belief
+    is Gaussian-distributed and updated via message passing with connected factors.
+
+    Key Features:
+    - Supports vectorization via `batch_size`, enabling efficient modeling of
+      multiple independent subgraphs (batched Wave nodes)
+    - Maintains belief state as an `UncertainArray`
+    - Participates in forward and backward message passing
 
     Message Passing Semantics:
-        - forward(): sends belief / child_message to each child
-        - backward(): sends combined child messages to the parent
-        - Belief is updated as: belief = parent_message * combine(child_messages)
+        - `forward()`: sends messages to child factors based on current belief
+        - `backward()`: combines messages from children and sends to parent
+        - Belief update follows:
+              belief = parent_message * combine(child_messages)
 
-    Precision Modes:
-        - 'scalar': Single scalar precision per UA
-        - 'array': Elementwise precision (same shape as mean)
-        Internally stored as `PrecisionMode` enum, externally exposed as str.
-
-    Typical Usage:
-        >> a = Wave((64, 64))
-        >> b = Wave((64, 64))
-        >> c = a + b  # Equivalent to AddPropagator() @ (a, b)
+    Precision Mode:
+        - 'scalar': assumes isotropic uncertainty per instance
+        - 'array' : allows per-element uncertainty
+        - The mode is inferred from connected factors via
+            `set_precision_mode_forward()` / `backward()`, or can be manually set.
 
     Attributes:
-        shape (tuple[int, ...]): Shape of the variable (excluding batch).
-        dtype (np().dtype): Data type of values (e.g., np().complex128).
-        label (str | None): Optional name identifier for graph visualization/debugging.
-        parent (Factor | None): Connected parent factor node.
-        children (list[Factor]): Connected child factors.
-        belief (UncertainArray | None): Current belief estimate.
-        parent_message (UncertainArray | None): Incoming message from parent.
-        child_messages_tensor (UncertainArrayTensor | None): Incoming messages from children.
-        _precision_mode (PrecisionMode | None): Internal precision mode.
+        event_shape (tuple[int, ...]):
+            Shape of the variable excluding batch dimension.
+        batch_size (int):
+            Number of vectorized instances (default: 1).
+        dtype (np().dtype):
+            Data type of the variable (e.g., np().complex64).
+        label (str | None):
+            Optional name for visualization or debugging.
+        belief (UncertainArray | None):
+            Current fused belief state.
+        parent_message (UncertainArray | None):
+            Latest message received from parent factor.
+        child_messages (dict[Factor, UncertainArray]):
+            Latest messages from child factors.
+        parent (Factor | None):
+            Connected parent factor.
+        children (list[Factor]):
+            Connected child factors.
+        _precision_mode (PrecisionMode | None):
+            Required or inferred precision mode.
+        _sample (NDArray | None):
+            Sample used in generative models (optional).
+
+    Example:
+        >>> x = Wave((64, 64), batch_size=8)
+        >>> y = Wave((64, 64))
+        >>> z = x + y  # internally creates AddPropagator
     """
+
     __array_priority__ = 1000
 
     def __init__(
@@ -65,15 +82,43 @@ class Wave:
         label: Optional[str] = None,
     ) -> None:
         """
-        Initialize a Wave representing a vectorized latent variable node.
+        Initialize a Wave representing a latent variable node in a computational factor graph.
+
+        Each Wave models a Gaussian-distributed vector-valued random variable, which may be
+        batched (i.e., represent multiple independent instances of the same structure).
+        The belief associated with this Wave is stored as an `UncertainArray`, and messages
+        from connected factors are used to update it via Expectation Propagation.
+
+        This constructor sets up the static properties of the variable such as shape,
+        data type, vectorization level, and optionally its precision mode.
 
         Args:
-            event_shape: Shape of each atomic variable (e.g. (64, 64)).
-            batch_size: Number of vectorized instances. Default: 1 (non-vectorized).
-            dtype: Data type of the variable. Default: complex64 (for GPU efficiency).
-            precision_mode: 'scalar' or 'array', or corresponding PrecisionMode enum.
-            label: Optional label for visualization or debugging.
+            event_shape (tuple[int, ...]):
+                Shape of each atomic variable (excluding batch dimension),
+                e.g., (64,), (32, 32), etc.
+            
+            batch_size (int, optional):
+                Number of independent vectorized instances of this variable.
+                Defaults to 1 (non-vectorized). If >1, the Wave participates in
+                batched inference where messages and beliefs are broadcast over batch.
+
+            dtype (np().dtype, optional):
+                Data type for the variable and messages (e.g., np().float32 or np().complex64).
+                Defaults to complex64 for GPU efficiency.
+
+            precision_mode (str | PrecisionMode, optional):
+                Either 'scalar' or 'array'. This sets the expected format of the precision
+                (isotropic vs anisotropic uncertainty). If left as None, the mode will be
+                inferred during graph compilation based on the requirements of connected
+                factors (via `set_precision_mode_forward()` / `backward()`).
+
+            label (str, optional):
+                Human-readable name for the variable. Used in debugging and graph visualization.
+
+        Raises:
+            ValueError: If invalid precision mode is provided.
         """
+
         self.event_shape = event_shape
         self.batch_size = batch_size
         self.dtype = dtype
@@ -235,34 +280,44 @@ class Wave:
 
     def combine_child_messages(self) -> UncertainArray:
         """
-        Combine all messages from children into a single UncertainArray belief.
+        Combine all incoming messages from child factors into a single UncertainArray belief.
 
-        This performs weighted averaging:
-            - posterior_precision = sum_i p_i
-            - posterior_mean = sum_i (p_i * m_i) / sum_i p_i
+        This operation computes the product of multiple independent Gaussian messages,
+        resulting in a new Gaussian belief. In EP or AMP-style algorithms, this corresponds
+        to fusing evidence from downstream observations or prior constraints.
+
+        Mathematically, for messages m₁, m₂, ..., mₖ with mean μᵢ and precision pᵢ:
+
+            - posterior_precision = ∑ᵢ pᵢ
+            - posterior_mean     = ∑ᵢ (pᵢ * μᵢ) / ∑ᵢ pᵢ
+
+        This operation assumes all child messages have the same shape, dtype, and precision mode,
+        which is enforced by upstream checks (e.g., `receive_message`, `assert_compatible`).
 
         Returns:
-            UncertainArray: Combined belief from children.
+            UncertainArray:
+                The fused belief computed by aggregating all child messages.
+
+        Raises:
+            RuntimeError: If no child messages have been received.
         """
+
         if not self.child_messages:
             raise RuntimeError("No child messages to combine.")
 
         iterator = iter(self.child_messages.values())
         first = next(iterator)
         dtype = first.dtype
-        vectorize = first.vectorize
         p = first.precision(raw=True)
         weighted = p * first.data
 
         for ua in iterator:
-            if ua.vectorize != vectorize:
-                raise ValueError("Mismatched vectorization across child messages.")
             p_i = ua.precision(raw=True)
             weighted += p_i * ua.data
             p += p_i
 
         mean = weighted / p
-        return UncertainArray(mean, dtype=dtype, precision=p, vectorize=vectorize)
+        return UncertainArray(mean, dtype=dtype, precision=p)
     
 
     def set_belief(self, belief: UncertainArray) -> None:
@@ -307,8 +362,8 @@ class Wave:
             self.children[0].receive_message(self, self.parent_message)
         else:
             belief = self.compute_belief()
-            for i, factor in enumerate(self.children):
-                msg = belief / self.child_messages_tensor[i]
+            for factor in self.children:
+                msg = belief / self.child_messages[factor]
                 factor.receive_message(self, msg)
 
     def backward(self) -> None:
