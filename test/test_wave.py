@@ -5,7 +5,6 @@ import pytest
 from gpie.core import backend
 from gpie.graph.wave import Wave
 from gpie.core.uncertain_array import UncertainArray
-from gpie.core.uncertain_array_tensor import UncertainArrayTensor
 from gpie.core.types import PrecisionMode
 
 # Optional CuPy support
@@ -19,11 +18,25 @@ if has_cupy:
     backend_libs.append(cp)
 
 
+class DummyFactor:
+    def __init__(self):
+        self.received = None
+
+    def receive_message(self, wave, msg):
+        self.received = (wave, msg)
+
+    def get_input_precision_mode(self, wave):
+        return "scalar"
+
+    def get_output_precision_mode(self):
+        return "scalar"
+
+
 @pytest.mark.parametrize("xp", backend_libs)
-def test_wave_set_and_get_sample(xp):
+def test_wave_sample_and_clear(xp):
     backend.set_backend(xp)
-    w = Wave(shape=(4, 4), dtype=xp.complex128)
-    sample = xp.ones((4, 4), dtype=xp.complex128)
+    w = Wave(event_shape=(4, 4), dtype=xp.complex64)
+    sample = xp.ones((1, 4, 4), dtype=xp.complex64)
     w.set_sample(sample)
     assert xp.allclose(w.get_sample(), sample)
     w.clear_sample()
@@ -31,62 +44,71 @@ def test_wave_set_and_get_sample(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_wave_finalize_structure_scalar(xp):
+def test_receive_message_and_compute_belief_scalar(xp):
     backend.set_backend(xp)
-    w = Wave(shape=(4, 4), dtype=xp.complex128)
+    w = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
     w._set_precision_mode("scalar")
-    w.children = [object(), object()]  # Dummy children
-    w.finalize_structure()
-    assert isinstance(w.child_messages_tensor, UncertainArrayTensor)
-    assert w.child_messages_tensor.precision_mode == PrecisionMode.SCALAR
+    parent = DummyFactor()
+    child1 = DummyFactor()
+    child2 = DummyFactor()
 
+    w.set_parent(parent)
+    w.add_child(child1)
+    w.add_child(child2)
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_wave_receive_message_dtype_casting(xp):
-    backend.set_backend(xp)
-    w = Wave(shape=(2, 2), dtype=xp.complex128)
-    real_message = UncertainArray(xp.ones((2, 2), dtype=xp.float64), precision=1.0)
-    # Acceptable: real → complex
-    w.set_parent(object())
-    w.receive_message(w.parent, real_message)
-    assert w.parent_message.dtype == xp.complex128
+    msg1 = UncertainArray(xp.full((1, 2, 2), 1.0), precision=1.0)
+    msg2 = UncertainArray(xp.full((1, 2, 2), 3.0), precision=1.0)
+    parent_msg = UncertainArray(xp.full((1, 2, 2), 2.0), precision=2.0)
 
+    w.receive_message(child1, msg1)
+    w.receive_message(child2, msg2)
+    w.receive_message(parent, parent_msg)
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_wave_compute_belief_fuses_messages(xp):
-    backend.set_backend(xp)
-    w = Wave(shape=(2, 2), dtype=xp.complex128)
-    w._set_precision_mode("scalar")
-    w.children = [object(), object()]
-    w.finalize_structure()
-
-    # Dummy child messages (same as initialized ones)
-    parent_msg = UncertainArray(xp.full((2, 2), 1.0), precision=2.0)
-    w.set_parent(object())
-    w.receive_message(w.parent, parent_msg)
     belief = w.compute_belief()
     assert isinstance(belief, UncertainArray)
-    assert xp.allclose(belief.data.shape, (2, 2))
+    assert belief.event_shape == (2, 2)
+    assert xp.allclose(belief.data.shape, (1, 2, 2))
+
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_wave_to_backend_updates_dtype_and_storage(xp):
+def test_wave_to_backend_converts_all_messages(xp):
     backend.set_backend(xp)
-    w = Wave(shape=(2, 2), dtype=xp.complex128)
+    w = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.complex64)
     w._set_precision_mode("array")
-    w.children = [object(), object()]
-    w.finalize_structure()
-    # 明示的に belief / parent_message もセット
-    w.set_parent(object())
-    parent_msg = UncertainArray(xp.full((2, 2), 1.0), precision=xp.ones((2, 2)))
-    w.receive_message(w.parent, parent_msg)
+    child = DummyFactor()
+    w.add_child(child)
 
+    msg = UncertainArray(xp.full((2, 2, 2), 1.0), precision=xp.ones((2, 2, 2)))
+    w.receive_message(child, msg)
+
+    belief = w.compute_belief()
+    w.set_parent(DummyFactor())
+    w.receive_message(w.parent, msg)
     w.compute_belief()
 
-    # CPUからGPUへ（またはその逆）移す
     new_backend = cp if xp is np else np
     backend.set_backend(new_backend)
     w.to_backend()
 
-    assert isinstance(w.child_messages_tensor.data, new_backend.ndarray)
     assert isinstance(w.belief.data, new_backend.ndarray)
-    assert w.dtype == new_backend.complex128
+    for m in w.child_messages.values():
+        assert isinstance(m.data, new_backend.ndarray)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_vectorized_child_combination(xp):
+    backend.set_backend(xp)
+    w = Wave(event_shape=(2, 2), batch_size=3, dtype=xp.complex64)
+    w._set_precision_mode("array")
+    child1 = DummyFactor()
+    child2 = DummyFactor()
+    w.add_child(child1)
+    w.add_child(child2)
+
+    msg1 = UncertainArray(xp.full((3, 2, 2), 2.0), precision=xp.ones((3, 2, 2)))
+    msg2 = UncertainArray(xp.full((3, 2, 2), 4.0), precision=xp.ones((3, 2, 2)))
+    w.receive_message(child1, msg1)
+    w.receive_message(child2, msg2)
+
+    belief = w.compute_belief()
+    assert xp.allclose(belief.data, 3.0)

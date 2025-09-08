@@ -2,7 +2,7 @@ from __future__ import annotations
 from numbers import Number
 from typing import Union, Optional, Literal, overload
 
-from .backend import np
+from .backend import np, move_array_to_current_backend
 from .types import ArrayLike, PrecisionMode, Precision, get_real_dtype
 from .linalg_utils import reduce_precision_to_scalar, random_normal_array
 
@@ -280,29 +280,12 @@ class UncertainArray:
     
     def to_backend(self) -> None:
         """
-        Convert `data` and `_precision` to current backend (NumPy/CuPy),
-        handling explicit transfers between CPU (NumPy) and GPU (CuPy).
+        Move internal arrays (`data`, `_precision`) to the current backend (NumPy or CuPy),
+        ensuring dtype consistency and safe transfer between CPU and GPU.
         """
-        import cupy as cp
-        current_backend = np()
-
-        # --- data ---
-        if isinstance(self.data, cp.ndarray) and current_backend.__name__ == "numpy":
-            # CuPy → NumPy
-            self.data = self.data.get()
-        else:
-            # NumPy → CuPy or same-backend
-            self.data = current_backend.asarray(self.data)
-
+        self.data = move_array_to_current_backend(self.data, dtype=self.dtype)
+        self._precision = move_array_to_current_backend(self._precision, dtype=get_real_dtype(self.dtype))
         self.dtype = self.data.dtype
-
-        # --- precision ---
-        if isinstance(self._precision, cp.ndarray) and current_backend.__name__ == "numpy":
-            # CuPy → NumPy
-            self._precision = self._precision.get()
-        else:
-            # NumPy → CuPy or same-backend
-            self._precision = current_backend.asarray(self._precision, dtype=get_real_dtype(self.dtype))
 
 
     @property
@@ -368,7 +351,7 @@ class UncertainArray:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1.")
 
-        shape = (batch_size,) + event_shape if batch_size > 1 else event_shape
+        shape = (batch_size,) + event_shape
 
         from .linalg_utils import random_normal_array
         data = random_normal_array(shape, dtype=dtype, rng=rng)
@@ -406,7 +389,7 @@ class UncertainArray:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1.")
 
-        shape = (batch_size,) + event_shape if batch_size > 1 else event_shape
+        shape = (batch_size,) + event_shape
 
         data = np().zeros(shape, dtype=dtype)
 

@@ -24,5 +24,5 @@ def test_load_sample_image(name):
     assert 0.0 <= img.max() <= 1.0
 
     # Cached file existence check (absolute path!)
-    path = SAMPLE_DATA_DIR / f"{name}.png"
+    path = SAMPLE_DATA_DIR / f"{name}_{shape[0]}x{shape[1]}.png"
     assert path.exists()

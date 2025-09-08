@@ -4,7 +4,7 @@ from .rng_utils import get_rng, normal, choice, shuffle, uniform
 import warnings
 
 
-def reduce_precision_to_scalar(precision_array: np().ndarray, vectorize: bool) -> np().ndarray | float:
+def reduce_precision_to_scalar(precision_array: np().ndarray) -> np().ndarray | float:
     """
     Reduce precision array to scalar precision (or per-batch scalar precision).
 
@@ -24,13 +24,10 @@ def reduce_precision_to_scalar(precision_array: np().ndarray, vectorize: bool) -
     if np().any(precision_array <= 0):
         raise ValueError("Precision values must be positive.")
 
-    if vectorize:
-        # Harmonic mean over event_shape axis (i.e., from axis=1 onward)
-        inv_var = 1.0 / precision_array
-        harmonic_mean = 1.0 / np().mean(inv_var, axis=tuple(range(1, precision_array.ndim)))
-        return harmonic_mean  # shape: (batch_size,)
-    else:
-        return 1.0 / np().mean(1.0 / precision_array)
+    # Harmonic mean over event_shape axis (i.e., from axis=1 onward)
+    inv_var = 1.0 / precision_array
+    harmonic_mean = 1.0 / np().mean(inv_var, axis=tuple(range(1, precision_array.ndim)))
+    return harmonic_mean
 
 
 

@@ -1,7 +1,6 @@
 # core modules
 from .core import (
     UncertainArray,
-    UncertainArrayTensor,
     mse,
     nmse,
     pmse,

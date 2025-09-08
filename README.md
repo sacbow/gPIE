@@ -10,7 +10,6 @@ gpie/
 │ ├── __init__.py
 │ ├── core/ # Core data structures and utilities
 │ │ ├── uncertain_array.py
-│ │ ├── uncertain_array_tensor.py
 │ │ ├── types.py
 │ │ ├── linalg_utils.py
 │ │ ├── rng_utils.py

@@ -23,7 +23,6 @@ def test_init_scalar_and_array_precision_vectorized(xp):
     ua_scalar = UncertainArray.zeros(event_shape=(4, 4), batch_size=3, precision=2.0, scalar_precision=True)
     ua_array = UncertainArray.zeros(event_shape=(4, 4), batch_size=3, precision=2.0, scalar_precision=False)
 
-    assert ua_scalar.vectorize is True
     assert ua_scalar.batch_size == 3
     assert ua_scalar.event_shape == (4, 4)
     assert ua_scalar.precision_mode == PrecisionMode.SCALAR
@@ -63,7 +62,6 @@ def test_product_reduce_over_batch(xp):
     ua = UncertainArray.random(event_shape=(4, 4), batch_size=10, precision=2.0)
     reduced = ua.product_reduce_over_batch()
 
-    assert reduced.vectorize is False
     assert reduced.event_shape == (4, 4)
     assert np.allclose(reduced.precision(), np.sum(ua.precision(), axis=0), atol=1e-5)
 
