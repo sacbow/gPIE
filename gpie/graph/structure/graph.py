@@ -270,24 +270,29 @@ class Graph:
     def generate_sample(self, rng=None, update_observed: bool = True):
         """
         Generate a full sample from the generative model defined by the graph.
-
+        
         Args:
-            rng (np.random.Generator or None): RNG used to sample latent variables.
-            update_observed (bool): If True, automatically update observed data
-                                for all Measurement nodes based on the sampled latent state.
+            rng: RNG used for latent and observed sampling (optional).
+            update_observed: If True, observed data is updated from the sample.
         """
+        rng = rng or get_rng()  # ← backend-aware RNG utility
 
-        if rng is None:
-            rng = self._rng
-
+        # 1. Generate latent samples from priors/propagators
         for node in self._nodes_sorted:
-            if hasattr(node, "_generate_sample"):
-                if node._sample is None:
-                    node._generate_sample(rng)
+            if isinstance(node, Wave):
+                node._generate_sample(rng=rng)
+
+        # 2. Generate noisy observed samples at Measurement nodes
+        for meas in self._factors:
+            if hasattr(meas, "_generate_sample") and callable(meas._generate_sample):
+                meas._generate_sample(rng)
+
+        # 3. Promote synthetic observed samples to actual observations
         if update_observed:
-            for factor in self._factors:
-                if hasattr(factor, "update_observed_from_sample"):
-                    factor.update_observed_from_sample()
+            for meas in self._factors:
+                if hasattr(meas, "update_observed_from_sample") and callable(meas.update_observed_from_sample):
+                    meas.update_observed_from_sample()
+
 
 
 

@@ -302,7 +302,7 @@ class UncertainArray:
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return (self.data.shape[0],) if self.batched else ()
+        return (self.data.shape[0],)
 
     @property
     def batch_size(self) -> int:

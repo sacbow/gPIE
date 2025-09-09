@@ -1,8 +1,9 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Optional, Union
 from .wave import Wave
 from ..core.uncertain_array import UncertainArray
 from ..core.types import PrecisionMode
+from ..core.backend import np
 
 
 class Factor(ABC):
@@ -190,12 +191,21 @@ class Factor(ABC):
         else:
             raise ValueError("Received message from unconnected Wave.")
 
-    def generate_sample(self):
+    def get_sample_for_output(self, rng) -> np().ndarray:
         """
-        Generate a sample on the output Wave (if applicable).
+        Optionally return a sample corresponding to this factor's generative distribution.
 
-        Subclasses like `Prior` or `Propagator` should override this.
+        This method is only expected to be implemented by factors that serve as
+        generative sources (e.g., Prior, Propagator).
+
+        Measurement factors (which have no output Wave) should NOT implement this method.
+
+        If not overridden, calling this will raise an informative error.
+
+        Returns:
+            np().ndarray: A sampled array matching output Wave's shape and dtype.
+
+        Raises:
+            NotImplementedError: If the factor does not support generative sampling.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement `generate_sample()` if it supports sampling."
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not implement `get_sample_for_output()`.")

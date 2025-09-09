@@ -12,6 +12,9 @@ class DummyFactor(Factor):
     def backward(self):
         pass
 
+    def get_sample_for_output(self):
+        pass
+
 
 def test_initialization():
     f = DummyFactor()
