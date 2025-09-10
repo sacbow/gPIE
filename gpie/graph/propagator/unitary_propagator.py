@@ -1,7 +1,7 @@
 from typing import Optional
 from .base import Propagator
 from ..wave import Wave
-from ...core.backend import np
+from ...core.backend import np, move_array_to_current_backend
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import reduce_precision_to_scalar
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
@@ -45,44 +45,36 @@ class UnitaryPropagator(Propagator):
         ValueError: If U is not a square 2D unitary matrix.
     """
 
-    def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np().complex128):
+    def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np().complex64):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
 
         if U is None:
             raise ValueError("Unitary matrix U must be explicitly provided.")
         self.U = np().asarray(U, dtype = self.dtype)
-        self.Uh = self.U.conj().T
+        if self.U.ndim == 2:
+            self.U_needs_batch = True
+            self.U = self.U[None, ...]  # shape: (1, N, N)
+        elif self.U.ndim == 3:
+            self.U_needs_batch = False
+        else:
+            raise ValueError("U must be 2D or 3D array.")
+        self.Uh = self.U.conj().transpose(0, 2, 1)
 
-        if self.U.ndim != 2 or self.U.shape[0] != self.U.shape[1]:
+        if self.U.shape[1] != self.U.shape[2]:
             raise ValueError("U must be a square 2D unitary matrix.")
 
-        self.shape = (self.U.shape[0],)
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
     
     def to_backend(self) -> None:
         """
-        Transfer internal arrays (U, Uh) to the current backend (NumPy/CuPy),
+        Transfer internal arrays (U, Uh) to the current backend (NumPy or CuPy),
         and synchronize dtype.
         """
-        import cupy as cp
-        current_backend = np()
-
-        # Transfer U
-        if isinstance(self.U, cp.ndarray) and current_backend.__name__ == "numpy":
-            self.U = self.U.get()
-        else:
-            self.U = current_backend.asarray(self.U)
-
-        # Transfer Uh
-        if isinstance(self.Uh, cp.ndarray) and current_backend.__name__ == "numpy":
-            self.Uh = self.Uh.get()
-        else:
-            self.Uh = current_backend.asarray(self.Uh)
-
-        # Sync dtype
-        self.dtype = current_backend.dtype(self.dtype)
+        self.U = move_array_to_current_backend(self.U, dtype=self.dtype)
+        self.Uh = move_array_to_current_backend(self.Uh, dtype=self.dtype)
+        self.dtype = np().dtype(self.dtype)
 
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
@@ -132,59 +124,67 @@ class UnitaryPropagator(Propagator):
     def compute_belief(self):
         x_wave = self.inputs["input"]
         msg_x = self.input_messages.get(x_wave)
-
-        if np().issubdtype(msg_x.dtype, np().floating):
-            msg_x = msg_x.astype(np().complex128)  # or self.dtype if必要
-
         msg_y = self.output_message
 
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
-        r = msg_x.data
-        p = msg_y.data
-        gamma = msg_x._precision
-        tau = msg_y._precision
+        if np().issubdtype(msg_x.dtype, np().floating):
+            msg_x = msg_x.astype(self.dtype)
+
+        r = msg_x.data         # shape: (B, N)
+        p = msg_y.data         # shape: (B, N)
+        gamma = msg_x._precision  # scalar or array
+        tau = msg_y._precision    # scalar or array
 
         mode = self._precision_mode
         if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            Uh_p = self.Uh @ p
+            # Uh @ p: (B, N, N) @ (B, N, 1) → (B, N)
+            Uh_p = (self.Uh @ p[..., None])[..., 0]
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=denom)
+            self.y_belief = UA((self.U @ x_mean[..., None])[..., 0], dtype=self.dtype, precision=denom)
 
         elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            Ur = self.U @ r
+            Ur = (self.U @ r[..., None])[..., 0]
             denom = gamma + tau
             y_mean = (gamma / denom) * Ur + (tau / denom) * p
             self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
             scalar_prec = reduce_precision_to_scalar(denom)
-            self.x_belief = UA(self.Uh @ y_mean, dtype=self.dtype, precision=scalar_prec)
+            x_mean = (self.Uh @ y_mean[..., None])[..., 0]
+            self.x_belief = UA(x_mean, dtype=self.dtype, precision=scalar_prec)
 
         elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            Uh_p = self.Uh @ p
+            Uh_p = (self.Uh @ p[..., None])[..., 0]
             denom = gamma + tau
             x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
             self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
             scalar_prec = reduce_precision_to_scalar(denom)
-            self.y_belief = UA(self.U @ x_mean, dtype=self.dtype, precision=scalar_prec)
+            y_mean = (self.U @ x_mean[..., None])[..., 0]
+            self.y_belief = UA(y_mean, dtype=self.dtype, precision=scalar_prec)
 
         else:
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
+
 
     def forward(self):
         if self.output_message is None or self.y_belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            if self.output.precision_mode == "scalar":
-                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = True)
-            else:
-                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
+            
+            msg = UA.random(
+                event_shape=self.output.event_shape,
+                batch_size=self.output.batch_size,
+                dtype=self.dtype,
+                scalar_precision=(self.output.precision_mode == "scalar"),
+                rng=self._init_rng,
+            )
         else:
             msg = self.y_belief / self.output_message
 
         self.output.receive_message(self, msg)
+
 
     def backward(self):
         x_wave = self.inputs["input"]
@@ -197,17 +197,6 @@ class UnitaryPropagator(Propagator):
 
     def set_init_rng(self, rng):
         self._init_rng = rng
-
-    def generate_sample(self, rng):
-        """
-        to be deplicated
-        """
-        x_wave = self.inputs["input"]
-        x = x_wave.get_sample()
-        if x is None:
-            raise RuntimeError("Input sample not set.")
-        y = self.U @ x
-        self.output.set_sample(y)
     
     def get_sample_for_output(self, rng):
         """
@@ -218,22 +207,35 @@ class UnitaryPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        return self.U @ x
+
+        # Batched matrix multiplication: (B, N, N) @ (B, N, 1) → (B, N)
+        return (self.U @ x[..., None])[..., 0]
 
 
     def __matmul__(self, wave: Wave) -> Wave:
-        if wave.ndim != 1:
-            raise ValueError(f"UnitaryPropagator only supports 1D wave input. Got: {wave.shape}")
+        if len(wave.event_shape) != 1:
+            raise ValueError(f"UnitaryPropagator only supports 1D wave input. Got: {wave.event_shape}")
 
         self.add_input("input", wave)
-        input_gen = wave.generation
-        self._set_generation(input_gen + 1)
+        self._set_generation(wave.generation + 1)
         self.dtype = get_complex_dtype(wave.dtype)
-        out_wave = Wave(self.shape, dtype=self.dtype)
+
+        # Apply batch_size-aware expansion
+        if self.U_needs_batch:
+            B = wave.batch_size
+            self.U = np().broadcast_to(self.U, (B, *self.U.shape[1:]))
+            self.Uh = self.U.conj().transpose(0, 2, 1)
+            self.U_needs_batch = False
+
+        if self.U.shape[1] != wave.event_shape[0]:
+            raise ValueError(f"U shape {self.U.shape} is incompatible with input wave shape {wave.event_shape}")
+
+        out_wave = Wave(event_shape=wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
+
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
