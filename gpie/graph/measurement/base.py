@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import warnings
 from typing import Optional, Union, Any
 from ...core.backend import np, move_array_to_current_backend
 from ...core.types import PrecisionMode, get_real_dtype
@@ -75,7 +76,6 @@ class Measurement(Factor, ABC):
         data: np().ndarray,
         precision: Union[float, np().ndarray, None] = None,
         mask: Optional[np().ndarray] = None,
-        dtype: Optional[np().dtype] = None,
         batched: bool = True,
     ) -> None:
         """
@@ -91,7 +91,7 @@ class Measurement(Factor, ABC):
         if self.input is None:
             raise RuntimeError("Cannot set observed before connecting input wave.")
 
-        dtype = dtype or self.observed_dtype
+        dtype = data.dtype
         var = getattr(self, "_var", 1.0)
         prec = precision if precision is not None else 1.0 / var
 
@@ -103,15 +103,34 @@ class Measurement(Factor, ABC):
             raise ValueError(f"Observed data shape mismatch: expected {expected_shape}, got {data.shape}")
 
         if mask is not None:
-            if mask.shape != expected_shape:
-                raise ValueError("Mask shape mismatch.")
+            if mask.shape != data.shape:
+                raise ValueError(f"Mask shape mismatch: expected {data.shape}, got {mask.shape}")
+            
+            if mask.dtype != np().bool_:
+                raise TypeError(
+                    f"Mask must have dtype=bool, but got {mask.dtype}"
+                )
+
             self._mask = mask
 
-        if self.expected_observed_dtype is not None:
-            if not np().issubdtype(dtype, self.expected_observed_dtype):
+
+        if not np().issubdtype(dtype, self.observed_dtype):
+            # Allow float/complex mismatch within same family (e.g., float32 vs float64)
+            if (
+                np().issubdtype(dtype, np().floating) and np().issubdtype(self.observed_dtype, np().floating)
+            ) or (
+                np().issubdtype(dtype, np().complexfloating) and np().issubdtype(self.observed_dtype, np().complexfloating)
+            ):
+                warnings.warn(
+                    f"Observed dtype {dtype} does not exactly match expected dtype {self.observed_dtype}. "
+                    f"Automatic casting will be applied.",
+                    category=UserWarning
+                )
+                dtype = self.observed_dtype  # Cast below
+            else:
                 raise TypeError(
                     f"{type(self).__name__} expects observed dtype compatible with "
-                    f"{self.expected_observed_dtype}, but got {dtype}"
+                    f"{self.observed_dtype}, but got {dtype}"
                 )
 
         # Build precision array
