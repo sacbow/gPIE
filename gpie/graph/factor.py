@@ -151,6 +151,8 @@ class Factor(ABC):
             name (str): Name/key to refer to this input (e.g., "x", "lhs").
             wave (Wave): Wave instance to connect.
         """
+        if name in self.inputs:
+            raise KeyError(f"Input name '{name}' is already registered.")
         self.inputs[name] = wave
         self.input_messages[wave] = None
         wave.add_child(self)
@@ -164,6 +166,8 @@ class Factor(ABC):
         Args:
             wave (Wave): Output Wave node to connect.
         """
+        if self.output is not None:
+            raise ValueError(f"Output wave is already connected: {self.output}")
         self.output = wave
         max_gen = max(
             (w._generation for w in self.inputs.values() if w._generation is not None),

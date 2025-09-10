@@ -48,7 +48,7 @@ class Propagator(Factor, ABC):
     def __init__(
         self,
         input_names: tuple[str, ...] = ("input",),
-        dtype: np().dtype = np().complex128,
+        dtype: np().dtype = np().complex64,
         precision_mode: Optional[Union[str, UnaryPropagatorPrecisionMode]] = None,
     ):
 

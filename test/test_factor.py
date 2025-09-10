@@ -74,3 +74,27 @@ def test_receive_message_routing():
     w_unlinked = Wave((2, 2))
     with pytest.raises(ValueError):
         f.receive_message(w_unlinked, msg)
+
+def test_add_input_duplicate_key():
+    f = DummyFactor()
+    w = Wave((2, 2))
+    f.add_input("x", w)
+    with pytest.raises(KeyError):
+        f.add_input("x", w)
+
+
+def test_connect_output_twice():
+    f = DummyFactor()
+    w1 = Wave((2, 2))
+    w2 = Wave((2, 2))
+    f.add_input("x", w1)
+    f.connect_output(w2)
+    with pytest.raises(ValueError):
+        f.connect_output(Wave((2, 2)))
+
+
+def test_default_get_output_precision_mode():
+    f = DummyFactor()
+    assert f.get_output_precision_mode() is None
+
+
