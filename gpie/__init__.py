@@ -25,7 +25,7 @@ from .core.linalg_utils import (
 )
 
 # Graph structure and base components
-from .graph.structure import Graph
+from .graph.structure import Graph, model, observe
 from .graph.wave import Wave
 from .graph.factor import Factor
 

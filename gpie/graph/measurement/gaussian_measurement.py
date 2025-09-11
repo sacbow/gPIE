@@ -23,6 +23,7 @@ class GaussianMeasurement(Measurement):
         self,
         var: float = 1.0,
         precision_mode: Optional[Union[str, PrecisionMode]] = None,
+        with_mask: bool = False
     ) -> None:
         self._var = var
         self._precision_value = 1.0 / var
@@ -30,7 +31,7 @@ class GaussianMeasurement(Measurement):
         if isinstance(precision_mode, str):
             precision_mode = PrecisionMode(precision_mode)
 
-        super().__init__()
+        super().__init__(with_mask = with_mask)
         if precision_mode is not None:
             self._set_precision_mode(precision_mode)
 

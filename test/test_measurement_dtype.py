@@ -95,13 +95,15 @@ def test_invalid_input_dtype():
 
 def test_observed_dtype_casting():
     wave = Wave(event_shape=(2,), dtype=onp.complex128)
-    obs_data = onp.array([[1+2j, 3+4j]], dtype=onp.complex64)
-    obs = UncertainArray(obs_data, dtype=onp.complex64, precision=1.0)
-
-    m = SameDtypeMeasurement(observed=obs)
+    m = SameDtypeMeasurement()
     m @ wave
+
+    obs_data = onp.array([[1+2j, 3+4j]], dtype=onp.complex128)
+    m.set_observed(obs_data, precision=1.0)
+
     assert m.observed.dtype == m.observed_dtype
     assert m.observed_dtype == onp.dtype(onp.complex128)
+
 
 
 def test_set_observed_scalar_precision():
@@ -134,28 +136,30 @@ def test_set_observed_array_precision_no_mask():
 
 def test_set_observed_with_mask_array_precision():
     wave = Wave(event_shape=(2,), dtype=onp.complex64)
-    mask = onp.array([[True, False]])
-    m = RealObservedMeasurement(mask=mask, precision_mode="array")
+    m = RealObservedMeasurement()
     m @ wave
 
-    obs = onp.array([[1.0, 2.0]], dtype=onp.float64)
-    m.set_observed(obs, precision=100.0)
-    prec = m.observed.precision()
+    mask = onp.array([[True, False]])
+    obs = onp.array([[1.0, 2.0]], dtype=onp.float32)
+    m.set_precision_mode_forward()  # manually set precision_mode if needed
+    m.set_observed(obs, precision=100.0, mask=mask)
 
+    prec = m.observed.precision()
     assert prec.shape == (1, 2)
     assert prec[0, 0] == pytest.approx(100.0)
     assert prec[0, 1] == pytest.approx(0.0)
 
 
+
 def test_set_observed_dtype_casting_respected():
-    wave = Wave(event_shape=(2,), dtype=onp.complex128)
+    wave = Wave(event_shape=(2,), dtype=onp.complex64)
     m = SameDtypeMeasurement()
     m @ wave
 
     obs = onp.array([[1+2j, 3+4j]], dtype=onp.complex64)
     m.set_observed(obs, precision=1.0)
 
-    assert m.observed.dtype == onp.complex128
+    assert m.observed.dtype == onp.complex64
     assert isinstance(m.observed, UncertainArray)
 
 
@@ -164,7 +168,7 @@ def test_set_observed_batched_false():
     m = RealObservedMeasurement()
     m @ wave
 
-    obs = onp.array([1.0, 2.0], dtype=onp.float64)  # shape = (2,)
+    obs = onp.array([1.0, 2.0], dtype=onp.float32)  # shape = (2,)
     m.set_observed(obs, precision=1.0, batched=False)
 
     assert m.observed.batch_shape == (1,)

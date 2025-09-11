@@ -11,27 +11,46 @@ from ..structure.graph import Graph
 
 class Measurement(Factor, ABC):
     """
-    Abstract base class for measurement factors in a Computational Factor Graph (CFG).
+    Abstract base class for measurement factors in a computational factor graph.
 
-    A Measurement represents a likelihood term that connects a latent Wave to an observed variable.
+    A Measurement defines the probabilistic relationship between a latent Wave variable
+    and observed data. It handles observation injection, backward message computation,
+    and synthetic data generation.
+
+    Subclasses must implement:
+        - _compute_message: backward message from observed data
+        - _generate_sample: forward sampling of observed data
+        - _infer_observed_dtype_from_input: determine observed dtype from input dtype
     """
+
 
     expected_input_dtype: Optional[Any] = None     # e.g. np.floating or np.complexfloating
     expected_observed_dtype: Optional[Any] = None  # e.g. np.floating or np.complexfloating
 
-    def __init__(self) -> None:
+    def __init__(self, with_mask: bool = False) -> None:
         super().__init__()
 
         self._sample: Optional[np().ndarray] = None
         self.observed: Optional[UncertainArray] = None
         self._mask: Optional[np().ndarray] = None
         self.label: Optional[str] = None
-
+        self._with_mask = with_mask
         self.input_dtype: Optional[np().dtype] = None
         self.observed_dtype: Optional[np().dtype] = None
-        self._precision_mode: Optional[PrecisionMode] = None
+
+        if self._with_mask:
+            self._precision_mode: Optional[PrecisionMode] = PrecisionMode.ARRAY
+        else:
+            self._precision_mode: Optional[PrecisionMode] = None
 
     def __matmul__(self, wave: Wave) -> "Measurement":
+        """
+        Connect the measurement node to a latent Wave variable.
+
+        Infers dtype relationships, registers the node in the active graph,
+        and performs type validation against expected dtypes.
+        """
+
         self.input_dtype = wave.dtype
 
         if self.expected_input_dtype is not None:
@@ -79,15 +98,19 @@ class Measurement(Factor, ABC):
         batched: bool = True,
     ) -> None:
         """
-        Set the observed data, mask (optional), and precision.
+        Attach observed data and its precision to this measurement node.
 
         Args:
-            data: Observed array (must match expected shape).
-            precision: Scalar or array precision. If None, defaults to 1/var.
-            mask: Optional boolean mask array.
-            dtype: Optional cast for observed dtype.
-            batched: Whether the input is batched.
+            data: Observation array, shape must match input Wave.
+            precision: Optional scalar or array precision. Defaults to 1/var.
+            mask: Optional boolean mask to mark observed regions.
+            batched: Whether the input is batched (default: True).
+
+        Raises:
+            TypeError: If dtype or mask format is invalid.
+            ValueError: If shape mismatches occur.
         """
+
         if self.input is None:
             raise RuntimeError("Cannot set observed before connecting input wave.")
 
@@ -103,13 +126,15 @@ class Measurement(Factor, ABC):
             raise ValueError(f"Observed data shape mismatch: expected {expected_shape}, got {data.shape}")
 
         if mask is not None:
-            if mask.shape != data.shape:
-                raise ValueError(f"Mask shape mismatch: expected {data.shape}, got {mask.shape}")
-            
+            if mask.shape == self.input.event_shape:
+                # Automatically add batch dimension
+                mask = mask.reshape((1,) + mask.shape)
+
+            if mask.shape != expected_shape:
+                raise ValueError(f"Mask shape mismatch: expected {expected_shape}, got {mask.shape}")
+
             if mask.dtype != np().bool_:
-                raise TypeError(
-                    f"Mask must have dtype=bool, but got {mask.dtype}"
-                )
+                raise TypeError(f"Mask must have dtype=bool, but got {mask.dtype}")
 
             self._mask = mask
 
@@ -153,40 +178,50 @@ class Measurement(Factor, ABC):
 
     def update_observed_from_sample(self, mask: Optional[np().ndarray] = None) -> None:
         """
-        Promote the internal sample to an observation.
+        Promote the stored synthetic sample to observed data.
 
-        Args:
-            mask: Optional boolean array to override the internal mask.
+        Optionally overrides the existing mask.
 
         Raises:
             RuntimeError: If no sample is available.
         """
+
         if self._sample is None:
             raise RuntimeError("No sample available to update observed.")
 
-        if mask is not None:
+        if self._with_mask and mask is not None:
             self._mask = mask
 
         self.set_observed(self._sample, mask=self._mask)
 
 
     def to_backend(self) -> None:
+        """
+        Move internal arrays and dtype references to current backend.
+
+        This ensures consistency when switching between NumPy/CuPy.
+        """
         if self.observed is not None:
             self.observed.to_backend()
+
         if self._mask is not None:
             self._mask = move_array_to_current_backend(self._mask, dtype=bool)
+
         if self.input_dtype is not None:
-            self.input_dtype = move_array_to_current_backend(
-                np().array(0, dtype=self.input_dtype)
-            ).dtype
-        if self.expected_observed_dtype is not None:
-            self.expected_observed_dtype = move_array_to_current_backend(
-                np().array(0, dtype=self.expected_observed_dtype)
-            ).dtype
+            self.input_dtype = np().dtype(self.input_dtype)
+
+        if self.observed_dtype is not None:
+            self.observed_dtype = np().dtype(self.observed_dtype)
+
 
     def set_precision_mode_forward(self) -> None:
         if self.input.precision_mode_enum is not None:
             self._set_precision_mode(self.input.precision_mode_enum)
+    
+    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
+        if wave != self.input:
+            return None
+        return self.precision_mode
 
     def forward(self) -> None:
         pass
@@ -227,6 +262,9 @@ class Measurement(Factor, ABC):
 
     @abstractmethod
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
+        """
+        Compute the backward message from the observed data to the latent variable.
+        """
         pass
 
     @abstractmethod
@@ -235,4 +273,7 @@ class Measurement(Factor, ABC):
 
     @abstractmethod
     def _infer_observed_dtype_from_input(self, input_dtype: np().dtype) -> np().dtype:
+        """
+        Determine the dtype of the observed data given the input dtype.
+        """
         pass
