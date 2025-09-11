@@ -1,10 +1,13 @@
-import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
 import networkx as nx
 from typing import Optional
 from pathlib import Path
 
 
-def _matplotlib_vis(graph, layout: str = "spring", output_path: Optional[str] = None):
+def render_matplotlib_graph(graph, layout: str = "spring", output_path: Optional[str] = None):
     """
     Visualize the factor graph using matplotlib.
 
@@ -56,5 +59,3 @@ def _matplotlib_vis(graph, layout: str = "spring", output_path: Optional[str] = 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(str(output_path), bbox_inches="tight")
         plt.close()
-    else:
-        plt.show()

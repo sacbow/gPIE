@@ -19,9 +19,6 @@ def render_bokeh_graph(graph, layout: str = "graphviz", output_path: Optional[st
     Raises:
         ValueError: If unknown layout is specified.
     """
-    from .visualization import get_layout_func
-    layout_func = get_layout_func(layout)
-    pos = layout_func(G)
 
     # === 1. Collect nodes and edges ===
     nodes = []
@@ -43,7 +40,10 @@ def render_bokeh_graph(graph, layout: str = "graphviz", output_path: Optional[st
     G = nx.DiGraph()
     G.add_nodes_from(nodes)
     G.add_edges_from(edges)
-    pos = LAYOUTS[layout](G)
+
+    from .visualization import get_layout_func
+    layout_func = get_layout_func(layout)
+    pos = layout_func(G)
 
     # === 3. Format node attributes for Bokeh ===
     node_x, node_y, node_type, node_label, node_color = [], [], [], [], []
@@ -102,6 +102,3 @@ def render_bokeh_graph(graph, layout: str = "graphviz", output_path: Optional[st
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_file(str(output_path))
         save(p)
-    else:
-        from bokeh.io import show
-        show(p)
