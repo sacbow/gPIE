@@ -43,7 +43,7 @@ class Measurement(Factor, ABC):
         else:
             self._precision_mode: Optional[PrecisionMode] = None
 
-    def __matmul__(self, wave: Wave) -> "Measurement":
+    def __lshift__(self, wave: Wave) -> "Measurement":
         """
         Connect the measurement node to a latent Wave variable.
 
@@ -89,6 +89,7 @@ class Measurement(Factor, ABC):
                     i += 1
 
         return self
+    
 
     def set_observed(
         self,
