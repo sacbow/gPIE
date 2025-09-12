@@ -9,36 +9,38 @@ from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_compl
 
 class IFFT2DPropagator(Propagator):
     """
-    Inverse 2D FFT propagator: inverse of `FFT2DPropagator`.
+    A centered 2D inverse FFT-based propagator for EP message passing.
 
-    This propagator applies a centered inverse Fourier transform:
-        - x (frequency domain) ⟶ y (spatial domain)
+    It defines a unitary mapping:
+        y = IFFT2_centered(x)
+        x = FFT2_centered(y)
 
-    It mirrors the structure and behavior of `FFT2DPropagator`,
-    and supports the same scalar/array precision mode conversions:
-        - SCALAR → SCALAR
-        - SCALAR → ARRAY
-        - ARRAY → SCALAR
+    Supports:
+        - SCALAR <-> SCALAR
+        - SCALAR <-> ARRAY
+        - ARRAY -> SCALAR
 
-    Internally uses `ifft2_centered()` for forward mapping and `fft2_centered()` for reverse.
+    Precision handling follows `UnaryPropagatorPrecisionMode`.
+
+    Notes:
+        - Assumes event_shape is 2D (e.g., (H, W))
+        - Internally uses fftshifted IFFT/FFT
     """
 
     def __init__(
         self,
-        shape=None,
+        event_shape: Optional[tuple[int, int]] = None,
         precision_mode: Optional[UnaryPropagatorPrecisionMode] = None,
-        dtype=np().complex128
+        dtype=np().complex64,
     ):
         super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
-        self.shape = shape
+        self.event_shape = event_shape
         self._init_rng = None
         self.x_belief = None
         self.y_belief = None
-    
-    def to_backend(self):
-        current_backend = np()
-        self.dtype = current_backend.dtype(self.dtype)
 
+    def to_backend(self):
+        self.dtype = np().dtype(self.dtype)
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
         if isinstance(mode, str):
@@ -46,33 +48,25 @@ class IFFT2DPropagator(Propagator):
         allowed = {
             UnaryPropagatorPrecisionMode.SCALAR,
             UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
+            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
         }
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for IFFT2DPropagator: {mode}")
         if hasattr(self, "_precision_mode") and self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'")
+            raise ValueError(
+                f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
+            )
         self._precision_mode = mode
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
-        if self._precision_mode in (
-            UnaryPropagatorPrecisionMode.SCALAR,
-            UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-        ):
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
             return PrecisionMode.ARRAY
-        return None
+        return PrecisionMode.SCALAR
 
     def get_output_precision_mode(self) -> Optional[PrecisionMode]:
-        if self._precision_mode in (
-            UnaryPropagatorPrecisionMode.SCALAR,
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
-        ):
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
             return PrecisionMode.ARRAY
-        return None
+        return PrecisionMode.SCALAR
 
     def set_precision_mode_forward(self):
         x_wave = self.inputs["input"]
@@ -93,7 +87,7 @@ class IFFT2DPropagator(Propagator):
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
         if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
-            msg_x = msg_x.astype(np().complex128)
+            msg_x = msg_x.astype(self.dtype)
 
         r = msg_x.data
         p = msg_y.data
@@ -131,10 +125,15 @@ class IFFT2DPropagator(Propagator):
         if self.output_message is None or self.y_belief is None:
             if self._init_rng is None:
                 raise RuntimeError("Initial RNG not configured.")
-            if self.output.precision_mode == "scalar":
-                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = True)
-            else:
-                msg = UA.random(self.shape, dtype=self.dtype, rng=self._init_rng, scalar_precision = False)
+
+            scalar = self.output.precision_mode_enum == PrecisionMode.SCALAR
+            msg = UA.random(
+                event_shape=self.event_shape,
+                batch_size=self.output.batch_size,
+                dtype=self.dtype,
+                scalar_precision=scalar,
+                rng=self._init_rng,
+            )
         else:
             msg = self.y_belief / self.output_message
 
@@ -144,10 +143,11 @@ class IFFT2DPropagator(Propagator):
         x_wave = self.inputs["input"]
         if self.output_message is None:
             raise RuntimeError("Output message missing.")
+
         self.compute_belief()
         incoming = self.input_messages[x_wave]
-        msg_in = self.x_belief / incoming
-        x_wave.receive_message(self, msg_in)
+        msg = self.x_belief / incoming
+        x_wave.receive_message(self, msg)
 
     def set_init_rng(self, rng):
         self._init_rng = rng
@@ -160,14 +160,15 @@ class IFFT2DPropagator(Propagator):
         return ifft2_centered(x)
 
     def __matmul__(self, wave: Wave) -> Wave:
-        if wave.ndim != 2:
-            raise ValueError("IFFT2DPropagator only supports 2D wave input.")
+        if len(wave.event_shape) != 2:
+            raise ValueError(f"IFFT2DPropagator only supports 2D input. Got {wave.event_shape}")
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
         self.dtype = get_complex_dtype(wave.dtype)
-        self.shape = wave.shape
-        out_wave = Wave(self.shape, dtype=self.dtype)
+        self.event_shape = wave.event_shape
+
+        out_wave = Wave(event_shape=self.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
