@@ -244,15 +244,37 @@ def square_aperture(shape, radius, center=None):
 
 def fft2_centered(x: ArrayLike) -> ArrayLike:
     """
-    Centered 2D FFT (with fftshift and ifftshift).
+    Batch-aware centered 2D FFT.
+    
+    Applies ifftshift → fft2 → fftshift over the last two axes.
+    Assumes x.shape = (B, H, W) or similar.
     """
-    return np().fft.fftshift(np().fft.fft2(np().fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(
+        np().fft.fft2(
+            np().fft.ifftshift(x, axes=(-2, -1)),
+            axes=(-2, -1),
+            norm="ortho"
+        ),
+        axes=(-2, -1)
+    )
+
 
 def ifft2_centered(x: ArrayLike) -> ArrayLike:
     """
-    Centered 2D inverse FFT (with fftshift and ifftshift).
+    Batch-aware centered 2D inverse FFT.
+    
+    Applies ifftshift → ifft2 → fftshift over the last two axes.
+    Assumes x.shape = (B, H, W) or similar.
     """
-    return np().fft.fftshift(np().fft.ifft2(np().fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(
+        np().fft.ifft2(
+            np().fft.ifftshift(x, axes=(-2, -1)),
+            axes=(-2, -1),
+            norm="ortho"
+        ),
+        axes=(-2, -1)
+    )
+
 
 def masked_random_array(support: ArrayLike, dtype=None, rng=None):
     """

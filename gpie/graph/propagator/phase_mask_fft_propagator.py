@@ -186,6 +186,11 @@ class PhaseMaskFFTPropagator(Propagator):
                 raise ValueError(
                     f"Batch size mismatch: phase_mask batch={self.phase_mask.shape[0]}, wave batch={wave.batch_size}"
                 )
+        
+        if self.phase_mask.shape[1:] != wave.event_shape:
+            raise ValueError(
+                f"phase_mask event_shape {self.phase_mask.shape[1:]} does not match wave event_shape {wave.event_shape}"
+            )
 
         out = Wave(event_shape=self.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out._set_generation(self._generation + 1)

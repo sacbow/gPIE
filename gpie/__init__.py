@@ -41,10 +41,12 @@ from .graph.prior import (
 from .graph.propagator import (
     UnitaryPropagator,
     FFT2DPropagator,
-    PhaseMaskPropagator,
+    IFFT2DPropagator,
     PhaseMaskFFTPropagator,
     AddPropagator,
     MultiplyPropagator,
+    AddConstPropagator,
+    MultiplyConstPropagator,
 )
 
 # Measurements

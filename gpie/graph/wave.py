@@ -147,7 +147,8 @@ class Wave:
         """
         # Convert child messages
         for msg in self.child_messages.values():
-            msg.to_backend()
+            if msg is not None:
+                msg.to_backend()
 
         # Convert belief if it exists
         if self.belief is not None:
