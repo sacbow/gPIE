@@ -16,6 +16,9 @@ class MultiplyConstPropagator(Propagator):
         super().__init__(input_names=("input",))
         self.const = np().asarray(const)
         self.const_dtype = self.const.dtype
+
+        # ここでは batch 情報はまだ分からないので記録しない
+        # event_shape も wave に依存するので設定しない
         self._init_rng = None
 
         abs_vals = np().abs(self.const)
@@ -23,7 +26,8 @@ class MultiplyConstPropagator(Propagator):
         self.const_safe = self.const.copy()
         self.const_safe[abs_vals < eps] = eps * np().exp(1j * np().angle(self.const_safe[abs_vals < eps]))
         self.inv_amp_sq = 1.0 / np().abs(self.const_safe) ** 2
-        self.inv_amp_sq_scalar = 1.0 / np().mean(np().abs(self.const_safe) ** 2)
+
+
 
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
         if isinstance(mode, str):
@@ -40,9 +44,6 @@ class MultiplyConstPropagator(Propagator):
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
         self.const_safe = move_array_to_current_backend(self.const_safe, dtype=self.const_dtype)
         self.inv_amp_sq = move_array_to_current_backend(self.inv_amp_sq, dtype=get_real_dtype(self.const_dtype))
-        self.inv_amp_sq_scalar = move_array_to_current_backend(
-            self.inv_amp_sq_scalar, dtype=get_real_dtype(self.const_dtype)
-        )
         self.const_dtype = self.const.dtype
 
     def set_init_rng(self, rng):
@@ -82,71 +83,59 @@ class MultiplyConstPropagator(Propagator):
             return PrecisionMode.SCALAR
         return PrecisionMode.ARRAY
 
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
-        x = inputs["input"]
-        dtype = np().result_type(x.dtype, self.const_dtype)
-        x = x.astype(dtype)
+    def _compute_forward(self, input_msg : UA) -> UA:
+        dtype = np().result_type(input_msg.dtype, self.const_dtype)
+        input_msg = input_msg.astype(dtype)
         const = self.const_safe.astype(dtype)
-        mu = x.data * const
+        mu = input_msg.data * const
+        prec = input_msg.precision(raw=False) * self.inv_amp_sq
+        msg_in = UA(mu, dtype=dtype, precision=prec)
 
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            prec = x.precision(raw=True) * self.inv_amp_sq_scalar
-            return UA(mu, dtype=dtype, precision=prec, scalar_precision=False)
-
-        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
-            prec = x.precision(raw=True) * self.inv_amp_sq
-            return UA(mu, dtype=dtype, precision=prec, scalar_precision=False)
+        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY or self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
+            return msg_in
 
         if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            prec = x.precision(raw=True) * self.inv_amp_sq
-            msg_in = UA(mu, dtype=dtype, precision=prec, scalar_precision=False)
             msg_out = self.output_message
             if msg_out is not None:
-                qy = (msg_in * msg_out.to_array_precision()).to_scalar_precision()
+                qy = (msg_in * msg_out.as_array_precision()).as_scalar_precision()
                 return qy / msg_out
             else:
-                return msg_in.to_scalar_precision()
+                return msg_in.as_scalar_precision()
 
         raise RuntimeError("Precision mode not set for forward computation.")
 
-    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+    def _compute_backward(self, output_msg: UA) -> UA:
         dtype = np().result_type(output_msg.dtype, self.const_dtype)
         const = self.const_safe.astype(dtype)
         mu = output_msg.data / const
+        prec = output_msg.precision(raw=False) / self.inv_amp_sq
+        msg_out = UA(mu, dtype=dtype, precision=prec)
 
-        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            prec = output_msg.precision(raw=True) / self.inv_amp_sq_scalar
-            return UA(mu, dtype=dtype, precision=prec, scalar_precision=True)
-
-        prec = output_msg.precision(raw=True) / self.inv_amp_sq
-        msg_array = UA(mu, dtype=dtype, precision=prec, scalar_precision=False)
+        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR or self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
+            return msg_out
 
         if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            msg_in = self.input_messages.get(self.inputs["input"]).as_array_precision()
-            qx = (msg_array * msg_in).as_scalar_precision()
-            return qx / msg_in
+            msg_in = self.input_messages.get(self.inputs["input"])
+            if msg_in is not None:
+                qx = (msg_out * msg_in.as_array_precision()).as_scalar_precision()
+                return qx / msg_in
+            else:
+                return msg_out.as_scalar_precision()
 
-        return msg_array
+        raise RuntimeError("Precision mode not set for forward computation.")
 
     def forward(self):
-        if self.output_message is None:
-            if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured.")
-            msg = UA.random(
-                self.output.event_shape,
-                batch_size=self.output.batch_size,
-                dtype=self.dtype,
-                scalar_precision=(self.output.precision_mode_enum == PrecisionMode.SCALAR),
-                rng=self._init_rng,
-            )
+        input_msg = self.input_messages[self.inputs["input"]]
+        if input_msg is None:
+            raise RuntimeError("No message to forward")
         else:
-            msg = self._compute_forward({"input": self.input_messages[self.inputs["input"]]})
-        self.output.receive_message(self, msg)
+            msg = self._compute_forward(input_msg)
+            self.output.receive_message(self, msg)
 
     def backward(self):
         if self.output_message is None:
-            raise RuntimeError("Output message missing.")
-        msg = self._compute_backward(self.output_message, exclude="input")
+            raise RuntimeError("No message to backward")
+        msg = self._compute_backward(self.output_message)
         self.inputs["input"].receive_message(self, msg)
 
     def get_sample_for_output(self, rng=None):
@@ -163,24 +152,25 @@ class MultiplyConstPropagator(Propagator):
         self.const_safe = self.const_safe.astype(self.dtype)
         self.inv_amp_sq = self.inv_amp_sq.astype(get_real_dtype(self.dtype))
 
-        if isinstance(self.const, np().ndarray) and self.const.shape != wave.shape:
-            try:
-                self.const = np().broadcast_to(self.const, wave.shape)
-                self.const_safe = np().broadcast_to(self.const_safe, wave.shape)
-                self.inv_amp_sq = np().broadcast_to(self.inv_amp_sq, wave.shape)
-            except ValueError:
-                raise ValueError(
-                    f"MultiplyConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {wave.shape}"
-                )
+        expected_shape = (wave.batch_size, *wave.event_shape)
+        try:
+            self.const = np().broadcast_to(self.const, expected_shape)
+            self.const_safe = np().broadcast_to(self.const_safe, expected_shape)
+            self.inv_amp_sq = np().broadcast_to(self.inv_amp_sq, expected_shape)
+        except ValueError:
+            raise ValueError(
+                f"MultiplyConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {expected_shape}"
+            )
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
 
-        out_wave = Wave(wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
+        out_wave = Wave(event_shape=wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
+
 
     def __repr__(self) -> str:
         mode = self.precision_mode or "unset"

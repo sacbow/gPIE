@@ -16,19 +16,6 @@ class AddConstPropagator(Propagator):
         super().__init__(input_names=("input",))
         self.const = np().asarray(const)
         self.const_dtype = self.const.dtype
-
-        if self.const.ndim == 2:
-            self.const_needs_batch = True
-            self.event_shape = self.const.shape
-        elif self.const.ndim == 3:
-            self.const_needs_batch = False
-            self.event_shape = self.const.shape[1:]
-        elif self.const.ndim == 0:  # scalar
-            self.const_needs_batch = True
-            self.event_shape = ()
-        else:
-            raise ValueError("Const must be scalar, 2D (shared), or 3D (batched).")
-
         self._init_rng = None
 
     def to_backend(self):
@@ -87,22 +74,12 @@ class AddConstPropagator(Propagator):
             self.const = np().asarray(self.const, dtype=self.dtype)
             self.const_dtype = self.const.dtype
 
-        # Broadcast const to batch if needed
-        if self.const_needs_batch:
-            B = wave.batch_size
-            self.const = np().broadcast_to(self.const, (B, *wave.event_shape))
-            self.const_dtype = self.const.dtype
-            self.const_needs_batch = False
-        else:
-            if self.const.shape[0] != wave.batch_size:
-                raise ValueError(
-                    f"Const batch size {self.const.shape[0]} does not match wave batch size {wave.batch_size}"
-                )
-        
-        if self.const.shape[1:] != wave.event_shape:
-            raise ValueError(
-                f"Const event_shape {self.const.shape[1:]} does not match wave event_shape {wave.event_shape}"
-            )
+        target_shape = (wave.batch_size, *wave.event_shape)
+
+        try:
+            self.const = np().broadcast_to(self.const, target_shape)
+        except ValueError:
+            raise ValueError(f"Const shape {self.const.shape} not broadcastable to wave shape {wave.event_shape}")
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
@@ -112,6 +89,7 @@ class AddConstPropagator(Propagator):
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
+
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"
