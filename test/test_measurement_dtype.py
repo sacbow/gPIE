@@ -51,7 +51,7 @@ class InvalidObservedMeasurement(Measurement):
 def test_same_dtype_measurement():
     wave = Wave(event_shape=(2,), dtype=onp.complex64)
     m = SameDtypeMeasurement()
-    m @ wave
+    m << wave
     assert m.input_dtype == onp.dtype(onp.complex64)
     assert m.observed_dtype == onp.dtype(onp.complex64)
 
@@ -60,7 +60,7 @@ def test_same_dtype_measurement():
 def test_real_observed_measurement():
     wave = Wave(event_shape=(4,), dtype=onp.complex128)
     m = RealObservedMeasurement()
-    m @ wave
+    m << wave
     assert m.input_dtype == onp.dtype(onp.complex128)
     assert m.observed_dtype == onp.dtype(onp.float64)
 
@@ -70,7 +70,7 @@ def test_invalid_observed_dtype():
     wave = Wave(event_shape=(1,), dtype=onp.float64)
     m = InvalidObservedMeasurement()
     with pytest.raises(TypeError, match="expects observed dtype compatible"):
-        m @ wave
+        m << wave
 
 
 def test_invalid_input_dtype():
@@ -90,13 +90,13 @@ def test_invalid_input_dtype():
     wave = Wave(event_shape=(3,), dtype=onp.int32)
     m = FloatRequiredMeasurement()
     with pytest.raises(TypeError, match="expects input dtype compatible"):
-        m @ wave
+        m << wave
 
 
 def test_observed_dtype_casting():
     wave = Wave(event_shape=(2,), dtype=onp.complex128)
     m = SameDtypeMeasurement()
-    m @ wave
+    m << wave
 
     obs_data = onp.array([[1+2j, 3+4j]], dtype=onp.complex128)
     m.set_observed(obs_data, precision=1.0)

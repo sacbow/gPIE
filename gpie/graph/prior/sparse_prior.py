@@ -86,7 +86,7 @@ class SparsePrior(Prior):
         v_post = 1 / prec_post
         m_post = v_post * (m / v)
         is_real = incoming.is_real()
-        eps = np().array(1e-8, dtype=v.dtype)
+        eps = np().array(1e-12, dtype=v.dtype)
 
         if is_real:
             slab = self.rho * (1 / np().sqrt(1 + v)) * np().exp(- m**2 /(2*(1 + v)))

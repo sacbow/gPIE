@@ -219,9 +219,7 @@ class Measurement(Factor, ABC):
         if self.input.precision_mode_enum is not None:
             self._set_precision_mode(self.input.precision_mode_enum)
     
-    def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
-        if wave != self.input:
-            return None
+    def get_input_precision_mode(self, wave : Wave) -> Optional[str]:
         return self.precision_mode
 
     def forward(self) -> None:

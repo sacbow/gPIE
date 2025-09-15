@@ -79,7 +79,7 @@ class AmplitudeMeasurement(Measurement):
         v0 = np().reciprocal(tau)
         y = self.observed.data
         v = np().reciprocal(self.observed.precision(raw=True))
-        eps = np().array(1e-8, dtype=v0.dtype)
+        eps = np().array(1e-12, dtype=v0.dtype)
 
         abs_z0 = np().abs(z0)
         abs_z0_safe = np().maximum(abs_z0, eps)
@@ -109,8 +109,6 @@ class AmplitudeMeasurement(Measurement):
             msg = UA(msg_data, dtype=self.input_dtype, precision=msg_prec)
         else:
             msg = full_msg
-            if self.precision_mode_enum == PrecisionMode.SCALAR:
-                msg = msg.as_scalar_precision()
 
         if self.old_msg is not None and self.damping > 0:
             msg = msg.damp_with(self.old_msg, alpha=self.damping)

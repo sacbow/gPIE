@@ -21,78 +21,71 @@ if has_cupy:
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_forward_backward_and_dtype_promotion(xp):
-    """Test forward/backward pass and dtype promotion."""
+def test_add_const_forward_backward_dtype(xp):
     backend.set_backend(xp)
     rng = get_rng(seed=0)
+    B, H, W = 3, 4, 4
 
-    wave = Wave(shape=(4, 4), dtype=xp.complex64)
-    output = AddConstPropagator(const=1.0) @ wave
+    x = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    output = AddConstPropagator(const=1.0) @ x
     prop = output.parent
 
-    # Prepare input message (complex64 UA)
-    ua_in = UA.random((4, 4), dtype=xp.complex64, rng=rng, scalar_precision=True)
-    prop.input_messages[wave] = ua_in
+    ua_in = UA.random((H, W), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    prop.input_messages[x] = ua_in
 
-    # Forward: should add constant, dtype promote to complex64 (no promotion needed here)
     ua_out = prop._compute_forward({"input": ua_in})
-    assert ua_out.dtype == get_lower_precision_dtype(xp.complex64, xp.float64)  # -> complex128 (numpy) or backend equivalent
+    expected_dtype = get_lower_precision_dtype(xp.complex64, xp.float64)
+    assert ua_out.dtype == expected_dtype
 
-    # Backward: subtract constant
     ua_back = prop._compute_backward(ua_out, exclude="input")
     assert xp.allclose(ua_back.data, ua_out.data - 1.0)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_broadcast_and_invalid_shape(xp):
-    """Test broadcasting of const and invalid shape error."""
+def test_add_const_broadcast_and_shape_mismatch(xp):
     backend.set_backend(xp)
+    B, H, W = 2, 3, 3
 
-    wave = Wave(shape=(2, 2), dtype=xp.float32)
-    const = xp.array([1.0])  # broadcastable scalar array
+    # Valid 2D broadcast
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.float32)
+    const = xp.ones((H, W), dtype=xp.float32)
     prop = AddConstPropagator(const=const)
-    out_wave = prop @ wave
-    assert out_wave.shape == (2, 2)
-    assert prop.const.shape == (2, 2)
+    out = prop @ wave
+    assert out.event_shape == (H, W)
+    assert out.batch_size == B
+    assert prop.const.shape == (B, H, W)
 
-    # Invalid broadcast
-    bad_const = xp.ones((3, 3))
-    prop_bad = AddConstPropagator(const=bad_const)
+    # Invalid: shape mismatch
+    bad_const = xp.ones((4, 4), dtype=xp.float32)
     with pytest.raises(ValueError):
-        _ = prop_bad @ wave
+        _ = AddConstPropagator(bad_const) @ wave
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_to_backend_transfer(xp):
-    """Test to_backend transfers const correctly between numpy/cupy."""
+def test_add_const_to_backend(xp):
     backend.set_backend(xp)
     const = np.ones((2, 2), dtype=np.float32)
     prop = AddConstPropagator(const)
-    orig_dtype = prop.const.dtype
 
-    # Switch backend
     new_backend = cp if xp is np and has_cupy else np
     backend.set_backend(new_backend)
     prop.to_backend()
 
     assert isinstance(prop.const, new_backend.ndarray)
-    assert prop.const.dtype == new_backend.dtype(orig_dtype)
+    assert prop.const.dtype == new_backend.dtype(np.float32)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_precision_mode_forward_backward(xp):
-    """Test precision mode propagation forward and backward."""
+def test_add_const_precision_forward_backward(xp):
     backend.set_backend(xp)
-    wave = Wave(shape=(2, 2), dtype=xp.float32)
+    wave = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.float32)
     wave._set_precision_mode("array")
     output = AddConstPropagator(const=1.0) @ wave
     prop = output.parent
 
-    # Forward: propagate scalar precision to output
     prop.set_precision_mode_forward()
     assert prop.precision_mode == "array"
 
-    # Manually set output precision to array, propagate backward
     prop.output._set_precision_mode("array")
     prop.set_precision_mode_backward()
     assert wave.precision_mode == "array"
@@ -100,11 +93,11 @@ def test_precision_mode_forward_backward(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_get_sample_for_output(xp):
-    """Test sample generation by adding constant."""
+def test_add_const_get_sample_for_output(xp):
     backend.set_backend(xp)
-    wave = Wave(shape=(2, 2), dtype=xp.float32)
-    sample = xp.ones((2, 2), dtype=xp.float32)
+    B, H, W = 3, 2, 2
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.float32)
+    sample = xp.ones((B, H, W), dtype=xp.float32)
     wave.set_sample(sample)
 
     output = AddConstPropagator(const=2.0) @ wave
@@ -114,11 +107,11 @@ def test_get_sample_for_output(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_repr(xp):
-    """Test __repr__ includes generation and mode."""
+def test_add_const_repr(xp):
     backend.set_backend(xp)
-    wave = Wave(shape=(2, 2), dtype=xp.float32)
+    wave = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.float32)
     output = AddConstPropagator(1.0) @ wave
     prop = output.parent
     rep = repr(prop)
     assert "AddConst" in rep
+    assert "mode=" in rep

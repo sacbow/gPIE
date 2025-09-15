@@ -1,6 +1,8 @@
 from ..wave import Wave
 from ..factor import Factor
 from ...core.backend import np
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode
 from ...core.rng_utils import get_rng
 import contextlib
 import threading
@@ -139,6 +141,17 @@ class Graph:
         for factor in self._factors:
             if factor.precision_mode is None:
                 factor._set_precision_mode("scalar")
+        # --- Step 6 : initialize messages ---
+        for wave in self._waves:
+            for factor in wave.children:
+                wave.child_messages[factor] = UA.zeros(
+                    event_shape=wave.event_shape,
+                    batch_size=wave.batch_size,
+                    dtype=wave.dtype,
+                    precision=1.0,
+                    scalar_precision=(wave.precision_mode_enum == PrecisionMode.SCALAR),
+                )
+
     
     def to_backend(self) -> None:
         """

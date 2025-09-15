@@ -32,15 +32,14 @@ def test_compressive_sensing_mse_decreases(xp):
 
     # --- 2. ユニタリ行列・マスク生成 ---
     rng = get_rng(seed=12)
-    U = random_unitary_matrix(n, rng=rng, dtype=xp.complex128)
+    U = random_unitary_matrix(n, rng=rng, dtype=xp.complex64)
     mask = random_binary_mask(n, subsampling_rate=mask_ratio, rng=rng)
 
     # --- 3. モデル定義 ---
     @model
     def compressive_sensing():
-        x = ~SparsePrior(rho=rho, event_shape=(n,), damping=0.03, label="x", dtype=xp.complex128)
-        with observe():
-            GaussianMeasurement(var=var, with_mask = True) @ (UnitaryPropagator(U) @ x)
+        x = ~SparsePrior(rho=rho, event_shape=(n,), damping=0.03, label="x", dtype=xp.complex64)
+        GaussianMeasurement(var=var, with_mask = True) << (UnitaryPropagator(U) @ x)
 
     g = compressive_sensing()
 

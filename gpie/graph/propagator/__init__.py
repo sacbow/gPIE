@@ -6,3 +6,4 @@ from .add_const_propagator import AddConstPropagator
 from .multiply_const_propagator import MultiplyConstPropagator
 from .add_propagator import AddPropagator
 from .multiply_propagator import MultiplyPropagator
+from .phase_mask_propagator import PhaseMaskPropagator

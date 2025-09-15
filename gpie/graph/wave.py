@@ -282,34 +282,15 @@ class Wave:
     def combine_child_messages(self) -> UncertainArray:
         """
         Combine all incoming messages from child factors into a single UncertainArray belief.
-
-        This operation computes the product of multiple independent Gaussian messages,
-        resulting in a new Gaussian belief. In EP or AMP-style algorithms, this corresponds
-        to fusing evidence from downstream observations or prior constraints.
-
-        Mathematically, for messages m₁, m₂, ..., mₖ with mean μᵢ and precision pᵢ:
-
-            - posterior_precision = ∑ᵢ pᵢ
-            - posterior_mean     = ∑ᵢ (pᵢ * μᵢ) / ∑ᵢ pᵢ
-
-        This operation assumes all child messages have the same shape, dtype, and precision mode,
-        which is enforced by upstream checks (e.g., `receive_message`, `assert_compatible`).
-
-        Returns:
-            UncertainArray:
-                The fused belief computed by aggregating all child messages.
-
-        Raises:
-            RuntimeError: If no child messages have been received.
+        Assumes all messages are pre-initialized (i.e., no None entries).
         """
-
         if not self.child_messages:
             raise RuntimeError("No child messages to combine.")
 
         iterator = iter(self.child_messages.values())
         first = next(iterator)
         dtype = first.dtype
-        p = first.precision(raw=True)
+        p = first.precision(raw=True).copy()
         weighted = p * first.data
 
         for ua in iterator:
@@ -319,6 +300,7 @@ class Wave:
 
         mean = weighted / p
         return UncertainArray(mean, dtype=dtype, precision=p)
+
     
 
     def set_belief(self, belief: UncertainArray) -> None:
@@ -344,7 +326,7 @@ class Wave:
         if self.parent_message is not None:
             combined = self.parent_message * child_belief
         else:
-            combined = child_belief
+            raise RuntimeError("Cannot compute belief without parent message.")
 
         self.set_belief(combined)
         return combined

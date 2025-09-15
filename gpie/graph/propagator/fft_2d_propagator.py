@@ -59,14 +59,20 @@ class FFT2DPropagator(Propagator):
         self._precision_mode = mode
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
-        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            return PrecisionMode.ARRAY
-        return PrecisionMode.SCALAR
+        if self._precision_mode is not None:
+            if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+                return PrecisionMode.ARRAY
+            else:
+                return PrecisionMode.SCALAR
+        return None
 
     def get_output_precision_mode(self) -> Optional[PrecisionMode]:
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            return PrecisionMode.ARRAY
-        return PrecisionMode.SCALAR
+        if self._precision_mode is not None:
+            if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+                return PrecisionMode.ARRAY
+            else:
+                return PrecisionMode.SCALAR
+        return None
 
     def set_precision_mode_forward(self):
         x_wave = self.inputs["input"]
@@ -129,7 +135,7 @@ class FFT2DPropagator(Propagator):
 
             scalar = self.output.precision_mode_enum == PrecisionMode.SCALAR
             msg = UA.random(
-                event_shape=self.event_shape,
+                event_shape=self.output.event_shape,
                 batch_size=self.output.batch_size,
                 dtype=self.dtype,
                 scalar_precision=scalar,

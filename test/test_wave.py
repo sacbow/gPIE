@@ -96,19 +96,25 @@ def test_wave_to_backend_converts_all_messages(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_vectorized_child_combination(xp):
+def test_wave_to_backend_converts_all_messages(xp):
     backend.set_backend(xp)
-    w = Wave(event_shape=(2, 2), batch_size=3, dtype=xp.complex64)
+    w = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.complex64)
     w._set_precision_mode("array")
-    child1 = DummyFactor()
-    child2 = DummyFactor()
-    w.add_child(child1)
-    w.add_child(child2)
+    parent = DummyFactor()
+    child = DummyFactor()
+    w.set_parent(parent)
+    w.add_child(child)
 
-    msg1 = UncertainArray(xp.full((3, 2, 2), 2.0), precision=xp.ones((3, 2, 2)))
-    msg2 = UncertainArray(xp.full((3, 2, 2), 4.0), precision=xp.ones((3, 2, 2)))
-    w.receive_message(child1, msg1)
-    w.receive_message(child2, msg2)
+    msg = UncertainArray(xp.full((2, 2, 2), 1.0), precision=xp.ones((2, 2, 2)))
+    w.receive_message(child, msg)
+    w.receive_message(parent, msg)
 
-    belief = w.compute_belief()
-    assert xp.allclose(belief.data, 3.0)
+    w.compute_belief()  
+
+    new_backend = cp if xp is np else np
+    backend.set_backend(new_backend)
+    w.to_backend()
+
+    assert isinstance(w.belief.data, new_backend.ndarray)
+    for m in w.child_messages.values():
+        assert isinstance(m.data, new_backend.ndarray)

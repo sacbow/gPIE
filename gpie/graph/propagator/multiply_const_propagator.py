@@ -16,29 +16,13 @@ class MultiplyConstPropagator(Propagator):
         super().__init__(input_names=("input",))
         self.const = np().asarray(const)
         self.const_dtype = self.const.dtype
-
-        # ここでは batch 情報はまだ分からないので記録しない
-        # event_shape も wave に依存するので設定しない
         self._init_rng = None
 
         abs_vals = np().abs(self.const)
-        eps = np().array(1e-8, dtype=abs_vals.dtype)
+        eps = np().array(1e-12, dtype=abs_vals.dtype)
         self.const_safe = self.const.copy()
         self.const_safe[abs_vals < eps] = eps * np().exp(1j * np().angle(self.const_safe[abs_vals < eps]))
-        self.inv_amp_sq = 1.0 / np().abs(self.const_safe) ** 2
-
-
-
-    def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
-        if isinstance(mode, str):
-            mode = UnaryPropagatorPrecisionMode(mode)
-        if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            raise ValueError("MultiplyConstPropagator does not support SCALAR precision mode.")
-        if self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(
-                f"Precision mode conflict for MultiplyConstPropagator: existing='{self._precision_mode}', requested='{mode}'"
-            )
-        self._precision_mode = mode
+        self.inv_amp_sq = 1 / np().abs(self.const_safe) ** 2
 
     def to_backend(self):
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
@@ -48,95 +32,111 @@ class MultiplyConstPropagator(Propagator):
 
     def set_init_rng(self, rng):
         self._init_rng = rng
+    
+    def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
+        if isinstance(mode, str):
+            mode = UnaryPropagatorPrecisionMode(mode)
 
-    def set_precision_mode_forward(self):
-        x_mode = self.inputs["input"].precision_mode_enum
-        if x_mode == PrecisionMode.SCALAR:
+        if mode not in {
+            UnaryPropagatorPrecisionMode.ARRAY,
+            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
+            UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
+        }:
+            raise ValueError(f"Unsupported precision mode for MultiplyConstPropagator: {mode}")
+
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict: existing='{self._precision_mode}', requested='{mode}'"
+            )
+        self._precision_mode = mode
+
+    def set_precision_mode_forward(self) -> None:
+        mode = self.inputs["input"].precision_mode_enum
+        if mode == PrecisionMode.SCALAR:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
+
     def set_precision_mode_backward(self):
-        y_mode = self.output.precision_mode_enum
-        x_mode = self.inputs["input"].precision_mode_enum
-        if y_mode == PrecisionMode.SCALAR:
+        input_mode = self.inputs["input"].precision_mode_enum
+        output_mode = self.output.precision_mode_enum
+        if output_mode is None or output_mode == PrecisionMode.SCALAR:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
-        elif y_mode == PrecisionMode.ARRAY:
-            if x_mode == PrecisionMode.SCALAR:
-                self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
-            else:
-                self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
+        elif input_mode == PrecisionMode.SCALAR:
+            self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
         else:
-            self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+            self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
+
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
-        if self._precision_mode in (
-            UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-            UnaryPropagatorPrecisionMode.SCALAR,
-        ):
+        if self.precision_mode_enum is None:
+            return None
+        elif self.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
             return PrecisionMode.SCALAR
-        return PrecisionMode.ARRAY
+        else:
+            return PrecisionMode.ARRAY
+
 
     def get_output_precision_mode(self) -> Optional[PrecisionMode]:
-        if self._precision_mode in (
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
-            UnaryPropagatorPrecisionMode.SCALAR,
-        ):
+        if self.precision_mode_enum is None:
+            return None
+        elif self.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
             return PrecisionMode.SCALAR
-        return PrecisionMode.ARRAY
+        else:
+            return PrecisionMode.ARRAY
 
     def _compute_forward(self, input_msg : UA) -> UA:
         dtype = np().result_type(input_msg.dtype, self.const_dtype)
         input_msg = input_msg.astype(dtype)
         const = self.const_safe.astype(dtype)
         mu = input_msg.data * const
-        prec = input_msg.precision(raw=False) * self.inv_amp_sq
-        msg_in = UA(mu, dtype=dtype, precision=prec)
+        prec = input_msg.precision(raw=True) * self.inv_amp_sq
+        return UA(mu, dtype=dtype, precision=prec)
 
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY or self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
-            return msg_in
-
-        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            msg_out = self.output_message
-            if msg_out is not None:
-                qy = (msg_in * msg_out.as_array_precision()).as_scalar_precision()
-                return qy / msg_out
-            else:
-                return msg_in.as_scalar_precision()
-
-        raise RuntimeError("Precision mode not set for forward computation.")
 
     def _compute_backward(self, output_msg: UA) -> UA:
         dtype = np().result_type(output_msg.dtype, self.const_dtype)
         const = self.const_safe.astype(dtype)
         mu = output_msg.data / const
-        prec = output_msg.precision(raw=False) / self.inv_amp_sq
-        msg_out = UA(mu, dtype=dtype, precision=prec)
-
-        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR or self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
-            return msg_out
-
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            msg_in = self.input_messages.get(self.inputs["input"])
-            if msg_in is not None:
-                qx = (msg_out * msg_in.as_array_precision()).as_scalar_precision()
-                return qx / msg_in
-            else:
-                return msg_out.as_scalar_precision()
-
-        raise RuntimeError("Precision mode not set for forward computation.")
+        prec = output_msg.precision(raw=True) / self.inv_amp_sq
+        return UA(mu, dtype=dtype, precision=prec)
 
     def forward(self):
         input_msg = self.input_messages[self.inputs["input"]]
         if input_msg is None:
             raise RuntimeError("No message to forward")
-        else:
-            msg = self._compute_forward(input_msg)
+        if self.output_message is None:
+            if self._init_rng is None:
+                raise RuntimeError("Initial RNG not configured.")
+            else:
+                scalar = self.output._precision_mode == PrecisionMode.SCALAR
+                msg = UA.random(
+                event_shape=self.output.event_shape,
+                batch_size=self.output.batch_size,
+                dtype=self.dtype,
+                scalar_precision=scalar,
+                rng=self._init_rng,
+                )
+                self.output.receive_message(self, msg)
+                return
+
+        msg = self._compute_forward(input_msg)
+        if self.output.precision_mode_enum == PrecisionMode.ARRAY:
             self.output.receive_message(self, msg)
+        else:
+            qy = (msg * self.output_message.as_array_precision()).as_scalar_precision()
+            msg_to_send = qy / self.output_message
+            self.output.receive_message(self, msg_to_send)
+        return
 
     def backward(self):
-        if self.output_message is None:
-            raise RuntimeError("No message to backward")
         msg = self._compute_backward(self.output_message)
-        self.inputs["input"].receive_message(self, msg)
+        if self.inputs["input"].precision_mode_enum == PrecisionMode.ARRAY:
+            self.inputs["input"].receive_message(self, msg)
+        else:
+            input_msg = self.input_messages[self.inputs["input"]]
+            qx = (msg * input_msg.as_array_precision()).as_scalar_precision()
+            msg_to_send = qx / msg
+            self.inputs["input"].receive_message(self, msg_to_send)
 
     def get_sample_for_output(self, rng=None):
         x = self.inputs["input"].get_sample()

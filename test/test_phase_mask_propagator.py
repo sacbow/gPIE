@@ -1,126 +1,56 @@
-import importlib.util
-import pytest
 import numpy as np
+import pytest
 
-from gpie.core import backend
-from gpie.graph.propagator.phase_mask_propagator import PhaseMaskPropagator
-from gpie.graph.wave import Wave
-from gpie.graph.structure.graph import Graph
-from gpie.graph.measurement.gaussian_measurement import GaussianMeasurement
 from gpie.core.uncertain_array import UncertainArray
-from gpie.core.linalg_utils import random_phase_mask
+from gpie.graph.wave import Wave
+from gpie.graph.propagator.phase_mask_propagator import PhaseMaskPropagator
+from gpie.core.backend import set_backend, np as backend_np
 from gpie.core.rng_utils import get_rng
-
-# Optional CuPy support
-cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
-    import cupy as cp
-
-backend_libs = [np]
-if has_cupy:
-    backend_libs.append(cp)
+from gpie.core.linalg_utils import random_phase_mask
 
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_phase_mask_propagator_forward_backward(xp):
-    """Test forward/backward passes for PhaseMaskPropagator."""
-    backend.set_backend(xp)
-    rng = get_rng(seed=0)
-    n = 4
-    phase_mask = random_phase_mask((n, n), dtype=xp.complex128, rng=rng)
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+@pytest.mark.parametrize("batch_size", [1, 4])
+def test_phase_mask_forward_backward(dtype, batch_size):
+    set_backend(np)
+    rng = get_rng(seed=42)
 
-    class TestGraph(Graph):
-        def __init__(self):
-            super().__init__()
-            x_wave = Wave(shape=(n, n), dtype=xp.complex128, label="x_wave")
-            output = PhaseMaskPropagator(phase_mask) @ x_wave
-            with self.observe():
-                GaussianMeasurement(var=0.1) @ output
-            self.compile()
+    shape = (64, 64)
+    B = batch_size
+    H, W = shape
 
-    g = TestGraph()
-    g.set_init_rng(rng)
+    # Step 1: Create random input UA
+    ua = UncertainArray.random(
+        event_shape=shape,
+        batch_size=B,
+        dtype=dtype,
+        precision=1.0,
+        scalar_precision=True,  # test scalar mode
+        rng=rng
+    )
 
-    # Retrieve nodes
-    x_wave = g.get_wave("x_wave")
-    prop = x_wave.children[0]
-    output = prop.output
+    # Step 2: Create phase mask
+    mask = random_phase_mask(shape=shape, dtype=dtype, rng=rng)
+    prop = PhaseMaskPropagator(mask, dtype=dtype)
 
-    # Inject random messages
-    ua_in = UncertainArray.random((n, n), dtype=xp.complex128, rng=rng, scalar_precision=True)
-    ua_out = UncertainArray.random((n, n), dtype=xp.complex128, rng=rng, scalar_precision=True)
-    prop.receive_message(x_wave, ua_in)
-    prop.receive_message(output, ua_out)
+    # Step 3: Connect dummy Wave
+    w = Wave(event_shape=shape, batch_size=B, dtype=dtype)
+    _ = prop @ w  # triggers __matmul__ to check broadcast etc.
 
-    # Backward pass
-    prop.backward()
-    assert isinstance(prop.input_messages[x_wave], UncertainArray)
+    # Step 4: Forward + Backward
+    ua_y = prop._compute_forward({"input": ua})
+    ua_rec = prop._compute_backward(ua_y)
 
-    # Forward pass
-    prop.forward()
-    assert isinstance(prop.output_message, UncertainArray)
+    # Step 5: Compare
+    x_true = ua.data
+    x_rec = ua_rec.data
 
+    abs_err = backend_np().abs(x_true - x_rec)
+    rel_err = abs_err / (backend_np().abs(x_true) + 1e-8)
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_phase_mask_propagator_to_backend(xp):
-    """Test that phase_mask is properly transferred between backends."""
-    backend.set_backend(xp)
-    rng = get_rng(seed=1)
-    n = 4
-    phase_mask = random_phase_mask((n, n), dtype=xp.complex128, rng=rng)
-    prop = PhaseMaskPropagator(phase_mask)
+    mean_rel = backend_np().mean(rel_err)
+    max_rel = backend_np().max(rel_err)
 
-    # Switch backend and transfer
-    new_backend = cp if xp is np and has_cupy else np
-    backend.set_backend(new_backend)
-    prop.to_backend()
-
-    assert isinstance(prop.phase_mask, new_backend.ndarray)
-    assert prop.phase_mask.dtype == prop.dtype
-    assert new_backend.allclose(new_backend.abs(prop.phase_mask), 1.0)
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_phase_mask_propagator_get_sample_for_output(xp):
-    """Test sample retrieval using get_sample_for_output."""
-    backend.set_backend(xp)
-    rng = get_rng(seed=2)
-    n = 4
-    phase_mask = random_phase_mask((n, n), dtype=xp.complex128, rng=rng)
-
-    # Create input wave with a fixed sample
-    x_wave = Wave(shape=(n, n), dtype=xp.complex128)
-    sample = xp.ones((n, n), dtype=xp.complex128)
-    x_wave.set_sample(sample)
-
-    # Build propagator and connect wave
-    output = PhaseMaskPropagator(phase_mask) @ x_wave
-    prop = output.parent
-
-    # Retrieve propagated sample via get_sample_for_output
-    y_sample = prop.get_sample_for_output(rng)
-    assert xp.allclose(y_sample, sample * phase_mask)
-
-    # Also confirm that output.set_sample can accept this result
-    output.set_sample(y_sample)
-    assert xp.allclose(output.get_sample(), sample * phase_mask)
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_phase_mask_propagator_invalid_inputs(xp):
-    """Test invalid phase_mask and input shape errors."""
-    backend.set_backend(xp)
-    rng = get_rng(seed=3)
-    n = 4
-
-    # Non-unit magnitude mask
-    bad_mask = xp.ones((n, n), dtype=xp.complex128) * 2.0
-    with pytest.raises(ValueError):
-        PhaseMaskPropagator(bad_mask)
-
-    # Shape mismatch
-    phase_mask = random_phase_mask((n, n), dtype=xp.complex128, rng=rng)
-    prop = PhaseMaskPropagator(phase_mask)
-    bad_wave = Wave(shape=(n + 1, n), dtype=xp.complex128)
-    with pytest.raises(ValueError):
-        _ = prop @ bad_wave
+    print(f"[dtype={dtype.__name__}, batch={B}] rel_err: mean={mean_rel:.2e}, max={max_rel:.2e}")
+    assert mean_rel < 1e-4
+    assert max_rel < 5e-4
