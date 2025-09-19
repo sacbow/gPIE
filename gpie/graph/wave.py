@@ -392,11 +392,19 @@ class Wave:
         return self._sample
 
     def set_sample(self, sample: NDArray) -> None:
-        """Set sample value explicitly, with shape check."""
+        """Set sample value explicitly, allowing broadcast to expected shape."""
         expected_shape = (self.batch_size,) + self.event_shape
-        if sample.shape != expected_shape:
-            raise ValueError(f"Sample shape mismatch: expected {expected_shape}, got {sample.shape}")
-        self._sample = sample
+        try:
+            # Attempt to broadcast to expected shape
+            broadcasted = np().broadcast_to(sample, expected_shape)
+        except ValueError as e:
+            raise ValueError(
+                f"Sample shape mismatch: expected broadcastable to {expected_shape}, "
+                f"but got {sample.shape}"
+            ) from e
+
+        self._sample = broadcasted.copy()
+
 
     def clear_sample(self) -> None:
         """Clear the stored sample."""

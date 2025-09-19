@@ -34,13 +34,17 @@ class BinaryPropagator(Propagator):
 
     def __init__(self, precision_mode: Optional[BPM] = None):
         super().__init__(input_names=("a", "b"), dtype=None, precision_mode=precision_mode)
+        self._init_rng = None
+    
+    def set_init_rng(self, rng):
+        self._init_rng = rng
 
     def __matmul__(self, inputs: tuple[Wave, Wave]) -> Wave:
         """
         Wire two input Wave nodes into the binary propagator.
 
         Performs:
-            - Shape compatibility check
+            - Shape compatibility check (batch_size and event_shape)
             - dtype resolution (real → real, mixed → complex)
             - Connection of inputs and output
             - Graph generation index setup
@@ -62,14 +66,24 @@ class BinaryPropagator(Propagator):
         self.add_input("a", a)
         self.add_input("b", b)
 
+        # Resolve output dtype (e.g., float + complex → complex)
         self.dtype = get_lower_precision_dtype(a.dtype, b.dtype)
 
-        if a.shape != b.shape:
-            raise ValueError(f"Input shapes must match: got {a.shape} and {b.shape}")
+        # Check compatibility: batch size and event shape
+        if a.batch_size != b.batch_size:
+            raise ValueError(f"Batch size mismatch: {a.batch_size} vs {b.batch_size}")
+        if a.event_shape != b.event_shape:
+            raise ValueError(f"Event shape mismatch: {a.event_shape} vs {b.event_shape}")
 
-        output = Wave(a.shape, dtype=self.dtype)
+        # Create output wave
+        output = Wave(
+            event_shape=a.event_shape,
+            batch_size=a.batch_size,
+            dtype=self.dtype
+        )
         self.connect_output(output)
         return output
+
 
     def _set_precision_mode(self, mode: BPM) -> None:
         allowed = {
@@ -77,6 +91,7 @@ class BinaryPropagator(Propagator):
             BPM.ARRAY,
             BPM.SCALAR_AND_ARRAY_TO_ARRAY,
             BPM.ARRAY_AND_SCALAR_TO_ARRAY,
+            BPM.ARRAY_AND_ARRAY_TO_SCALAR
         }
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for BinaryPropagator: '{mode}'")
@@ -92,63 +107,43 @@ class BinaryPropagator(Propagator):
         a_mode = self.inputs["a"].precision_mode_enum
         b_mode = self.inputs["b"].precision_mode_enum
 
-        if a_mode is None and b_mode is None:
-            return
-
-        if a_mode is not None and b_mode is not None:
-            if a_mode == b_mode == PrecisionMode.SCALAR:
-                self._set_precision_mode(BPM.SCALAR)
-            elif a_mode == b_mode == PrecisionMode.ARRAY:
-                self._set_precision_mode(BPM.ARRAY)
-            elif a_mode == PrecisionMode.SCALAR and b_mode == PrecisionMode.ARRAY:
-                self._set_precision_mode(BPM.SCALAR_AND_ARRAY_TO_ARRAY)
-            elif a_mode == PrecisionMode.ARRAY and b_mode == PrecisionMode.SCALAR:
-                self._set_precision_mode(BPM.ARRAY_AND_SCALAR_TO_ARRAY)
-            else:
-                raise ValueError(f"Invalid combination of precision modes: {a_mode}, {b_mode}")
+        if a_mode == PrecisionMode.SCALAR and b_mode == PrecisionMode.SCALAR:
+            self._set_precision_mode(BPM.SCALAR)
+        if a_mode == PrecisionMode.SCALAR and b_mode == PrecisionMode.ARRAY:
+            self._set_precision_mode(BPM.SCALAR_AND_ARRAY_TO_ARRAY)
+        if a_mode == PrecisionMode.ARRAY and b_mode == PrecisionMode.SCALAR:
+            self._set_precision_mode(BPM.ARRAY_AND_SCALAR_TO_ARRAY)
         else:
-            if a_mode == PrecisionMode.ARRAY or b_mode == PrecisionMode.ARRAY:
-                self._set_precision_mode(BPM.ARRAY)
-            elif a_mode == PrecisionMode.SCALAR or b_mode == PrecisionMode.SCALAR:
-                return
+            return
 
     def set_precision_mode_backward(self):
         z_mode = self.output.precision_mode_enum
         a_mode = self.inputs["a"].precision_mode_enum
         b_mode = self.inputs["b"].precision_mode_enum
 
-        if z_mode is None:
-            return
-
-        if z_mode == PrecisionMode.SCALAR:
-            self._set_precision_mode(BPM.SCALAR)
-            return
-
         if z_mode == PrecisionMode.ARRAY:
-            if a_mode is None and b_mode is None:
-                self._set_precision_mode(BPM.ARRAY)
-            elif a_mode is None and b_mode == PrecisionMode.SCALAR:
-                self._set_precision_mode(BPM.ARRAY_AND_SCALAR_TO_ARRAY)
-            elif a_mode == PrecisionMode.SCALAR and b_mode is None:
+            if a_mode == PrecisionMode.SCALAR:
                 self._set_precision_mode(BPM.SCALAR_AND_ARRAY_TO_ARRAY)
-            elif a_mode == PrecisionMode.SCALAR and b_mode == PrecisionMode.SCALAR:
-                raise ValueError(
-                    "Inconsistent state: output is array but both inputs are scalar."
-                )
-            elif a_mode == PrecisionMode.ARRAY or b_mode == PrecisionMode.ARRAY:
-                return
-
+            elif b_mode == PrecisionMode.SCALAR:
+                self._set_precision_mode(BPM.ARRAY_AND_SCALAR_TO_ARRAY)
+            else:
+                self._set_precision_mode(BPM.ARRAY)
+        
         else:
-            raise ValueError(
-                f"Unhandled combination in set_precision_mode_backward(): "
-                f"a={a_mode}, b={b_mode}, output={z_mode}"
-            )
+            if a_mode == PrecisionMode.ARRAY or b_mode == PrecisionMode.ARRAY:
+                self._set_precision_mode(BPM.ARRAY_AND_ARRAY_TO_SCALAR)
+            else:
+                self._set_precision_mode(BPM.SCALAR)
+
 
     def get_output_precision_mode(self) -> Optional[str]:
         mode = self.precision_mode_enum
         if mode is None:
             return None
-        return "scalar" if mode == BPM.SCALAR else "array"
+        if mode == BPM.SCALAR or mode == BPM.ARRAY_AND_ARRAY_TO_SCALAR:
+            return "scalar"
+        else:
+            return "array"
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[str]:
         mode = self.precision_mode_enum
@@ -157,7 +152,7 @@ class BinaryPropagator(Propagator):
 
         if mode == BPM.SCALAR:
             return "scalar"
-        if mode == BPM.ARRAY:
+        if mode == BPM.ARRAY or mode == BPM.ARRAY_AND_ARRAY_TO_SCALAR:
             return "array"
         if mode == BPM.SCALAR_AND_ARRAY_TO_ARRAY:
             return "scalar" if wave is self.inputs["a"] else "array"

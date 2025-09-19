@@ -31,16 +31,18 @@ class AddPropagator(BinaryPropagator):
         """
         Combine two input beliefs into a posterior for Z = A + B.
 
+        If precision mode is ARRAY_AND_ARRAY_TO_SCALAR, the resulting fused message
+        is projected into scalar precision using the current output message (if available).
+
         Args:
             inputs (dict): Contains "a" and "b" UncertainArray inputs.
 
         Returns:
             UncertainArray: Fused belief for z with updated mean and precision.
-    
+
         Raises:
             RuntimeError: If any input message is missing.
         """
-
         a = inputs.get("a")
         b = inputs.get("b")
 
@@ -50,9 +52,25 @@ class AddPropagator(BinaryPropagator):
         a, b = a.astype(self.dtype), b.astype(self.dtype)
 
         mu = a.data + b.data
-        precision = 1.0 / (1.0 / a.precision(raw = True) + 1.0 / b.precision(raw = True))
+        prec = 1.0 / (1.0 / a.precision(raw=True) + 1.0 / b.precision(raw=True))
+        msg = UA(mu, dtype=self.dtype, precision=prec)
 
-        return UA(mu, dtype=self.dtype, precision=precision)
+        mode = self.precision_mode_enum
+        if mode == BPM.ARRAY_AND_ARRAY_TO_SCALAR:
+            if self.output_message is None:
+                return UA.random(
+                    event_shape=a.event_shape,
+                    batch_size=a.batch_size,
+                    dtype=self.dtype,
+                    precision=1.0,
+                    scalar_precision=True,
+                    rng=self._init_rng
+                )
+            proj = (msg * self.output_message.as_array_precision()).as_scalar_precision()
+            return proj / self.output_message
+
+        return msg
+
 
 
     def _compute_backward(self, output: UA, exclude: str) -> UA:

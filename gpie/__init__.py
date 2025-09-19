@@ -46,8 +46,7 @@ from .graph.propagator import (
     AddPropagator,
     MultiplyPropagator,
     AddConstPropagator,
-    MultiplyConstPropagator,
-    PhaseMaskPropagator
+    MultiplyConstPropagator
 )
 
 # Measurements
