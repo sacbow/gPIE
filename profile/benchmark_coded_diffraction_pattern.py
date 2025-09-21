@@ -2,21 +2,18 @@ import argparse
 from gpie.core.rng_utils import get_rng
 import numpy as np
 from numpy.typing import NDArray
-from gpie import Graph, GaussianPrior, fft2, PhaseMaskPropagator, AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2,  AmplitudeMeasurement, pmse
 from gpie.core.linalg_utils import random_phase_mask
 from benchmark_utils import run_with_timer, profile_with_cprofile, set_backend
 
-# ==== CDIモデル定義 ====
-class CodedDiffractionPattern(Graph):
-    def __init__(self, noise: float, n_measurements: int, phase_masks: list[NDArray], shape: tuple[int, int]):
-        super().__init__()
-        x = ~GaussianPrior(shape=shape, label="sample", dtype=np.complex64)
-        for i in range(n_measurements):
-            y = PhaseMaskPropagator(phase_masks[i]) @ x
-            z = fft2(y)
-            with self.observe():
-                _ = AmplitudeMeasurement(var=noise, damping=0.3) @ z
-        self.compile()
+# ==== CDI definition ====
+@model
+def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: list[NDArray], shape: tuple[int, int]):
+    x = ~GaussianPrior(event_shape=shape, label="sample", dtype=np.complex64)
+    for i in range(n_measurements):
+        y = phase_masks[i] * x
+        z = fft2(y)
+        AmplitudeMeasurement(var=noise, damping=0.3) << z
 
 
 def build_cdp_graph(H=512, W=512, noise=1e-4, n_measurements=4):
@@ -24,7 +21,7 @@ def build_cdp_graph(H=512, W=512, noise=1e-4, n_measurements=4):
     shape = (H, W)
     phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
 
-    g = CodedDiffractionPattern(noise=noise, n_measurements=n_measurements, phase_masks=phase_masks, shape=shape)
+    g = coded_diffraction_pattern(noise=noise, n_measurements=n_measurements, phase_masks=phase_masks, shape=shape)
     g.set_init_rng(get_rng(seed=1))
     g.generate_sample(rng=get_rng(seed=999), update_observed=True)
     return g

@@ -1,25 +1,23 @@
 import argparse
 from benchmark_utils import run_with_timer, profile_with_cprofile, set_backend
-from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, mse
+from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, mse
+from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
 import numpy as np
 
-class HolographyGraph(Graph):
-    def __init__(self, var, ref_wave, support):
-        super().__init__()
-        obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
-        with self.observe():
-            _ = AmplitudeMeasurement(var=var) @ (fft2(ref_wave + obj))
-        self.compile()
+@model
+def holography(support, var, ref_wave):
+    obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
+    AmplitudeMeasurement(var=var) << (fft2(ref_wave + obj))
 
 def build_holography_graph(H=512, W=512, noise=1e-4):
-    rng = np.random.default_rng(seed=42)
+    rng = get_rng(seed=42)
     support_x = circular_aperture((H,W), radius=0.2, center=(-0.2, -0.2))
     data_x = masked_random_array(support_x, dtype=np.complex64, rng=rng)
     support_y = circular_aperture((H,W), radius=0.2, center=(0.2, 0.2))
-    g = HolographyGraph(var=noise, ref_wave=data_x, support=support_y)
-    g.set_init_rng(np.random.default_rng(11))
-    g.generate_sample(rng=np.random.default_rng(9), update_observed=True)
+    g = holography(support = support_y, var = noise, ref_wave = data_x)
+    g.set_init_rng(get_rng(11))
+    g.generate_sample(rng=get_rng(9), update_observed=True)
     return g
 
 def run_holography(n_iter=100, verbose=False):

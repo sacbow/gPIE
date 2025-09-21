@@ -66,9 +66,9 @@ python gpie/profile/benchmark_random_cdi.py --backend cupy --profile
 
 | Model                  | NumPy (CPU) | CuPy 1st Run (GPU) | CuPy 2nd Run (GPU) | Speedup (Stable) |
 |------------------------ |------------ |------------------- |------------------- |----------------- |
-| **Holography**         | 3.1 s       | 0.6 s             | 0.6 s             | ~5×             |
-| **Random CDI**         | 5.1 s       | 1.3 s             | 0.8 s             | ~6×             |
-| **CDP (4 measurements)** | 14.3 s     | 5.9 s             | 1.5 s             | ~9×             |
+| **Holography**         | 2.5 s       | 2.2 s             | 0.5 s             | ~5×             |
+| **Random CDI**         | 5.8 s       | 2.5 s             | 0.8 s             | ~7×             |
+| **CDP (4 measurements)** | 15.0 s     | 3.3 s             | 1.3 s             | ~10×             |
 
 ## Profiling insights
 
