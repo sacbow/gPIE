@@ -7,7 +7,7 @@ from gpie.graph.wave import Wave
 from gpie.graph.propagator.add_propagator import AddPropagator
 from gpie.core.uncertain_array import UncertainArray as UA
 from gpie.core.rng_utils import get_rng
-from gpie.core.types import get_lower_precision_dtype, BinaryPropagatorPrecisionMode as BPM
+from gpie.core.types import get_lower_precision_dtype, PrecisionMode, BinaryPropagatorPrecisionMode as BPM
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -26,14 +26,14 @@ def test_forward_backward_and_dtype(xp):
     backend.set_backend(xp)
     rng = get_rng(seed=0)
 
-    a_wave = Wave(shape=(2, 2), dtype=xp.complex64)
-    b_wave = Wave(shape=(2, 2), dtype=xp.complex128)
+    a_wave = Wave(event_shape=(2, 2), dtype=xp.complex64)
+    b_wave = Wave(event_shape=(2, 2), dtype=xp.complex128)
     out_wave = AddPropagator() @ (a_wave, b_wave)
     prop = out_wave.parent
 
     # Generate input messages
-    ua_a = UA.random((2, 2), dtype=xp.complex64, rng=rng, scalar_precision=True)
-    ua_b = UA.random((2, 2), dtype=xp.complex128, rng=rng, scalar_precision=True)
+    ua_a = UA.random(event_shape=(2, 2), dtype=xp.complex64, rng=rng, scalar_precision=True)
+    ua_b = UA.random(event_shape=(2, 2), dtype=xp.complex128, rng=rng, scalar_precision=True)
     prop.input_messages[a_wave] = ua_a
     prop.input_messages[b_wave] = ua_b
     prop.dtype = get_lower_precision_dtype(ua_a.dtype, ua_b.dtype)
@@ -61,14 +61,14 @@ def test_backward_with_mixed_precision_projection(xp):
     backend.set_backend(xp)
     rng = get_rng(seed=1)
 
-    a_wave = Wave((2, 2), dtype=xp.float32)
-    b_wave = Wave((2, 2), dtype=xp.float32)
+    a_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    b_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
     out_wave = AddPropagator() @ (a_wave, b_wave)
     prop = out_wave.parent
 
-    ua_a = UA.random((2, 2), dtype=xp.float32, rng=rng, scalar_precision=True)
-    ua_b = UA.random((2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
-    ua_out = UA.random((2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
+    ua_a = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=True)
+    ua_b = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
+    ua_out = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
 
     prop.input_messages[a_wave] = ua_a
     prop.input_messages[b_wave] = ua_b
@@ -89,8 +89,8 @@ def test_backward_with_mixed_precision_projection(xp):
 def test_get_sample_for_output_and_repr(xp):
     """Test sample generation and __repr__ formatting."""
     backend.set_backend(xp)
-    a_wave = Wave((2, 2), dtype=xp.float32)
-    b_wave = Wave((2, 2), dtype=xp.float32)
+    a_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    b_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
     a_wave.set_sample(xp.ones((2, 2), dtype=xp.float32))
     b_wave.set_sample(2 * xp.ones((2, 2), dtype=xp.float32))
 
@@ -109,8 +109,8 @@ def test_get_sample_for_output_and_repr(xp):
 def test_forward_backward_missing_inputs(xp):
     """Test runtime errors when inputs/messages are missing."""
     backend.set_backend(xp)
-    a_wave = Wave((2, 2), dtype=xp.float32)
-    b_wave = Wave((2, 2), dtype=xp.float32)
+    a_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    b_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
     out_wave = AddPropagator() @ (a_wave, b_wave)
     prop = out_wave.parent
 
@@ -120,8 +120,48 @@ def test_forward_backward_missing_inputs(xp):
 
     # Missing wave in backward raises
     with pytest.raises(RuntimeError):
-        prop._compute_backward(UA.random((2, 2), dtype=xp.float32, rng=get_rng()), exclude="c")
+        prop._compute_backward(UA.random(event_shape=(2, 2), dtype=xp.float32, rng=get_rng()), exclude="c")
 
     # Missing input message in backward raises
     with pytest.raises(RuntimeError):
-        prop._compute_backward(UA.random((2, 2), dtype=xp.float32, rng=get_rng()), exclude="a")
+        prop._compute_backward(UA.random(event_shape=(2, 2), dtype=xp.float32, rng=get_rng()), exclude="a")
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_forward_with_array_and_array_to_scalar_mode(xp):
+    """Test AddPropagator forward projection in ARRAY_AND_ARRAY_TO_SCALAR mode."""
+    backend.set_backend(xp)
+    rng = get_rng(seed=42)
+
+    a_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    b_wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    out_wave = AddPropagator() @ (a_wave, b_wave)
+    prop = out_wave.parent
+    prop.set_init_rng(rng)
+    prop._precision_mode = BPM.ARRAY_AND_ARRAY_TO_SCALAR
+
+    # --------------------
+    # Case 1: output_message is None → returns UA.random(...)
+    # --------------------
+    ua_a = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
+    ua_b = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=False)
+    out = prop._compute_forward({"a": ua_a, "b": ua_b})
+
+    assert isinstance(out, UA)
+    assert out.precision_mode == PrecisionMode.SCALAR
+    assert out.data.shape == (1, 2, 2)
+    assert xp.isfinite(out.data).all()
+
+    # --------------------
+    # Case 2: output_message is defined → uses projection logic
+    # --------------------
+    # Manually set output_message to some scalar precision UA
+    output_belief = UA.random(event_shape=(2, 2), dtype=xp.float32, rng=rng, scalar_precision=True)
+    prop.output_message = output_belief
+
+    out2 = prop._compute_forward({"a": ua_a, "b": ua_b})
+
+    # Expected: (msg * output_message) projected to scalar, then divided by output_message
+    # We'll just check shape, dtype, and that scalar projection happened
+    assert isinstance(out2, UA)
+    assert out2.precision_mode == PrecisionMode.SCALAR
+    assert out2.data.shape == (1, 2, 2)

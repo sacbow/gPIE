@@ -24,7 +24,7 @@ if has_cupy:
 def test_dtype_inference_from_input_dtype(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,), dtype=xp.complex64)
-    m = AmplitudeMeasurement(var=1e-2) @ wave
+    m = AmplitudeMeasurement(var=1e-2) << wave
     assert m.input_dtype == xp.dtype(xp.complex64)
     assert m.observed_dtype == xp.dtype(xp.float32)
 
@@ -34,7 +34,7 @@ def test_generate_and_update_observed(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.complex128)
     wave.set_sample(xp.ones((1, 2, 2), dtype=xp.complex128))
-    m = AmplitudeMeasurement(var=1e-3) @ wave
+    m = AmplitudeMeasurement(var=1e-3) << wave
 
     rng = get_rng(seed=42)
     m._generate_sample(rng)
@@ -52,7 +52,7 @@ def test_set_observed_with_mask_scalar_precision(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.complex64)
     wave.set_sample(xp.ones((1, 2, 2), dtype=xp.complex64))
-    m = AmplitudeMeasurement(var=0.5, precision_mode="scalar") @ wave
+    m = AmplitudeMeasurement(var=0.5, precision_mode="scalar") << wave
 
     data = xp.array([[1.0, 2.0], [3.0, 4.0]], dtype=xp.float32).reshape(1, 2, 2)
     mask = xp.array([[True, False], [True, False]], dtype=bool).reshape(1, 2, 2)
@@ -68,7 +68,7 @@ def test_set_observed_with_mask_scalar_precision(xp):
 def test_set_observed_invalid_dtype_raises(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,), dtype=xp.complex64)
-    meas = AmplitudeMeasurement(var=0.1) @ wave
+    meas = AmplitudeMeasurement(var=0.1) << wave
 
     obs = xp.array([[1.0 + 2.0j, 3.0 + 4.0j]], dtype=xp.complex64)
     with pytest.raises(TypeError):
@@ -81,7 +81,7 @@ def test_compute_message_and_shapes(xp):
     wave = Wave(event_shape=(2, 2), dtype=xp.complex64)
     wave.set_sample(xp.ones((1, 2, 2), dtype=xp.complex64))
     
-    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar") @ wave
+    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar") << wave
 
     m._generate_sample(get_rng(seed=0))
     m.update_observed_from_sample()

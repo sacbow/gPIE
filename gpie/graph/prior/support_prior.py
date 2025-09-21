@@ -33,7 +33,7 @@ class SupportPrior(Prior):
     def __init__(
         self,
         support: Any,  # backend ndarray (bool)
-        event_shape: tuple[int, ...],
+        event_shape: tuple[int, ...] = None,
         *,
         batch_size: int = 1,
         dtype: np().dtype = np().complex64,
@@ -56,7 +56,10 @@ class SupportPrior(Prior):
         """
         if support.dtype != bool:
             raise ValueError("Support mask must be a boolean array.")
-
+        
+        #infer event_shape from support if none
+        if event_shape is None:
+            event_shape = support.shape
         expected_shape = (batch_size,) + event_shape
 
         # Accept (event_shape,) and broadcast if needed

@@ -23,7 +23,7 @@ def test_graph():
         x = ~SparsePrior(rho=0.1, event_shape=(32,), damping=0.03, label="x", dtype=np.complex64)
         U = random_unitary_matrix(32, dtype=np.complex64)
         with observe():
-            GaussianMeasurement(var=1e-3) @ (UnitaryPropagator(U) @ x)
+            GaussianMeasurement(var=1e-3) << (UnitaryPropagator(U) @ x)
     return cs_model()
 
 # --- Backends and Layouts ---

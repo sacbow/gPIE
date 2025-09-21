@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gpie import Graph, GaussianPrior, fft2, PhaseMaskPropagator, AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
 from gpie.core.linalg_utils import random_phase_mask
 import sys
 import os
@@ -15,20 +15,13 @@ RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-class CodedDiffractionPattern(Graph):
-    """
-    A factor graph model for Coded Diffraction Pattern (CDP).
-    Each measurement applies a random phase mask followed by FFT and amplitude-only observation.
-    """
-    def __init__(self, noise, n_measurements, phase_masks, shape):
-        super().__init__()
-        x = ~GaussianPrior(shape=shape, label="sample", dtype=np.complex64)
-        for i in range(n_measurements):
-            y = PhaseMaskPropagator(phase_masks[i]) @ x
-            z = fft2(y)
-            with self.observe():
-                AmplitudeMeasurement(var=noise, damping=0.3) @ z
-        self.compile()
+@model
+def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
+    x = ~GaussianPrior(event_shape=shape, label="sample", dtype = np.complex64)
+    for i in range(n_measurements):
+        y = phase_masks[i] * x
+        z = fft2(y)
+        AmplitudeMeasurement(var=noise, damping=0.3) << z
 
 
 def build_cdp_graph(H=256, W=256, noise=1e-4, n_measurements=4):
@@ -36,7 +29,7 @@ def build_cdp_graph(H=256, W=256, noise=1e-4, n_measurements=4):
     shape = (H, W)
     phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
 
-    g = CodedDiffractionPattern(noise=noise, n_measurements=n_measurements, phase_masks=phase_masks, shape=shape)
+    g = coded_diffraction_pattern(shape = shape, n_measurements = n_measurements, phase_masks = phase_masks, noise = noise)
     g.set_init_rng(np.random.default_rng(seed=1))
 
     amp = load_sample_image("camera", shape=shape)
@@ -63,15 +56,15 @@ def run_cdp(n_iter=100, size=256, n_measurements=4, save_graph=False):
 
     g.run(n_iter=n_iter, callback=monitor)
 
-    est = g.get_wave("sample").compute_belief().data
+    est = g.get_wave("sample").compute_belief().data[0]
     amp = np.abs(est)
-    phase = np.angle(est) * (np.abs(true_x) > 1e-5)
+    phase = np.angle(est) * (np.abs(true_x[0]) > 1e-5)
 
     plt.imsave(f"{RESULTS_DIR}/reconstructed_amp.png", amp, cmap="gray")
     plt.imsave(f"{RESULTS_DIR}/reconstructed_phase.png", phase, cmap="twilight")
 
-    true_amp = np.abs(true_x)
-    true_phase = np.angle(true_x) * (true_amp > 1e-5)
+    true_amp = np.abs(true_x[0])
+    true_phase = np.angle(true_x[0]) * (true_amp > 1e-5)
     plt.imsave(f"{RESULTS_DIR}/true_amp.png", true_amp, cmap="gray")
     plt.imsave(f"{RESULTS_DIR}/true_phase.png", true_phase, cmap="twilight")
 

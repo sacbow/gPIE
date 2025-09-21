@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, mse
+from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, mse
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
 
 import sys
@@ -17,16 +17,13 @@ RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-class HolographyGraph(Graph):
+@model
+def holography(support, var, ref_wave):
     """
-    A factor graph model for inline holography using EP.
+    A model for inline holography using EP.
     """
-    def __init__(self, var, ref_wave, support):
-        super().__init__()
-        obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
-        with self.observe():
-            AmplitudeMeasurement(var=var, damping = 0.05) @ (fft2(ref_wave + obj))
-        self.compile()
+    obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
+    AmplitudeMeasurement(var=var, damping = 0.05) << (fft2(ref_wave + obj))
 
 
 def build_holography_graph(H=512, W=512, noise=1e-4,
@@ -54,7 +51,7 @@ def build_holography_graph(H=512, W=512, noise=1e-4,
 
 
     # Construct graph
-    g = HolographyGraph(var=noise, ref_wave=data_x, support=support_y)
+    g = holography(support = support_y, var = noise, ref_wave = data_x)
     g.set_init_rng(np.random.default_rng(11))
     g.get_wave("obj").set_sample(data_y)  # Inject ground truth
     g.generate_sample(rng=np.random.default_rng(9), update_observed=True)
@@ -84,7 +81,7 @@ def run_holography(n_iter=100, obj_image=None, ref_image=None,
     g.run(n_iter=n_iter, callback=monitor)
 
     # Save output images
-    est = obj_wave.compute_belief().data
+    est = obj_wave.compute_belief().data[0]
     amp = np.abs(est)
     phase = np.angle(est) * (np.abs(true_obj) > 1e-5)
 

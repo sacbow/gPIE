@@ -24,7 +24,7 @@ if has_cupy:
 def test_basic_set_observed(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.float32)
-    meas = GaussianMeasurement(var=0.5) @ wave
+    meas = GaussianMeasurement(var=0.5) << wave
 
     obs = xp.ones((1, 2, 2), dtype=xp.float32)
     meas.set_observed(obs)
@@ -38,7 +38,7 @@ def test_basic_set_observed(xp):
 def test_set_observed_with_mask_and_array_precision(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.float64)
-    meas = GaussianMeasurement(var=2.0, precision_mode="array") @ wave
+    meas = GaussianMeasurement(var=2.0, precision_mode="array") << wave
 
     data = xp.ones((1, 2, 2), dtype=xp.float64)
     mask = xp.array([[[1, 0], [0, 1]]], dtype=bool)
@@ -54,7 +54,7 @@ def test_generate_sample_and_promote_to_observed(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.float32)
     wave.set_sample(xp.zeros((1, 2, 2), dtype=xp.float32))
-    meas = GaussianMeasurement(var=0.1) @ wave
+    meas = GaussianMeasurement(var=0.1) << wave
 
     rng = get_rng(seed=123)
     meas._generate_sample(rng)
@@ -68,7 +68,7 @@ def test_generate_sample_and_promote_to_observed(xp):
 def test_set_observed_dtype_cast(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,), dtype=xp.float32)
-    meas = GaussianMeasurement(var=0.1) @ wave
+    meas = GaussianMeasurement(var=0.1) << wave
 
     obs = xp.array([[1.0, 2.0]], dtype=xp.float32)
     meas.set_observed(obs)
@@ -80,7 +80,7 @@ def test_set_observed_dtype_cast(xp):
 def test_set_observed_invalid_dtype_raises(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,), dtype=xp.float32)
-    meas = GaussianMeasurement(var=0.1) @ wave
+    meas = GaussianMeasurement(var=0.1) << wave
 
     obs = xp.array([[1.0 + 2.0j, 3.0 + 4.0j]], dtype=xp.complex64)
     with pytest.raises(TypeError):
@@ -91,7 +91,7 @@ def test_set_observed_invalid_dtype_raises(xp):
 def test_set_observed_batched_false(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,), dtype=xp.float32)
-    meas = GaussianMeasurement(var=0.1) @ wave
+    meas = GaussianMeasurement(var=0.1) << wave
 
     obs = xp.array([1.0, 2.0], dtype=xp.float32)
     meas.set_observed(obs, batched=False)

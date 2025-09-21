@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, pmse
+from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, pmse
 from gpie.core.linalg_utils import circular_aperture, random_phase_mask
 
 import os
@@ -19,18 +19,12 @@ RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-class StructuredRandomCDI(Graph):
-    """
-    Factor graph for Structured Random Matrix CDI with multiple FFT layers.
-    """
-    def __init__(self, support, n_layers, phase_masks, var):
-        super().__init__()
-        x = ~SupportPrior(support=support, label="sample", dtype=np.complex64)
-        for i in range(n_layers):
-            x = fft2(phase_masks[i] * x)
-        with self.observe():
-            AmplitudeMeasurement(var=var, damping=0.3) @ x
-        self.compile()
+@model
+def random_structured_cdi(support, n_layers, phase_masks, var):
+    x = ~SupportPrior(support=support, label="sample", dtype=np.complex64)
+    for i in range(n_layers):
+        x = fft2(phase_masks[i] * x)
+    AmplitudeMeasurement(var=var, damping=0.4) << x
 
 
 def build_random_cdi_graph(H=256, W=256, var=1e-4, support_radius=0.3, n_layers=2):
@@ -45,7 +39,7 @@ def build_random_cdi_graph(H=256, W=256, var=1e-4, support_radius=0.3, n_layers=
     obj *= support
 
     phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_layers)]
-    g = StructuredRandomCDI(support=support, n_layers=n_layers, phase_masks=phase_masks, var=var)
+    g = random_structured_cdi(support = support, n_layers = n_layers, phase_masks = phase_masks, var = var)
     g.set_init_rng(np.random.default_rng(seed=1))
     g.get_wave("sample").set_sample(obj)
     g.generate_sample(rng=np.random.default_rng(seed=999), update_observed=True)
@@ -65,7 +59,7 @@ def run_random_cdi(n_iter=100, size=256, n_layers=2, support_radius=0.3, save_gr
 
     g.run(n_iter=n_iter, callback=monitor)
 
-    est = g.get_wave("sample").compute_belief().data
+    est = g.get_wave("sample").compute_belief().data[0]
     amp = np.abs(est)
     phase = np.angle(est) * (np.abs(true_obj) > 1e-5)
 

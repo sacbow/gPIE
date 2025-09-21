@@ -2,10 +2,10 @@ import pytest
 import numpy as np
 import importlib.util
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, GaussianMeasurement, PhaseMaskPropagator
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
 from gpie.core import backend
 from gpie.core.rng_utils import get_rng
-from gpie.core.linalg_utils import random_normal_array, random_phase_mask
+from gpie.core.linalg_utils import random_normal_array
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -31,8 +31,8 @@ def test_coded_diffraction_model_reconstruction(xp):
     backend.set_backend(xp)
     rng = get_rng(seed=123)
 
-    shape = (128,128)
-    n_measurements = 3
+    shape = (64,64)
+    n_measurements = 4
     dtype = xp.complex64
     noise = 1e-4
 
@@ -56,7 +56,7 @@ def test_coded_diffraction_model_reconstruction(xp):
         history.append(err)
 
 
-    g.run(n_iter=200, callback=monitor)
+    g.run(n_iter=100, callback=monitor)
     assert len(g.get_wave("obj").children) == n_measurements
     assert history[-1] < 1e-3
 

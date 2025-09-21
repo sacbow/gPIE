@@ -54,7 +54,7 @@ class ConstWave(Prior):
             raise ValueError(f"Input data shape {arr.shape} is incompatible with batch_size={batch_size}, event_shape={event_shape}")
 
         self._data = arr
-        self.large_value = get_real_dtype(dtype)(large_value)
+        self.large_value = np().array(large_value, get_real_dtype(dtype))
 
         super().__init__(
             event_shape=event_shape,

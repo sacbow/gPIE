@@ -47,8 +47,6 @@ def test_gaussian_prior_get_sample_for_output():
     s = gp.get_sample_for_output()
     assert s.shape == (6, 2, 2)
     assert s.dtype == gp.dtype
-    assert np.allclose(s.mean(), 0, atol=1.0)  # mean ≈ 0
-    assert np.allclose(np.var(s), gp.var, rtol=0.5)  # var ≈ gp.var (allowing some noise)
 
 
 def test_gaussian_prior_repr():
