@@ -61,7 +61,7 @@ gpie/
 - Built-in **sampling** and **expectation propagation** based on topological sort
 - Visual graph inspection via `graph.visualize()`
 
-## What's New (v0.2)
+## What's New (v0.1)
 
 - **Drastically Simplified Model Definition**
 Define complex probabilistic models with minimal code using the new @model decorator.
