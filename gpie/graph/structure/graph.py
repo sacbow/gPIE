@@ -1,8 +1,12 @@
 from ..wave import Wave
 from ..factor import Factor
+from ...core.backend import np
+from ...core.uncertain_array import UncertainArray as UA
+from ...core.types import PrecisionMode
 from ...core.rng_utils import get_rng
 import contextlib
 import threading
+from typing import Literal, Optional
 
 _current_graph = threading.local()
 
@@ -48,7 +52,6 @@ class Graph:
         self._factors = set()
         self._nodes_sorted = None
         self._nodes_sorted_reverse = None
-
         self._rng = get_rng()  # default RNG for sampling
     
     @contextlib.contextmanager
@@ -138,73 +141,32 @@ class Graph:
         for factor in self._factors:
             if factor.precision_mode is None:
                 factor._set_precision_mode("scalar")
-
-        # --- Step 6: Finalize wave structure ---
+        # --- Step 6 : initialize messages ---
         for wave in self._waves:
-            if hasattr(wave, "finalize_structure"):
-                wave.finalize_structure()
+            for factor in wave.children:
+                wave.child_messages[factor] = UA.zeros(
+                    event_shape=wave.event_shape,
+                    batch_size=wave.batch_size,
+                    dtype=wave.dtype,
+                    precision=1.0,
+                    scalar_precision=(wave.precision_mode_enum == PrecisionMode.SCALAR),
+                )
+
     
     def to_backend(self) -> None:
         """
         Move all graph data (Waves, Factors, and their internal arrays) to the current backend (NumPy or CuPy),
-        explicitly converting samples and observed values to avoid implicit conversion errors.
+        and resync RNGs. Sample arrays and observed values are delegated to node-local logic.
         """
-        from ...core.backend import np
         from ...core.rng_utils import get_rng
-        import importlib
 
-        has_cupy = importlib.util.find_spec("cupy") is not None
-        if has_cupy:
-            import cupy as cp
-
-        # Waves: belief, samples, etc.
+        # Waves
         for wave in self._waves:
-            if hasattr(wave, "to_backend"):
-                wave.to_backend()
+            wave.to_backend()
 
-            # Explicitly handle wave._sample conversion
-            if hasattr(wave, "_sample") and wave._sample is not None:
-                if has_cupy and isinstance(wave._sample, (cp.ndarray,)):
-                    if np().__name__ == "numpy":  # CuPy→NumPy
-                        wave._sample = wave._sample.get()
-                    else:  # CuPy→CuPy (dtype sync)
-                        wave._sample = cp.asarray(wave._sample, dtype=wave.dtype)
-                else:
-                    if np().__name__ == "cupy":  # NumPy→CuPy
-                        wave._sample = cp.asarray(wave._sample)
-                    else:  # NumPy→NumPy (dtype sync)
-                        wave._sample = np().asarray(wave._sample, dtype=wave.dtype)
-
-        # Factors: Prior, Measurement, Propagators, etc.
+        # Factors (Prior, Measurement, Propagator etc.)
         for factor in self._factors:
-            if hasattr(factor, "to_backend"):
-                factor.to_backend()
-
-            # Measurement-specific: observed/sample arrays
-            if hasattr(factor, "observed") and factor.observed is not None:
-                factor.observed.to_backend()
-
-            if hasattr(factor, "_sample") and factor._sample is not None:
-                if has_cupy and isinstance(factor._sample, (cp.ndarray,)):
-                    if np().__name__ == "numpy":
-                        factor._sample = factor._sample.get()
-                    else:
-                        factor._sample = cp.asarray(factor._sample, dtype=factor.expected_observed_dtype)
-                else:
-                    if np().__name__ == "cupy":
-                        factor._sample = cp.asarray(factor._sample)
-                    else:
-                        factor._sample = np().asarray(factor._sample, dtype=factor.expected_observed_dtype)
-
-        # RNG sync
-        self._rng = get_rng()
-        for factor in self._factors:
-            if hasattr(factor, "_init_rng"):
-                factor._init_rng = get_rng()
-        for wave in self._waves:
-            if hasattr(wave, "_init_rng"):
-                wave._init_rng = get_rng()
-
+            factor.to_backend()
 
     
     def get_wave(self, label: str):
@@ -238,7 +200,7 @@ class Graph:
         for node in self._nodes_sorted_reverse:
             node.backward()
 
-    def run(self, n_iter=10, callback=None, rng=None, verbose=False):
+    def run(self, n_iter=10, callback=None, verbose=False):
         """
         Run multiple rounds of belief propagation with optional progress bar.
 
@@ -248,7 +210,6 @@ class Graph:
             rng (np.random.Generator or None): Optional RNG.
             verbose (bool): Whether to show progress bar (requires tqdm).
         """
-        rng = rng or self._rng
 
         if verbose:
             try:
@@ -267,27 +228,32 @@ class Graph:
                 callback(self, t)
 
 
-    def generate_sample(self, rng=None, update_observed: bool = True):
+    def generate_sample(self, rng=None, update_observed: bool = True, mask: Optional[np().ndarray] = None):
         """
         Generate a full sample from the generative model defined by the graph.
 
         Args:
-            rng (np.random.Generator or None): RNG used to sample latent variables.
-            update_observed (bool): If True, automatically update observed data
-                                for all Measurement nodes based on the sampled latent state.
+            rng: RNG used for latent and observed sampling (optional).
+            update_observed: If True, observed data is updated from the sample.
+            mask: Optional mask to apply to Measurement nodes during observation update.
         """
+        rng = rng or get_rng()
 
-        if rng is None:
-            rng = self._rng
-
+        # 1. Generate latent samples
         for node in self._nodes_sorted:
-            if hasattr(node, "_generate_sample"):
-                if node._sample is None:
-                    node._generate_sample(rng)
+            if isinstance(node, Wave):
+                node._generate_sample(rng=rng)
+
+        # 2. Generate noisy observed samples
+        for meas in self._factors:
+            if hasattr(meas, "_generate_sample") and callable(meas._generate_sample):
+                meas._generate_sample(rng)
+
+        # 3. Promote to observed (with optional mask)
         if update_observed:
-            for factor in self._factors:
-                if hasattr(factor, "update_observed_from_sample"):
-                    factor.update_observed_from_sample()
+            for meas in self._factors:
+                if hasattr(meas, "update_observed_from_sample"):
+                    meas.update_observed_from_sample(mask=mask)
 
 
 
@@ -321,94 +287,25 @@ class Graph:
         print(f"- {len(self._factors)} Factor nodes")
     
 
-    def visualize(self, output_path="graph.html"):
+    def to_networkx(self) -> "nx.DiGraph":
         import networkx as nx
-        from networkx.drawing.nx_agraph import graphviz_layout
-        from bokeh.plotting import figure, show, save, output_file
-        from bokeh.models import ColumnDataSource, LabelSet, Arrow, NormalHead, CDSView, BooleanFilter
-        from bokeh.io import output_notebook
-        from bokeh.io.export import export_png
-        import os
 
-        output_notebook()
-
-        # === 1. ノードとエッジの収集 ===
-        nodes = []
-        edges = []
-
-        for node in list(self._waves) + list(self._factors):
-            nid = id(node)
-            label = getattr(node, "label", None) or node.__class__.__name__
-            ntype = "wave" if node in self._waves else "factor"
-            nodes.append((nid, {"label": label, "type": ntype}))
-
-            if ntype == "factor":
-                for wave in node.inputs.values():
-                    edges.append((id(wave), nid))
-                if node.output:
-                    edges.append((nid, id(node.output)))
-
-        # === 2. グラフ構築 & レイアウト ===
         G = nx.DiGraph()
-        G.add_nodes_from(nodes)
-        G.add_edges_from(edges)
-        pos = graphviz_layout(G, prog="dot")
+        for wave in self._waves:
+            G.add_node(id(wave), label=wave.label or "Wave", type="wave", ref=wave)
+        for factor in self._factors:
+            G.add_node(id(factor), label=factor.label or factor.__class__.__name__, type="factor", ref=factor)
+            for wave in factor.inputs.values():
+                G.add_edge(id(wave), id(factor))
+            if factor.output:
+                G.add_edge(id(factor), id(factor.output))
+        return G
 
-        # === 3. ノード属性をBokeh用に整形 ===
-        node_x, node_y, node_type, node_label, node_color = [], [], [], [], []
-
-        for nid, attrs in nodes:
-            x, y = pos[nid]
-            node_x.append(x)
-            node_y.append(-y)
-            node_type.append(attrs["type"])
-            node_label.append(attrs["label"])
-            node_color.append("skyblue" if attrs["type"] == "wave" else "lightgreen")
-
-        source = ColumnDataSource(data=dict(
-            x=node_x, y=node_y, type=node_type, label=node_label, color=node_color
-        ))
-
-        # === 4. View 定義 ===
-        is_wave = [t == "wave" for t in node_type]
-        is_factor = [t == "factor" for t in node_type]
-        wave_view = CDSView(filter=BooleanFilter(is_wave))
-        factor_view = CDSView(filter=BooleanFilter(is_factor))
-
-        # === 5. プロット作成 ===
-        p = figure(title="Computational Factor Graph",
-               tools="pan,reset,zoom_in,zoom_out,save",
-               width=800, height=600)
-
-        p.scatter(x='x', y='y', source=source, size=18,
-              marker='circle', color='skyblue', legend_label='Wave', view=wave_view)
-
-        p.scatter(x='x', y='y', source=source, size=18,
-              marker='square', color='lightgreen', legend_label='Factor', view=factor_view)
-
-        labels = LabelSet(x="x", y="y", text="label", source=source,
-                      text_align="center", text_baseline="bottom",
-                      text_font_size="11pt", y_offset=12)
-        p.add_layout(labels)
-
-        # エッジ
-        for src, tgt in edges:
-            if src in pos and tgt in pos:
-                x0, y0 = pos[src]
-                x1, y1 = pos[tgt]
-                p.add_layout(Arrow(end=NormalHead(size=6),
-                               x_start=x0, y_start=-y0,
-                               x_end=x1, y_end=-y1,
-                               line_color="gray", line_width=1.5, line_alpha=0.4))
-
-        p.axis.visible = False
-        p.grid.visible = False
-        p.legend.visible = False
-
-        # === 6. 画像ファイルに保存 ===
-        from pathlib import Path
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        output_file(str(output_path))
-        save(p)
+    def visualize(
+        self,
+        backend: str = "bokeh",
+        layout: str = "graphviz",
+        output_path: Optional[str] = None
+        ):
+        from .visualization import visualize_graph
+        return visualize_graph(self, backend=backend, layout=layout, output_path=output_path)

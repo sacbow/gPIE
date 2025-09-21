@@ -3,6 +3,7 @@ import numpy as np
 import importlib.util
 
 from gpie.core import backend
+from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import (
     reduce_precision_to_scalar,
     complex_normal_random_array,
@@ -34,13 +35,42 @@ if has_cupy:
 @pytest.mark.parametrize("xp", backend_libs)
 def test_reduce_precision_to_scalar_valid_and_invalid(xp):
     backend.set_backend(xp)
-    arr = xp.array([1.0, 2.0, 4.0])
-    scalar = reduce_precision_to_scalar(arr)
-    expected = 1.0 / xp.mean(1.0 / arr)
-    assert np.isclose(scalar, expected)
+
+    # --- arra-precision, one batch ---
+    arr_scalar = xp.array([[1.0, 2.0, 4.0]])
+    scalar = reduce_precision_to_scalar(arr_scalar)
+    expected_scalar = xp.array([[1.0 / xp.mean(1.0 / arr_scalar)]])
+    assert xp.allclose(scalar, expected_scalar)
 
     with pytest.raises(ValueError):
         reduce_precision_to_scalar(xp.array([1.0, -1.0]))
+
+    # --- Batched case ---
+    arr_batch = xp.array([
+        [1.0, 2.0, 4.0],    # harmonic mean ≈ 1.714
+        [1.0, 1.0, 1.0],    # harmonic mean = 1.0
+        [2.0, 2.0, 2.0]     # harmonic mean = 2.0
+    ])
+    reduced = reduce_precision_to_scalar(arr_batch)
+
+    expected = xp.array([
+        1.0 / xp.mean(1.0 / arr_batch[0]),
+        1.0 / xp.mean(1.0 / arr_batch[1]),
+        1.0 / xp.mean(1.0 / arr_batch[2]),
+    ])
+    assert reduced.shape == (3,)
+    assert xp.allclose(reduced, expected, atol=1e-6)
+
+
+    # --- Batched case with invalid input ---
+    with pytest.raises(ValueError):
+        arr_invalid = xp.array([
+            [1.0, 2.0, -1.0],
+            [1.0, 1.0, 1.0]
+        ])
+        reduce_precision_to_scalar(arr_invalid)
+
+
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -57,7 +87,7 @@ def test_complex_normal_random_array_warns_and_shape(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_random_normal_array_real_and_complex_and_invalid(xp):
     backend.set_backend(xp)
-    rng = np.random.default_rng(0)
+    rng = get_rng(0)
     c = random_normal_array((3,), dtype=xp.complex128, rng=rng)
     assert xp.iscomplexobj(c)
 

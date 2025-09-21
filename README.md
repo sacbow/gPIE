@@ -10,7 +10,6 @@ gpie/
 │ ├── __init__.py
 │ ├── core/ # Core data structures and utilities
 │ │ ├── uncertain_array.py
-│ │ ├── uncertain_array_tensor.py
 │ │ ├── types.py
 │ │ ├── linalg_utils.py
 │ │ ├── rng_utils.py
@@ -62,6 +61,33 @@ gpie/
 - Built-in **sampling** and **expectation propagation** based on topological sort
 - Visual graph inspection via `graph.visualize()`
 
+## What's New (v0.2)
+
+- **Drastically Simplified Model Definition**
+Define complex probabilistic models with minimal code using the new @model decorator.
+For example, a full random structured CDI model is just:
+```bash
+  @model
+  def random_structured_cdi(support, phase_masks, noise_var):
+      x = ~SupportPrior(support=support, label="sample", dtype=np.complex64)
+      for phase_mask in phase_masks:
+          x = fft2(phase_mask * x)
+      AmplitudeMeasurement(var=noise_var, damping=0.3) << x
+```
+
+- **Flexible and High-Quality Graph Visualization**
+gPIE now supports full visual inspection of factor graphs with:
+
+> Layout engines: Choose between networkx (fast, layoutable) and graphviz (high-quality, canonical).
+
+> Rendering backends: Visualize with either matplotlib (static) or bokeh (interactive HTML).
+
+Usage:
+```bash
+  graph.visualize(layout="graphviz", backend="bokeh")
+```
+
+
 ## Tutorials & Notebooks
 A set of demonstration notebooks is available under:
 ``
@@ -104,9 +130,10 @@ This project has been tested on **Python 3.10.5**.
 | Package        | Version     | Used for                          |
 |----------------|-------------|-----------------------------------|
 | `cupy`         | ≥13.5.0     | GPU backend acceleration          |
-| `bokeh`        | ≥3.7.3      | Interactive graph visualization    |
-| `networkx`     | ≥3.3        | Graph structure modeling          |
-| `pygraphviz`   | ≥1.10       | Graphviz-based visualization       |
+| `matplotlib`   | ≥3.10.5     | Static visualization    |
+| `bokeh`        | ≥3.7.3      | Interactive visualization    |
+| `networkx`     | ≥3.3        | Graph structure layouting          |
+| `pygraphviz`   | ≥1.10       |  Graph structure layouting        |
 | `graphviz`     | system pkg  | Required by `pygraphviz` (native) |
 
 > **Notes:**
@@ -140,8 +167,10 @@ This will allow you to make changes to the source code without reinstalling the 
 This project uses `pytest` for unit testing. To run the full test suite:
 
 ```bash
-pytest -v --cov=test --cov-report=term-missing
+pytest test/ --cov=gpie --cov-report=term-missing
 ```
+
+As of the latest release, the test coverage is approximately 87%, covering both CPU and GPU (CuPy) backends.
 
 ##  License
 

@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 SAMPLE_DATA_DIR = ROOT_DIR / "examples" / "sample_data"
 
 
-def load_sample_image(name="cameraman", shape=(512, 512), save_dir=Path("examples/sample_data")) -> np.ndarray:
+def load_sample_image(name="cameraman", shape=(512, 512), save_dir=SAMPLE_DATA_DIR) -> np.ndarray:
     """
     Load and normalize a sample image from skimage.data.
 

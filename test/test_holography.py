@@ -2,7 +2,7 @@ import importlib.util
 import pytest
 import numpy as np
 
-from gpie import Graph, SupportPrior, fft2, AmplitudeMeasurement, mse
+from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, mse
 from gpie.core import backend
 from gpie.graph.wave import Wave
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
@@ -19,46 +19,37 @@ if has_cupy:
     backend_libs.append(cp)
 
 
-class Holography(Graph):
-    """Graph model for holography reconstruction."""
-    def __init__(self, var: float, ref_wave, support, dtype = np.complex128):
-        super().__init__()
-        obj = ~SupportPrior(support=support, label="obj", dtype = dtype)
-        with self.observe():
-            meas = AmplitudeMeasurement(var=var) @ (fft2(ref_wave + obj))
-        self.compile()
+@model
+def holography_model(var, ref_wave, support, dtype=np.complex64):
+    """gPIE holography model with DSL-based graph definition."""
+    obj = ~SupportPrior(event_shape = ref_wave.shape, support=support, label="obj", dtype=dtype)
+    AmplitudeMeasurement(var=var) << fft2(ref_wave + obj)
+    return 
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-@pytest.mark.parametrize("obj_dtype", [np.complex128, np.complex64])  # test lower precision prior
+@pytest.mark.parametrize("obj_dtype", [np.complex128, np.complex64])
 def test_holography_reconstruction(xp, obj_dtype):
-    """Test holography graph with numpy/cupy and varying prior dtype precision."""
     backend.set_backend(xp)
     rng = get_rng(seed=42)
 
-    H, W = 64, 64  # reduced size for test speed
+    H, W = 64, 64
     shape = (H, W)
     noise = 1e-4
 
-    # Prepare support masks and data
-    support_x = circular_aperture(shape=shape, radius=0.2, center=(-0.2, -0.2))
-    data_x = masked_random_array(support_x, dtype=xp.complex128, rng=rng)
-    support_y = circular_aperture(shape=shape, radius=0.2, center=(0.2, 0.2))
+    # Generate true object and support
+    support_x = circular_aperture(shape, radius=0.2, center=(-0.2, -0.2))
+    support_y = circular_aperture(shape, radius=0.2, center=(0.2, 0.2))
+    ref_wave = masked_random_array(support_x, dtype=xp.complex128, rng=rng)
 
-    # Build holography graph
-    g = Holography(var=noise, ref_wave=data_x, support=support_y, dtype = obj_dtype)
-
-    # Ensure prior wave dtype matches requested obj_dtype (complex64 for low-precision test)
-    obj_wave = g.get_wave("obj")
-    assert obj_wave.dtype == xp.dtype(obj_dtype)
-
-    # Initialize RNGs and samples
+    # Build graph via @model
+    g = holography_model(var=noise, ref_wave=ref_wave, support=support_y, dtype=obj_dtype)
     g.set_init_rng(get_rng(seed=11))
     g.generate_sample(rng=get_rng(seed=9), update_observed=True)
 
-    true_obj = obj_wave.get_sample()
+    true_obj = g.get_wave("obj").get_sample()
 
-    # Run inference and monitor error decay
+    # Inference loop with MSE monitoring
     def monitor(graph, t):
         x = graph.get_wave("obj").compute_belief().data
         err = mse(x, true_obj)
@@ -67,18 +58,14 @@ def test_holography_reconstruction(xp, obj_dtype):
 
     g.run(n_iter=50, callback=monitor, verbose=False)
 
-    # Final reconstruction error should be small
-    recon_obj = obj_wave.compute_belief().data
-    final_err = mse(recon_obj, true_obj)
+    recon = g.get_wave("obj").compute_belief().data
+    final_err = mse(recon, true_obj)
     assert final_err < 1e-3
-
-    # Confirm dtype propagation (low precision prior is preserved or lowered)
-    assert recon_obj.dtype == xp.dtype(obj_dtype)
+    assert recon.dtype == xp.dtype(obj_dtype)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_holography_to_backend(xp):
-    """Test holography graph CPU construction then GPU transfer (if cupy available)."""
     backend.set_backend(np)
     rng = get_rng(seed=0)
 
@@ -87,17 +74,15 @@ def test_holography_to_backend(xp):
     support = circular_aperture(shape=shape, radius=0.3)
     ref_wave = masked_random_array(support, dtype=np.complex128, rng=rng)
 
-    # Build on CPU
-    g = Holography(var=1e-4, ref_wave=ref_wave, support=support)
+    g = holography_model(var=1e-4, ref_wave=ref_wave, support=support)
 
-    # Transfer graph to GPU if available
+    # GPU transfer
     if xp is cp:
         backend.set_backend(cp)
         g.to_backend()
-        for wave in g._waves:
-            assert wave.dtype == cp.complex128
+        for w in g._waves:
+            assert w.dtype == cp.complex64
 
-    # Run a quick inference step (backend-aware execution)
     g.set_init_rng(get_rng(seed=1))
     g.generate_sample(rng=get_rng(seed=2), update_observed=True)
     g.run(n_iter=5, verbose=False)

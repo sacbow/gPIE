@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gpie import Graph, SparsePrior, GaussianMeasurement, fft2, mse
+from gpie import model, SparsePrior, GaussianMeasurement, fft2, mse
 from gpie.core.linalg_utils import random_binary_mask
 import sys
 import os
@@ -36,18 +36,15 @@ def build_compressed_sensing_graph(shape, rho=0.1, var=1e-4, subsample_ratio=0.3
     mask = random_binary_mask(shape, subsampling_rate=subsample_ratio, rng=rng)
 
     # Define graph
-    class CompressedSensingGraph(Graph):
-        def __init__(self):
-            super().__init__()
-            x = ~SparsePrior(rho=rho, shape=shape, damping=0.03, label="x", dtype=np.complex64)
-            with self.observe():
-                GaussianMeasurement(var=var, mask=mask) @ fft2(x)
-            self.compile()
+    @model
+    def compressed_sensing(rho, shape, var, mask):
+        x = ~SparsePrior(rho=rho, event_shape=shape, damping=0.03, label="x", dtype=np.complex64)
+        GaussianMeasurement(var=var, with_mask = True) << fft2(x)
 
-    g = CompressedSensingGraph()
+    g = compressed_sensing(rho = rho, shape = shape, var = var, mask = mask)
     g.set_init_rng(np.random.default_rng(seed=1))
     g.get_wave("x").set_sample(sparse_img)
-    g.generate_sample(rng=np.random.default_rng(seed=9), update_observed=True)
+    g.generate_sample(rng=np.random.default_rng(seed=9), update_observed=True, mask = mask)
     return g, sparse_img
 
 
@@ -66,7 +63,7 @@ def run_cs(n_iter=100, rho=0.1, size=512, subsample_rate=0.3, image_name="camera
 
     g.run(n_iter=n_iter, callback=monitor)
 
-    est_x = g.get_wave("x").compute_belief().data
+    est_x = g.get_wave("x").compute_belief().data[0]
     est_img = est_x.reshape((size, size)).real
 
     # Save images

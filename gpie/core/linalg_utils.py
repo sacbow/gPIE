@@ -4,24 +4,31 @@ from .rng_utils import get_rng, normal, choice, shuffle, uniform
 import warnings
 
 
-def reduce_precision_to_scalar(precision_array):
+def reduce_precision_to_scalar(precision_array: np().ndarray) -> np().ndarray | float:
     """
-    Reduce a precision array to an equivalent scalar precision
-    using harmonic mean of variances.
+    Reduce precision array to scalar precision (or per-batch scalar precision).
 
-    This is used to summarize spatially varying precision into a single scalar value,
-    often needed when combining messages in approximate inference.
+    Uses harmonic mean of variances:
+        scalar_prec = 1 / mean(1 / p)
 
     Args:
-        precision_array (np.ndarray): Elementwise precision (positive)
+        precision_array: The full precision array (shape: (N, ...) or (...))
+        vectorize: Whether the array is batched (i.e. first dim is batch_size)
 
     Returns:
-        float: Scalar precision value
+        If vectorize = False: scalar float
+        If vectorize = True: np.ndarray of shape (batch_size,)
     """
-    precision_array = np().asarray(precision_array, dtype=np().float64)
+    precision_array = np().asarray(precision_array, dtype=np().float32)
+
     if np().any(precision_array <= 0):
         raise ValueError("Precision values must be positive.")
-    return 1.0 / np().mean(1.0 / precision_array)
+
+    # Harmonic mean over event_shape axis (i.e., from axis=1 onward)
+    inv_var = 1.0 / precision_array
+    harmonic_mean = 1.0 / np().mean(inv_var, axis=tuple(range(1, precision_array.ndim)))
+    return harmonic_mean
+
 
 
 def complex_normal_random_array(shape, dtype=None, rng=None):
@@ -237,15 +244,37 @@ def square_aperture(shape, radius, center=None):
 
 def fft2_centered(x: ArrayLike) -> ArrayLike:
     """
-    Centered 2D FFT (with fftshift and ifftshift).
+    Batch-aware centered 2D FFT.
+    
+    Applies ifftshift → fft2 → fftshift over the last two axes.
+    Assumes x.shape = (B, H, W) or similar.
     """
-    return np().fft.fftshift(np().fft.fft2(np().fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(
+        np().fft.fft2(
+            np().fft.ifftshift(x, axes=(-2, -1)),
+            axes=(-2, -1),
+            norm="ortho"
+        ),
+        axes=(-2, -1)
+    )
+
 
 def ifft2_centered(x: ArrayLike) -> ArrayLike:
     """
-    Centered 2D inverse FFT (with fftshift and ifftshift).
+    Batch-aware centered 2D inverse FFT.
+    
+    Applies ifftshift → ifft2 → fftshift over the last two axes.
+    Assumes x.shape = (B, H, W) or similar.
     """
-    return np().fft.fftshift(np().fft.ifft2(np().fft.ifftshift(x), norm="ortho"))
+    return np().fft.fftshift(
+        np().fft.ifft2(
+            np().fft.ifftshift(x, axes=(-2, -1)),
+            axes=(-2, -1),
+            norm="ortho"
+        ),
+        axes=(-2, -1)
+    )
+
 
 def masked_random_array(support: ArrayLike, dtype=None, rng=None):
     """

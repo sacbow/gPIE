@@ -13,7 +13,7 @@ def fft2(x: Wave, *, label: str = None) -> Wave:
     Returns:
         Wave: Wave in frequency domain.
     """
-    if x.ndim != 2:
+    if len(x.event_shape) != 2:
         raise ValueError(f"fft2 expects 2D input, got ndim={x.ndim}")
     y = FFT2DPropagator(dtype=x.dtype) @ x
     if label:
@@ -32,7 +32,7 @@ def ifft2(x: Wave, *, label: str = None) -> Wave:
     Returns:
         Wave: Wave in spatial domain.
     """
-    if x.ndim != 2:
+    if len(x.event_shape) != 2:
         raise ValueError(f"ifft2 expects 2D input, got ndim={x.ndim}")
     y = IFFT2DPropagator(dtype=x.dtype) @ x
     if label:

@@ -29,10 +29,10 @@ def test_graph_generate_sample_updates_waves_and_measurements(xp):
     class TestGraph(Graph):
         def __init__(self):
             super().__init__()
-            x = ~GaussianPrior(shape = (4,))
+            x = ~GaussianPrior(event_shape = (4,))
             y = UnitaryPropagator(random_unitary_matrix(4, rng=rng)) @ x
             with self.observe():
-                meas = GaussianMeasurement(var=0.1) @ y
+                meas = GaussianMeasurement(var=0.1) << y
             self.compile()
 
     g = TestGraph()
@@ -56,4 +56,4 @@ def test_graph_generate_sample_updates_waves_and_measurements(xp):
     for factor in g._factors:
         if hasattr(factor, "observed"):
             assert factor.observed is not None
-            assert factor.observed.data.shape == wave.shape  # matching shape
+            assert factor.observed.event_shape == wave.event_shape  # matching shape

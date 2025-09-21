@@ -1,8 +1,9 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Optional, Union
 from .wave import Wave
 from ..core.uncertain_array import UncertainArray
 from ..core.types import PrecisionMode
+from ..core.backend import np
 
 
 class Factor(ABC):
@@ -150,6 +151,8 @@ class Factor(ABC):
             name (str): Name/key to refer to this input (e.g., "x", "lhs").
             wave (Wave): Wave instance to connect.
         """
+        if name in self.inputs:
+            raise KeyError(f"Input name '{name}' is already registered.")
         self.inputs[name] = wave
         self.input_messages[wave] = None
         wave.add_child(self)
@@ -163,6 +166,8 @@ class Factor(ABC):
         Args:
             wave (Wave): Output Wave node to connect.
         """
+        if self.output is not None:
+            raise ValueError(f"Output wave is already connected: {self.output}")
         self.output = wave
         max_gen = max(
             (w._generation for w in self.inputs.values() if w._generation is not None),
@@ -190,9 +195,21 @@ class Factor(ABC):
         else:
             raise ValueError("Received message from unconnected Wave.")
 
-    def generate_sample(self):
+    def get_sample_for_output(self, rng) -> np().ndarray:
         """
-        Generate a sample on the output Wave (if applicable).
+        Optionally return a sample corresponding to this factor's generative distribution.
 
-        Subclasses like `Prior` or `Propagator`
+        This method is only expected to be implemented by factors that serve as
+        generative sources (e.g., Prior, Propagator).
+
+        Measurement factors (which have no output Wave) should NOT implement this method.
+
+        If not overridden, calling this will raise an informative error.
+
+        Returns:
+            np().ndarray: A sampled array matching output Wave's shape and dtype.
+
+        Raises:
+            NotImplementedError: If the factor does not support generative sampling.
         """
+        raise NotImplementedError(f"{type(self).__name__} does not implement `get_sample_for_output()`.")

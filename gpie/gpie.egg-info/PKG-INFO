@@ -25,7 +25,6 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
  │
  ├── core/               # Core data structures and utilities
  │ ├── uncertain_array.py
- │ ├── uncertain_array_tensor.py
  │ ├── types.py
  │ ├── linalg_utils.py
  │ ├── rng_utils.py       # Random number utilities (added recently)
@@ -52,7 +51,6 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
 - **Expectation Propagation (EP)** on factor graphs.
 - **Wave multiplication** factor for modeling probe × object coupling in ptychography.
 - **UncertainArray abstraction** for representing complex Gaussian distributions
-- Batch support via `UncertainArrayTensor`
 - NumPy/CuPy backend support: switch seamlessly between CPU and GPU with:
 ```bash
   import numpy as np, cupy as cp, gpie

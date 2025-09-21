@@ -52,27 +52,39 @@ class Prior(Factor, ABC):
 
     def __init__(
         self,
-        shape: tuple[int, ...],
-        dtype: np().dtype = np().complex128,
+        event_shape: tuple[int, ...],
+        *,
+        batch_size: int = 1,
+        dtype: np().dtype = np().complex64,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
+        """
+        Args:
+            event_shape: Shape of each atomic variable (excluding batch dimension)
+            batch_size: Number of independent samples to generate (default: 1)
+            dtype: Data type of the variable (default: np().complex64)
+            precision_mode: Optional precision mode to enforce ('scalar' or 'array')
+            label: Optional label for the generated Wave (for debugging/visualization)
+        """
+
         super().__init__()
-        self.shape: tuple[int, ...] = shape
-        self.dtype: np().dtype = dtype
+        self.event_shape = event_shape
+        self.batch_size = batch_size
+        self.dtype = dtype
         self._init_rng: Optional[Any] = None
 
         if precision_mode is not None:
             self._set_precision_mode(precision_mode)
 
-        wave = Wave(shape, dtype=dtype, precision_mode=precision_mode, label=label)
+        wave = Wave(
+            event_shape=event_shape,
+            batch_size=batch_size,
+            dtype=dtype,
+            precision_mode=precision_mode,
+            label=label
+        )
         self.connect_output(wave)
-    
-    def to_backend(self) -> None:
-        """Synchronize dtype with current backend."""
-        current_backend = np()
-        if self.dtype is not None:
-            self.dtype = current_backend.dtype(self.dtype)
 
 
     def set_precision_mode_backward(self) -> None:
@@ -111,11 +123,13 @@ class Prior(Factor, ABC):
             scalar_precision = self._precision_mode == PrecisionMode.SCALAR
 
             msg = UncertainArray.random(
-                shape=self.shape,
+                event_shape=self.event_shape,
+                batch_size=self.batch_size,
                 dtype=self.dtype,
-                rng=self._init_rng,
                 scalar_precision=scalar_precision,
+                rng=self._init_rng,
             )
+
         else:
             msg = self._compute_message(self.output_message)
 
@@ -131,18 +145,5 @@ class Prior(Factor, ABC):
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
         """
         Compute the message based on incoming observation (used in structured priors).
-        """
-        pass
-
-    @abstractmethod
-    def get_sample_for_output(self, rng) -> np().ndarray:
-        """
-        Return a sample corresponding to this prior's generative distribution.
-
-        This is used by `Wave._generate_sample()` when sampling from the prior.
-
-        Returns:
-            np().ndarray: A sampled array from this prior's distribution, matching
-                          shape and dtype.
         """
         pass

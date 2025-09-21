@@ -31,6 +31,7 @@ class BinaryPropagatorPrecisionMode(Enum):
     ARRAY = "array"
     SCALAR_AND_ARRAY_TO_ARRAY = "scalar/array to array"
     ARRAY_AND_SCALAR_TO_ARRAY = "array/scalar to array"
+    ARRAY_AND_ARRAY_TO_SCALAR = "array/array to scalar"
 
     def __str__(self) -> str:
         return self.value

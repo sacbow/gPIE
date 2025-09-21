@@ -5,7 +5,6 @@ import numpy as np
 from gpie.core import backend
 from gpie.graph.measurement.gaussian_measurement import GaussianMeasurement
 from gpie.graph.wave import Wave
-from gpie.graph.structure.graph import Graph
 from gpie.core.uncertain_array import UncertainArray
 from gpie.core.rng_utils import get_rng
 from gpie.core.types import PrecisionMode
@@ -22,106 +21,80 @@ if has_cupy:
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_init_and_dtype_inference(xp):
+def test_basic_set_observed(xp):
     backend.set_backend(xp)
-    obs = xp.ones((4, 4), dtype=xp.float32)
-    meas = GaussianMeasurement(observed_array=obs, var=0.5)
-    assert meas.observed is not None
-    assert meas.observed.data.dtype == xp.float32
-    assert meas.expected_observed_dtype == xp.float32
+    wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    meas = GaussianMeasurement(var=0.5) << wave
+
+    obs = xp.ones((1, 2, 2), dtype=xp.float32)
+    meas.set_observed(obs)
+
+    assert isinstance(meas.observed, UncertainArray)
+    assert meas.observed.dtype == xp.float32
+    assert meas.observed.event_shape == (2, 2)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_incompatible_dtype_raises(xp):
+def test_set_observed_with_mask_and_array_precision(xp):
     backend.set_backend(xp)
-    obs = xp.ones((2, 2), dtype=xp.float32)
-    # 明示的にcomplex128を指定しつつ実数観測を渡す → TypeError
-    with pytest.raises(TypeError):
-        GaussianMeasurement(observed_array=obs, var=1.0, dtype=xp.complex128)
+    wave = Wave(event_shape=(2, 2), dtype=xp.float64)
+    meas = GaussianMeasurement(var=2.0, precision_mode="array") << wave
 
+    data = xp.ones((1, 2, 2), dtype=xp.float64)
+    mask = xp.array([[[1, 0], [0, 1]]], dtype=bool)
+    meas.set_observed(data, mask=mask)
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_mask_and_precision(xp):
-    backend.set_backend(xp)
-    obs = xp.ones((3, 3), dtype=xp.float64)
-    mask = xp.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=bool)
-    meas = GaussianMeasurement(observed_array=obs, var=2.0, mask=mask, precision_mode="array")
-    assert meas.mask is not None
-    assert meas.observed.precision_mode == PrecisionMode.ARRAY
     prec = meas.observed.precision(raw=True)
     assert xp.allclose(prec[mask], 1.0 / 2.0)
     assert xp.all(prec[~mask] == 0.0)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_generate_and_update_observed(xp):
+def test_generate_sample_and_promote_to_observed(xp):
     backend.set_backend(xp)
-    g = Graph()
-    x = Wave(shape=(4, 4), dtype=xp.float32)
-    x.set_sample(xp.zeros((4, 4), dtype=xp.float32))
-    meas = GaussianMeasurement(var=0.1, dtype=xp.float32) @ x
-    g.compile()
+    wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    wave.set_sample(xp.zeros((1, 2, 2), dtype=xp.float32))
+    meas = GaussianMeasurement(var=0.1) << wave
 
-    rng = get_rng(seed=42)
+    rng = get_rng(seed=123)
     meas._generate_sample(rng)
-    assert meas.get_sample() is not None
     meas.update_observed_from_sample()
+
     assert isinstance(meas.observed, UncertainArray)
-    assert meas.observed.shape == (4, 4)
+    assert meas.observed.event_shape == (2, 2)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_set_observed_dtype_infer_and_cast(xp):
+def test_set_observed_dtype_cast(xp):
     backend.set_backend(xp)
-    g = Graph()
-    x = Wave(shape=(2, 2), dtype=xp.float32)
-    with g.observe():
-        meas = GaussianMeasurement(var=0.1) @ x
-    g.compile()
+    wave = Wave(event_shape=(2,), dtype=xp.float32)
+    meas = GaussianMeasurement(var=0.1) << wave
 
-    data = xp.ones((2, 2), dtype=xp.float64)
-    meas.set_observed(data)
-    assert meas.expected_observed_dtype == xp.float64
+    obs = xp.array([[1.0, 2.0]], dtype=xp.float32)
+    meas.set_observed(obs)
 
-    data2 = xp.ones((2, 2), dtype=xp.float32)
-    meas.set_observed(data2)
-    assert meas.observed.data.dtype == xp.float64 
+    assert meas.observed.dtype == xp.float32
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_set_observed_guard_input_dtype(xp):
+def test_set_observed_invalid_dtype_raises(xp):
     backend.set_backend(xp)
-    g = Graph()
-    x = Wave(shape=(2, 2), dtype=xp.float32)
-    with g.observe():
-        meas = GaussianMeasurement(var=0.1) @ x
-    g.compile()
+    wave = Wave(event_shape=(2,), dtype=xp.float32)
+    meas = GaussianMeasurement(var=0.1) << wave
 
-    bad_data = xp.ones((2, 2), dtype=xp.complex64)  
+    obs = xp.array([[1.0 + 2.0j, 3.0 + 4.0j]], dtype=xp.complex64)
     with pytest.raises(TypeError):
-        meas.set_observed(bad_data)
+        meas.set_observed(obs)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_gaussian_measurement_graph_to_backend_syncs_dtype_and_arrays(xp):
+def test_set_observed_batched_false(xp):
     backend.set_backend(xp)
-    g = Graph()
-    x = Wave(shape=(4, 4), dtype=xp.float32)
-    x.set_sample(xp.zeros((4, 4), dtype=xp.float32))
+    wave = Wave(event_shape=(2,), dtype=xp.float32)
+    meas = GaussianMeasurement(var=0.1) << wave
 
-    mask = xp.ones((4, 4), dtype=bool)
-    with g.observe():
-        meas = GaussianMeasurement(var=0.1, dtype=xp.float32, mask=mask) @ x
-    g.compile()
-    rng = get_rng(seed=42)
-    meas._generate_sample(rng)
-    meas.update_observed_from_sample()
+    obs = xp.array([1.0, 2.0], dtype=xp.float32)
+    meas.set_observed(obs, batched=False)
 
-    new_backend = cp if xp is np else np
-    backend.set_backend(new_backend)
-    g.to_backend()
-
-    assert isinstance(meas.observed.data, new_backend.ndarray)
-    assert isinstance(meas.mask, new_backend.ndarray)
-    assert isinstance(meas.input_dtype, type(new_backend.dtype(meas.input_dtype)))
-    assert isinstance(meas.expected_observed_dtype, type(new_backend.dtype(meas.expected_observed_dtype)))
+    assert meas.observed.batch_shape == (1,)
+    assert meas.observed.event_shape == (2,)

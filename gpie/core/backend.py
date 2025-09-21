@@ -7,6 +7,7 @@ such as NumPy, CuPy, JAX, or PyTorch. All internal math in `core/` should use
 """
 
 import numpy as _np
+from typing import Any, Optional
 
 _backend = _np  # Default backend: NumPy
 
@@ -30,6 +31,31 @@ def get_backend():
         The active backend module (default: numpy).
     """
     return _backend
+
+def move_array_to_current_backend(array: Any, dtype: Optional[_np.dtype] = None) -> Any:
+    """
+    Ensure array is on the current backend (NumPy or CuPy), with optional dtype conversion.
+
+    Args:
+        array (Any): Input array from potentially another backend.
+        dtype (np().dtype, optional): If given, cast to this dtype after transfer.
+
+    Returns:
+        backend ndarray: Array on current backend, dtype adjusted if needed.
+    """
+    try:
+        import cupy as cp
+        # If moving from CuPy to NumPy
+        if isinstance(array, cp.ndarray) and np().__name__ == "numpy":
+            array = array.get()
+    except ImportError:
+        pass
+
+    arr = np().asarray(array)
+    if dtype is not None:
+        arr = arr.astype(dtype)
+    return arr
+
 
 
 # Aliases for convenience
