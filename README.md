@@ -174,6 +174,39 @@ pytest test/ --cov=gpie --cov-report=term-missing
 
 As of the latest release, the test coverage is approximately 87%, covering both CPU and GPU (CuPy) backends.
 
+
+## Related libraries
+
+gPIE shares common ground with several existing frameworks for message passing inference:
+
+#### [ForneyLab (Julia)](https://biaslab.github.io/project/forneylab/)
+A declarative probabilistic programming framework based on factor graphs.
+
+- **Strength**: strong abstraction of inference algorithms via `MessageUpdateRule`.
+- **Difference**: gPIE instead provides a declarative Python API using only operator overloading, without macros or custom parsers.
+
+
+#### [Tree-AMP (Python)](https://sphinxteam.github.io/tramp.docs/0.1/html/index.html)
+A framework for Expectation Propagation algorithms, built on top of networkx.
+
+- **Strength**: well-suited for graph manipulations.  
+  It also provides theoretical tools such as **state evolution** and **free entropy formalisms**, and introduces advanced features like **adaptive damping**.
+- **Difference**: gPIE is not tied to networkx and emphasizes a lightweight declarative DSL with GPU acceleration (CuPy backend).
+
+#### [Dimple (Java/Matlab)](https://github.com/analog-garage/dimple)
+A factor-graph based system with support for hardware acceleration via GP5.
+
+- **Strength**: early pioneer in message passing DSLs with HPC focus.
+- **Difference**: gPIE targets GPU acceleration in Python, making it more accessible to computational imaging researchers.
+
+#### [Infer.NET (C#)](https://dotnet.github.io/infer/)
+A probabilistic programming framework developed at Microsoft, supporting Expectation Propagation, Variational Message Passing, and Gibbs Sampling.
+
+- **Strength**: industrial-grade implementation with a rich set of inference algorithms. Widely used in academia and industry.  
+- **Difference**: unlike gPIE, Infer.NET is implemented in C# and not designed for GPU acceleration or scientific Python workflows.
+
+
+
 ##  License
 
 This project is licensed under the **MIT License**.  
