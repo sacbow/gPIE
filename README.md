@@ -190,7 +190,7 @@ A declarative probabilistic programming framework based on factor graphs.
 A framework for Expectation Propagation algorithms, built on top of networkx.
 
 - **Strength**: well-suited for graph manipulations.  
-  It also provides theoretical tools such as **state evolution** and **free entropy formalisms**, and introduces advanced features like **adaptive damping**.
+  It also provides theoretical tools such as **state evolution** and **free entropy formalisms**.
 - **Difference**: gPIE is not tied to networkx and emphasizes a lightweight declarative DSL with GPU acceleration (CuPy backend).
 
 #### [Dimple (Java/Matlab)](https://github.com/analog-garage/dimple)
