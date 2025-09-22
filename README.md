@@ -183,7 +183,7 @@ gPIE shares common ground with several existing frameworks for message passing i
 A declarative probabilistic programming framework based on factor graphs.
 
 - **Strength**: strong abstraction of inference algorithms via `MessageUpdateRule`.
-- **Difference**: gPIE instead provides a declarative Python API using only operator overloading, without macros or custom parsers.
+- **Difference**: gPIE instead provides a declarative Python API using only operator overloading, without macros or custom syntax.
 
 
 #### [Tree-AMP (Python)](https://sphinxteam.github.io/tramp.docs/0.1/html/index.html)
