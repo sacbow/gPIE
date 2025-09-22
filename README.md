@@ -46,7 +46,7 @@ gpie/
 
 ## Features
 - **Expectation Propagation (EP)** on factor graphs.
-- **UncertainArray abstraction** for representing complex Gaussian distributions
+- **UncertainArray abstraction** for representing complex/real Gaussian distributions
 - NumPy/CuPy backend support: switch seamlessly between CPU and GPU with:
 ```bash
   import numpy as np, cupy as cp, gpie
@@ -64,6 +64,7 @@ gpie/
 ## What's New (v0.1)
 
 - **Drastically Simplified Model Definition**
+
 Define complex probabilistic models with minimal code using the new @model decorator.
 For example, a full random structured CDI model is just:
 ```bash
@@ -76,6 +77,7 @@ For example, a full random structured CDI model is just:
 ```
 
 - **Flexible and High-Quality Graph Visualization**
+
 gPIE now supports full visual inspection of factor graphs with:
 
 > Layout engines: Choose between networkx (fast, layoutable) and graphviz (high-quality, canonical).
