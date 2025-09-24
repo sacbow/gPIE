@@ -110,7 +110,7 @@ def test_fft2d_precision_modes(xp):
         prop = y.parent
 
         ua_in = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode != UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR))
-        ua_out = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY))
+        ua_out = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode != UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY))
 
         prop.receive_message(x, ua_in)
         prop.receive_message(y, ua_out)
