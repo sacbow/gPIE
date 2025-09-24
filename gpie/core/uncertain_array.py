@@ -581,3 +581,52 @@ class UncertainArray:
                 f"precision={self.precision_mode}), "
                 f"UA(..., dtype={self.dtype.name})"
             )
+
+
+#---------fft for UA ---------
+
+from .fft import get_fft_backend  # gpie.core.fft を想定
+
+def fft2_centered(self) -> "UncertainArray":
+    """
+    Apply centered 2D FFT to the UncertainArray, assuming EP-style Gaussian message.
+
+    This operation applies `ifftshift → fft2 → fftshift` to the data.
+    The resulting UncertainArray always uses **scalar precision**:
+    - If the input is already scalar precision: precision remains unchanged
+    - If the input is array precision: precision is reduced using harmonic mean
+
+    Returns:
+        UncertainArray: FFT-transformed UA with scalar precision.
+    """
+    fft_backend = get_fft_backend()
+    transformed_data = fft_backend.fft2_centered(self.data)
+
+    if self._scalar_precision:
+        new_precision = self.precision(raw=True)
+    else:
+        new_precision = reduce_precision_to_scalar(self.precision(raw=True))
+
+    return UncertainArray(transformed_data, dtype=self.dtype, precision=new_precision)
+
+def ifft2_centered(self) -> "UncertainArray":
+    """
+    Apply centered 2D inverse FFT to the UncertainArray.
+
+    This operation applies `ifftshift → ifft2 → fftshift` to the data.
+    The resulting UncertainArray always uses **scalar precision**:
+    - If the input is already scalar precision: precision remains unchanged
+    - If the input is array precision: precision is reduced using harmonic mean
+
+    Returns:
+        UncertainArray: Inverse FFT-transformed UA with scalar precision.
+    """
+    fft_backend = get_fft_backend()
+    transformed_data = fft_backend.ifft2_centered(self.data)
+
+    if self._scalar_precision:
+        new_precision = self.precision(raw=True)
+    else:
+        new_precision = reduce_precision_to_scalar(self.precision(raw=True))
+
+    return UncertainArray(transformed_data, dtype=self.dtype, precision=new_precision)
