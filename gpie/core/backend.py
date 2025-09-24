@@ -19,8 +19,10 @@ def set_backend(lib):
     Args:
         lib: Module object such as numpy, jax.numpy, or cupy.
     """
-    global _backend
+    from .fft import DefaultFFTBackend
+    global _backend, _current_fft_backend
     _backend = lib
+    _current_fft_backend = DefaultFFTBackend()
 
 
 def get_backend():

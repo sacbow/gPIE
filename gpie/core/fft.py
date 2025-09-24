@@ -161,23 +161,31 @@ class FFTWBackend(FFTBackend):
 
         return self._plans[key]
 
-    def fft2_centered(self, x: ArrayLike, copy: bool = True) -> ArrayLike:
+    def fft2_centered(self, x: ArrayLike) -> ArrayLike:
         x = np().asarray(x)
         plan, a, b = self._get_plan(x.shape, x.dtype, "fft")
 
         a[:] = np().fft.ifftshift(x, axes=(-2, -1))
         plan()
         result = np().fft.fftshift(b, axes=(-2, -1))
-        return result.copy() if copy else result
 
-    def ifft2_centered(self, x: ArrayLike, copy: bool = True) -> ArrayLike:
+        # Normalize for unitary transform
+        norm = np().sqrt(np().prod(x.shape[-2:]))
+        result = result / norm
+        return result
+
+    def ifft2_centered(self, x: ArrayLike) -> ArrayLike:
         x = np().asarray(x)
         plan, a, b = self._get_plan(x.shape, x.dtype, "ifft")
 
         a[:] = np().fft.ifftshift(x, axes=(-2, -1))
         plan()
         result = np().fft.fftshift(b, axes=(-2, -1))
-        return result.copy() if copy else result
+
+        # Normalize for unitary transform
+        norm = np().sqrt(np().prod(x.shape[-2:]))
+        result = result * norm
+        return result
 
 
 
