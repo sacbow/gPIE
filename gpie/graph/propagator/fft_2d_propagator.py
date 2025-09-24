@@ -3,7 +3,7 @@ from .base import Propagator
 from ..wave import Wave
 from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.linalg_utils import reduce_precision_to_scalar, fft2_centered, ifft2_centered
+from ...core.fft import get_fft_backend
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
 
 
@@ -148,7 +148,8 @@ class FFT2DPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        return fft2_centered(x)
+        fft = get_fft_backend()
+        return fft.fft2_centered(x)
 
     def __matmul__(self, wave: Wave) -> Wave:
         if len(wave.event_shape) != 2:

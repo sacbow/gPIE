@@ -4,8 +4,8 @@ import importlib.util
 
 
 from gpie.core import backend
-from gpie.core.uncertain_array import UncertainArray, fft2_centered, ifft2_centered
-from gpie.core.types import PrecisionMode, get_real_dtype
+from gpie.core.uncertain_array import UncertainArray
+from gpie.core.types import PrecisionMode
 
 # Optional CuPy
 cupy_spec = importlib.util.find_spec("cupy")
@@ -139,10 +139,10 @@ def test_fft2_ifft2_centered_reconstruction(xp, fft_backend):
         scalar_precision=False,
     )
 
-    ua_hat = fft2_centered(ua)
+    ua_hat = ua.fft2_centered()
     assert ua_hat.precision_mode == PrecisionMode.SCALAR
 
-    ua_rec = ifft2_centered(ua_hat)
+    ua_rec = ua_hat.ifft2_centered()
     assert ua_rec.precision_mode == PrecisionMode.SCALAR
 
     assert np.allclose(ua.data, ua_rec.data, atol=1e-5), f"FFT->IFFT failed for {fft_backend}, {xp.__name__}"
