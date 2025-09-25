@@ -49,20 +49,23 @@ def test_sync_cupy_rng_no_numpy_rng(monkeypatch):
 
 def test_get_rng_cupy_fallback(monkeypatch):
     """Test get_rng warns and falls back to numpy if CuPy not installed."""
-    backend.set_backend(type("FakeCupy", (), {"__name__": "cupy"})())
+    if has_cupy:
+        pytest.skip("CuPy is available, no fallback to test")
 
     monkeypatch.setitem(sys.modules, "cupy", None)
 
+    class FakeCupy:
+        __name__ = "cupy"
+
+    from gpie.core import backend as be
+    be._backend = FakeCupy  
+
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        try:
-            rng = rng_utils.get_rng(seed=1)
-        except RuntimeError:
-            pytest.skip("CuPy not available, RuntimeError expected")
-            return
-
+        rng = rng_utils.get_rng(seed=1)
         assert isinstance(rng, np.random.Generator)
         assert any("CuPy backend selected" in str(warn.message) for warn in w)
+
 
 
 def test_get_rng_numpy():
