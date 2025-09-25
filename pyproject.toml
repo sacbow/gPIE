@@ -4,22 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gpie"
-version = "0.0.1"
+version = "0.1.1"
 description = "Graph-based Probabilistic Inference Engine"
 authors = [{ name="Hajime Ueda", email="nd.hajimeueda@gmail.com" }]
-license = {text = "MIT"}
+license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.9"
+
+# ---- Core dependencies ----
 dependencies = [
     "numpy>=2.2.6",
-    "cupy-cuda12x>=13.4.2",
     "networkx>=3.3",
-    "pygraphviz>=1.10",
-    "bokeh>=3.7"
 ]
 
+# ---- Optional dependencies ----
 [project.optional-dependencies]
-dev = ["pytest", "coverage", "tqdm", "scikit-image>=0.25"]
+gpu = [
+    # for GPU acceleration
+    "cupy-cuda12x>=13.4.2",
+]
+fft = [
+    # for optimized FFT on CPU
+    "pyfftw>=0.15",
+]
+viz = [
+    # for visualization
+    "matplotlib>=3.9.0",
+    "pygraphviz>=1.10",
+    "bokeh>=3.7",
+]
+dev = [
+    # development and testing
+    "pytest",
+    "coverage",
+    "tqdm",
+    "scikit-image>=0.25",
+]
 
 [tool.setuptools]
-packages = ["gpie"] 
+packages = ["gpie"]

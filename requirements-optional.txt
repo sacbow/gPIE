@@ -1,0 +1,10 @@
+# GPU acceleration
+cupy-cuda12x>=13.4.2
+
+# Optimized FFT
+pyfftw>=0.15
+
+# Visualization
+matplotlib>=3.9.0
+pygraphviz>=1.10
+bokeh>=3.7

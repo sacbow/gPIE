@@ -1,0 +1,5 @@
+# Development and testing
+pytest
+coverage
+tqdm
+scikit-image>=0.25
