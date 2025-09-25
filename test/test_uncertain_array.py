@@ -101,16 +101,20 @@ def test_shape_ndim_warns(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_to_backend_roundtrip(xp):
     import numpy as np
-    import cupy as cp
+
     if not has_cupy:
         pytest.skip("CuPy not installed")
+    else:
+        import cupy as cp
 
     backend.set_backend(np)
     ua = UncertainArray.zeros(event_shape=(2, 2), dtype=np.complex64, precision=1.0)
+
     backend.set_backend(cp)
     ua.to_backend()
     assert isinstance(ua.data, cp.ndarray)
     assert ua.dtype == cp.complex64
+
 
 
 from gpie.core import fft
