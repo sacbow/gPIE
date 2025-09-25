@@ -242,40 +242,6 @@ def square_aperture(shape, radius, center=None):
     mask[y0:y1 + 1, x0:x1 + 1] = True
     return mask
 
-def fft2_centered(x: ArrayLike) -> ArrayLike:
-    """
-    Batch-aware centered 2D FFT.
-    
-    Applies ifftshift → fft2 → fftshift over the last two axes.
-    Assumes x.shape = (B, H, W) or similar.
-    """
-    return np().fft.fftshift(
-        np().fft.fft2(
-            np().fft.ifftshift(x, axes=(-2, -1)),
-            axes=(-2, -1),
-            norm="ortho"
-        ),
-        axes=(-2, -1)
-    )
-
-
-def ifft2_centered(x: ArrayLike) -> ArrayLike:
-    """
-    Batch-aware centered 2D inverse FFT.
-    
-    Applies ifftshift → ifft2 → fftshift over the last two axes.
-    Assumes x.shape = (B, H, W) or similar.
-    """
-    return np().fft.fftshift(
-        np().fft.ifft2(
-            np().fft.ifftshift(x, axes=(-2, -1)),
-            axes=(-2, -1),
-            norm="ortho"
-        ),
-        axes=(-2, -1)
-    )
-
-
 def masked_random_array(support: ArrayLike, dtype=None, rng=None):
     """
     Generate a random array masked by the given boolean support.

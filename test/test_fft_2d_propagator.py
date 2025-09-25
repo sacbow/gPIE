@@ -10,7 +10,7 @@ from gpie.graph.structure.graph import Graph
 from gpie.core.uncertain_array import UncertainArray
 from gpie.core.rng_utils import get_rng
 from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
-from gpie.core.linalg_utils import fft2_centered
+from gpie.core.fft import get_fft_backend
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -89,7 +89,7 @@ def test_fft2d_sample_generation(xp):
 
     assert y_sample.shape == (B, n, n)
     assert y_sample.dtype == xp.complex64
-    expected = fft2_centered(x_sample)
+    expected = get_fft_backend().fft2_centered(x_sample)
     assert xp.allclose(y_sample, expected)
 
 
@@ -110,7 +110,7 @@ def test_fft2d_precision_modes(xp):
         prop = y.parent
 
         ua_in = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode != UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR))
-        ua_out = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY))
+        ua_out = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=(mode != UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY))
 
         prop.receive_message(x, ua_in)
         prop.receive_message(y, ua_out)

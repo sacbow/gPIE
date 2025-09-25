@@ -14,13 +14,20 @@ _backend = _np  # Default backend: NumPy
 
 def set_backend(lib):
     """
-    Set the global backend to a NumPy-compatible library (e.g., jax.numpy, cupy).
+    Set the global backend to a NumPy-compatible library (e.g., numpy, cupy, jax.numpy).
 
     Args:
         lib: Module object such as numpy, jax.numpy, or cupy.
     """
-    global _backend
+    from .fft import DefaultFFTBackend, CuPyFFTBackend
+    global _backend, _current_fft_backend
     _backend = lib
+
+    # Assign FFT backend depending on numerical backend
+    if lib.__name__ == "cupy":
+        _current_fft_backend = CuPyFFTBackend()
+    else:
+        _current_fft_backend = DefaultFFTBackend()
 
 
 def get_backend():
@@ -31,6 +38,7 @@ def get_backend():
         The active backend module (default: numpy).
     """
     return _backend
+
 
 def move_array_to_current_backend(array: Any, dtype: Optional[_np.dtype] = None) -> Any:
     """
@@ -55,7 +63,6 @@ def move_array_to_current_backend(array: Any, dtype: Optional[_np.dtype] = None)
     if dtype is not None:
         arr = arr.astype(dtype)
     return arr
-
 
 
 # Aliases for convenience

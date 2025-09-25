@@ -8,8 +8,9 @@ from gpie.graph.wave import Wave
 from gpie.graph.structure.graph import Graph
 from gpie.graph.measurement.gaussian_measurement import GaussianMeasurement
 from gpie.core.uncertain_array import UncertainArray
-from gpie.core.linalg_utils import random_phase_mask, fft2_centered, ifft2_centered
+from gpie.core.linalg_utils import random_phase_mask
 from gpie.core.rng_utils import get_rng
+from gpie.core.fft import get_fft_backend
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -87,8 +88,8 @@ def test_phase_mask_fft_get_sample_for_output(xp):
     y = PhaseMaskFFTPropagator(phase_mask) @ x
     prop = y.parent
     y_sample = prop.get_sample_for_output(rng)
-
-    expected = ifft2_centered(phase_mask * fft2_centered(x_sample))
+    fft = get_fft_backend()
+    expected = fft.ifft2_centered(phase_mask * fft.fft2_centered(x_sample))
     assert xp.allclose(y_sample, expected)
 
 

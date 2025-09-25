@@ -4,7 +4,8 @@ from ..wave import Wave
 from ...core.backend import np, move_array_to_current_backend
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
-from ...core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
+from ...core.linalg_utils import reduce_precision_to_scalar
+from ...core.fft import get_fft_backend
 
 
 class PhaseMaskFFTPropagator(Propagator):
@@ -98,6 +99,9 @@ class PhaseMaskFFTPropagator(Propagator):
 
         if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
             msg_x = msg_x.astype(self.dtype)
+        
+        fft = get_fft_backend()
+        fft2_centered, ifft2_centered = fft.fft2_centered, fft.ifft2_centered
 
         r = msg_x.data
         p = msg_y.data
@@ -164,11 +168,12 @@ class PhaseMaskFFTPropagator(Propagator):
         self._init_rng = rng
 
     def get_sample_for_output(self, rng):
+        fft = get_fft_backend()
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        return ifft2_centered(self.phase_mask * fft2_centered(x))
+        return fft.ifft2_centered(self.phase_mask * fft.fft2_centered(x))
 
     def __matmul__(self, wave: Wave) -> Wave:
         if len(wave.event_shape) != 2:

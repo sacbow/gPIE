@@ -2,9 +2,10 @@ import argparse
 from gpie.core.rng_utils import get_rng
 import numpy as np
 from numpy.typing import NDArray
-from gpie import model, GaussianPrior, fft2,  AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
 from gpie.core.linalg_utils import random_phase_mask
 from benchmark_utils import run_with_timer, profile_with_cprofile, set_backend
+
 
 # ==== CDI definition ====
 @model
@@ -16,7 +17,7 @@ def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: li
         AmplitudeMeasurement(var=noise, damping=0.3) << z
 
 
-def build_cdp_graph(H=512, W=512, noise=1e-4, n_measurements=4):
+def build_cdp_graph(H=1024, W=1024, noise=1e-4, n_measurements=4):
     rng = get_rng(seed=42)
     shape = (H, W)
     phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
@@ -43,23 +44,37 @@ def run_cdp(n_iter=100, verbose=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark Coded Diffraction Pattern (CDP) in gPIE")
     parser.add_argument("--backend", choices=["numpy", "cupy"], default="numpy",
-                        help="Backend to use (numpy or cupy)")
+                        help="Numerical backend to use (numpy or cupy)")
+    parser.add_argument("--fftw", action="store_true",
+                        help="Use FFTW backend (only valid with --backend numpy)")
+    parser.add_argument("--threads", type=int, default=1,
+                        help="Number of FFTW threads (only used with --fftw)")
+    parser.add_argument("--planner-effort", type=str, default="FFTW_ESTIMATE",
+                        help="FFTW planner effort (only used with --fftw)")
     parser.add_argument("--n-iter", type=int, default=100,
                         help="Number of EP iterations")
     parser.add_argument("--profile", action="store_true",
                         help="Enable cProfile profiling")
     parser.add_argument("--verbose", action="store_true",
                         help="Print progress and PMSE during iterations")
-    parser.add_argument("--size", type=int, default=256,
+    parser.add_argument("--size", type=int, default=1024,
                         help="Image size (H=W)")
     parser.add_argument("--measurements", type=int, default=4,
                         help="Number of coded diffraction measurements")
     args = parser.parse_args()
 
-    backend = set_backend(args.backend)
+    backend = set_backend(
+        backend_name=args.backend,
+        use_fftw=args.fftw,
+        threads=args.threads,
+        planner_effort=args.planner_effort,
+    )
 
     if args.profile:
         profile_with_cprofile(run_cdp, n_iter=args.n_iter, verbose=args.verbose)
     else:
-        _, elapsed = run_with_timer(run_cdp, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True)
-        print(f"[{args.backend}] Total time: {elapsed:.3f} s")
+        _, elapsed = run_with_timer(
+            run_cdp, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True
+        )
+        fft_mode = "fftw" if args.fftw else args.backend
+        print(f"[{fft_mode}] Total time: {elapsed:.3f} s")

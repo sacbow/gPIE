@@ -27,12 +27,20 @@ We benchmarked three representative computational imaging models implemented in 
 ---
 
 ##  How to Run
-### CPU (NumPy) Benchmark:
+### CPU (NumPy, default FFT):
 ```bash
 python gpie/profile/benchmark_holography.py --backend numpy
 python gpie/profile/benchmark_random_cdi.py --backend numpy
 python gpie/profile/benchmark_coded_diffraction_pattern.py --backend numpy
 ```
+
+### CPU (NumPy + FFTW)
+```bash
+python gpie/profile/benchmark_holography.py --backend numpy --fftw
+python gpie/profile/benchmark_holography.py --backend numpy --fftw --threads 4 --planner-effort FFTW_MEASURE
+python gpie/profile/benchmark_holography.py --backend numpy --fftw --threads 8 --planner-effort FFTW_PATIENT
+```
+⚠️ Note: FFTW backend is only valid with --backend numpy. Using --backend cupy --fftw will raise an error.
 
 ### GPU (CuPy) Benchmark:
 ```bash
@@ -62,20 +70,34 @@ python gpie/profile/benchmark_random_cdi.py --backend cupy --profile
 
 - **Note**: Results are device-dependent and may vary on different hardware or driver configurations.
 
-##  Benchmark Results (512×512 images, 100 iterations)
+##  Benchmark Results (1024×1024 pixels, 100 iterations)
 
-| Model                  | NumPy (CPU) | CuPy 1st Run (GPU) | CuPy 2nd Run (GPU) | Speedup (Stable) |
-|------------------------ |------------ |------------------- |------------------- |----------------- |
-| **Holography**         | 2.5 s       | 2.2 s             | 0.5 s             | ~5×             |
-| **Random CDI**         | 5.8 s       | 2.5 s             | 0.8 s             | ~7×             |
-| **CDP (4 measurements)** | 15.0 s     | 3.3 s             | 1.3 s             | ~10×             |
+| Model                  | NumPy (default FFT) | NumPy + FFTW (1 thread) | NumPy + FFTW (4 threads) | CuPy (GPU, 2nd run)|
+|------------------------ |------------------- |------------------------ |--------------------------|--------------------|
+| **Holography**          | 10.7 s              | 11.4 s                   | 9.3 s                    | 0.55s             |
+| **Random CDI**          | 24.6 s              | 26.0 s                   | 21.8 s                    | 0.85s            |
+| **CDP (4 measurements)** | 64.0 s            | 65.8 s                   | 57.2 s                    | 1.9s              |
 
-## Profiling insights
+## Profiling Insights
 
-- **Numpy (CPU):**
-    - FFT dominates the computational time.
-    - EP message updates in Measurement objects and UncertainArray operations (e.g. \__truediv\__ method) form the next major cost.
+In the Holography, Random CDI, and CDP benchmarks, the share of FFT
+operations under the NumPy backend accounts for roughly **25--45%** of
+total runtime. FFT is therefore the first natural target for
+acceleration, but other costs quickly emerge as new bottlenecks.
 
-- **Cupy (GPU):**
-    - FFT bottleneck is effectively removed via GPU-acceleration.
-    - The remaining costs shift to EP message updates and UncertainArray operations, along with Cupy array initialization overhead.
+The main competing sources of cost are the `UncertainArray.__truediv__`
+operation and the Laplace-approximation--based message updates in
+`AmplitudeMeasurement` nodes. Optimizing these components is a key
+direction for future development.
+
+On the GPU, the FFT share drops to **10--15%**, effectively removing it
+as a bottleneck. Excluding initialization overheads such as kernel
+compilation and RNG setup, the remaining hotspots are the
+Laplace-approximation updates in `AmplitudeMeasurement` and `UncertainArray.as_scalar_precision()`.
+
+For example, in the Holography benchmark, `UA.__truediv__` accounts for
+about **25%** of runtime with the NumPy backend but falls below **10%**
+on CuPy (after the first run). Similar to FFT, elementwise operations
+like `__mul__` and `__truediv__` benefit greatly from GPU acceleration,
+while reductions such as `as_scalar_precision` (involving array
+summations) tend to become the dominant cost.

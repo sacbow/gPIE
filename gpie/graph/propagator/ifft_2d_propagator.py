@@ -3,7 +3,7 @@ from .base import Propagator
 from ..wave import Wave
 from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.linalg_utils import fft2_centered, ifft2_centered, reduce_precision_to_scalar
+from ...core.fft import get_fft_backend
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
 
 
@@ -95,34 +95,19 @@ class IFFT2DPropagator(Propagator):
         if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
             msg_x = msg_x.astype(self.dtype)
 
-        r = msg_x.data
-        p = msg_y.data
-        gamma = msg_x._precision
-        tau = msg_y._precision
         mode = self._precision_mode
 
         if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            Uh_p = fft2_centered(p)
-            denom = gamma + tau
-            x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
-            self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            self.y_belief = UA(ifft2_centered(x_mean), dtype=self.dtype, precision=denom)
+            self.x_belief = msg_x * msg_y.fft2_centered()
+            self.y_belief = self.x_belief.ifft2_centered()
 
         elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            Ur = ifft2_centered(r)
-            denom = gamma + tau
-            y_mean = (gamma / denom) * Ur + (tau / denom) * p
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
-            scalar_prec = reduce_precision_to_scalar(denom)
-            self.x_belief = UA(fft2_centered(y_mean), dtype=self.dtype, precision=scalar_prec)
+            self.y_belief = msg_x.ifft2_centered().as_array_precision() * msg_y
+            self.x_belief = self.y_belief.fft2_centered()
 
         elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            Uh_p = fft2_centered(p)
-            denom = gamma + tau
-            x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
-            self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            scalar_prec = reduce_precision_to_scalar(denom)
-            self.y_belief = UA(ifft2_centered(x_mean), dtype=self.dtype, precision=scalar_prec)
+            self.x_belief = msg_x * msg_y.fft2_centered().as_array_precision()
+            self.y_belief = self.x_belief.ifft2_centered()
 
         else:
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
@@ -163,7 +148,8 @@ class IFFT2DPropagator(Propagator):
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
-        return ifft2_centered(x)
+        fft = get_fft_backend()
+        return fft.ifft2_centered(x)
 
     def __matmul__(self, wave: Wave) -> Wave:
         if len(wave.event_shape) != 2:

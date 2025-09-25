@@ -6,6 +6,7 @@ from gpie.core.linalg_utils import circular_aperture, random_phase_mask
 from benchmark_utils import run_with_timer, profile_with_cprofile, set_backend
 from gpie.core.rng_utils import get_rng
 
+
 # ==== CDIモデル定義 ====
 @model
 def random_cdi(support: NDArray[np.bool_], n_layers: int, phase_masks: list[NDArray], var: float):
@@ -15,7 +16,7 @@ def random_cdi(support: NDArray[np.bool_], n_layers: int, phase_masks: list[NDAr
     AmplitudeMeasurement(var=var, damping=0.3) << x
 
 
-def build_random_cdi_graph(H=512, W=512, var=1e-4, support_radius=0.3, n_layers=2):
+def build_random_cdi_graph(H=1024, W=1024, var=1e-4, support_radius=0.3, n_layers=2):
     """Structured Random Matrix CDIモデルのGraph構築"""
     rng = get_rng(seed=42)
     shape = (H, W)
@@ -45,7 +46,13 @@ def run_random_cdi(n_iter=100, verbose=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark Structured Random Matrix CDI in gPIE")
     parser.add_argument("--backend", choices=["numpy", "cupy"], default="numpy",
-                        help="Backend to use (numpy or cupy)")
+                        help="Numerical backend to use (numpy or cupy)")
+    parser.add_argument("--fftw", action="store_true",
+                        help="Use FFTW backend (only valid with --backend numpy)")
+    parser.add_argument("--threads", type=int, default=1,
+                        help="Number of FFTW threads (only used with --fftw)")
+    parser.add_argument("--planner-effort", type=str, default="FFTW_ESTIMATE",
+                        help="FFTW planner effort (only used with --fftw)")
     parser.add_argument("--n-iter", type=int, default=100,
                         help="Number of EP iterations")
     parser.add_argument("--profile", action="store_true",
@@ -54,10 +61,18 @@ if __name__ == "__main__":
                         help="Print progress and PMSE during iterations")
     args = parser.parse_args()
 
-    backend = set_backend(args.backend)
+    backend = set_backend(
+        backend_name=args.backend,
+        use_fftw=args.fftw,
+        threads=args.threads,
+        planner_effort=args.planner_effort,
+    )
 
     if args.profile:
         profile_with_cprofile(run_random_cdi, n_iter=args.n_iter, verbose=args.verbose)
     else:
-        _, elapsed = run_with_timer(run_random_cdi, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True)
-        print(f"[{args.backend}] Total time: {elapsed:.3f} s")
+        _, elapsed = run_with_timer(
+            run_random_cdi, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True
+        )
+        fft_mode = "fftw" if args.fftw else args.backend
+        print(f"[{fft_mode}] Total time: {elapsed:.3f} s")

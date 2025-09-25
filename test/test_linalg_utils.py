@@ -14,8 +14,6 @@ from gpie.core.linalg_utils import (
     random_phase_mask,
     circular_aperture,
     square_aperture,
-    fft2_centered,
-    ifft2_centered,
     masked_random_array,
     angular_spectrum_phase_mask,
 )
@@ -163,15 +161,6 @@ def test_square_aperture_valid_and_invalid(xp):
 
     with pytest.raises(ValueError):
         square_aperture((5, 5), radius=0.49, center=(0.4, 0.4))
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_fft2_and_ifft2_centered(xp):
-    backend.set_backend(xp)
-    x = xp.random.rand(8, 8)
-    X = fft2_centered(x)
-    x_rec = ifft2_centered(X)
-    assert xp.allclose(x, x_rec, atol=1e-12)
 
 
 @pytest.mark.parametrize("xp", backend_libs)

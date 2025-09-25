@@ -2,9 +2,10 @@ import pytest
 import numpy as np
 import importlib.util
 
+
 from gpie.core import backend
 from gpie.core.uncertain_array import UncertainArray
-from gpie.core.types import PrecisionMode, get_real_dtype
+from gpie.core.types import PrecisionMode
 
 # Optional CuPy
 cupy_spec = importlib.util.find_spec("cupy")
@@ -110,3 +111,39 @@ def test_to_backend_roundtrip(xp):
     ua.to_backend()
     assert isinstance(ua.data, cp.ndarray)
     assert ua.dtype == cp.complex64
+
+
+from gpie.core import fft
+import itertools
+
+try:
+    import pyfftw
+    has_pyfftw = True
+except ImportError:
+    has_pyfftw = False
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+@pytest.mark.parametrize("fft_backend", ["numpy", "fftw"] if has_pyfftw else ["numpy"])
+def test_fft2_ifft2_centered_reconstruction(xp, fft_backend):
+    backend.set_backend(xp)
+    if fft_backend == "fftw" and xp.__name__ != "numpy":
+        pytest.skip("FFTW backend requires NumPy")
+
+    fft.set_fft_backend(fft_backend)
+
+    ua = UncertainArray.random(
+        event_shape=(32, 32),
+        batch_size=4,
+        dtype=xp.complex64,
+        scalar_precision=False,
+    )
+
+    ua_hat = ua.fft2_centered()
+    assert ua_hat.precision_mode == PrecisionMode.SCALAR
+
+    ua_rec = ua_hat.ifft2_centered()
+    assert ua_rec.precision_mode == PrecisionMode.SCALAR
+
+    assert np.allclose(ua.data, ua_rec.data, atol=1e-5), f"FFT->IFFT failed for {fft_backend}, {xp.__name__}"
+
