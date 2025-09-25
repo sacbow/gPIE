@@ -52,19 +52,24 @@ def test_get_rng_cupy_fallback(monkeypatch):
     if has_cupy:
         pytest.skip("CuPy is available, no fallback to test")
 
+    # CuPyをインポート不可にする
     monkeypatch.setitem(sys.modules, "cupy", None)
 
+    # ダミーの CuPy backend
     class FakeCupy:
         __name__ = "cupy"
+        class random:
+            pass
 
     from gpie.core import backend as be
-    be._backend = FakeCupy  
+    be._backend = FakeCupy  # set_backendを通さず直接差し替える
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         rng = rng_utils.get_rng(seed=1)
         assert isinstance(rng, np.random.Generator)
         assert any("CuPy backend selected" in str(warn.message) for warn in w)
+
 
 
 
