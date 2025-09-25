@@ -61,20 +61,9 @@ gpie/
 - Built-in **sampling** and **expectation propagation** based on topological sort
 - Visual graph inspection via `graph.visualize()`
 
-## What's New (v0.1)
+## What's New
+See [CHANGELOG.md](./CHANGELOG.md) for the latest release notes (v0.1.1: FFT backend improvements and profiling updates).
 
-- **Drastically Simplified Model Definition**
-
-Define complex probabilistic models with minimal code using the new @model decorator.
-For example, a full random structured CDI model is just:
-```bash
-  @model
-  def random_structured_cdi(support, phase_masks, noise_var):
-      x = ~SupportPrior(support=support, label="sample", dtype=np.complex64)
-      for phase_mask in phase_masks:
-          x = fft2(phase_mask * x)
-      AmplitudeMeasurement(var=noise_var, damping=0.3) << x
-```
 
 - **Flexible and High-Quality Graph Visualization**
 
