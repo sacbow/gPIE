@@ -47,6 +47,8 @@ def test_sync_cupy_rng_no_numpy_rng(monkeypatch):
     rng_utils._sync_cupy_rng(dummy)  # 何も起きず終了
 
 
+import types
+
 def test_get_rng_cupy_fallback(monkeypatch):
     """Test get_rng warns and falls back to numpy if CuPy not installed."""
     if has_cupy:
@@ -55,11 +57,8 @@ def test_get_rng_cupy_fallback(monkeypatch):
     # CuPyをインポート不可にする
     monkeypatch.setitem(sys.modules, "cupy", None)
 
-    # ダミーの CuPy backend
-    class FakeCupy:
-        __name__ = "cupy"
-        class random:
-            pass
+    # ダミーの CuPy backend (モジュールっぽく振る舞うオブジェクト)
+    FakeCupy = types.SimpleNamespace(__name__="cupy", random=None)
 
     from gpie.core import backend as be
     be._backend = FakeCupy  # set_backendを通さず直接差し替える
@@ -67,8 +66,10 @@ def test_get_rng_cupy_fallback(monkeypatch):
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         rng = rng_utils.get_rng(seed=1)
+        # フォールバックとしてnumpy.Generatorが返ることを確認
         assert isinstance(rng, np.random.Generator)
         assert any("CuPy backend selected" in str(warn.message) for warn in w)
+
 
 
 
