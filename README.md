@@ -1,5 +1,7 @@
 # gPIE: Graph-based Probabilistic Inference Engine
 
+[![Tests](https://github.com/sacbow/gPIE/actions/workflows/tests.yml/badge.svg)](https://github.com/sacbow/gPIE/actions/workflows/tests.yml)
+
 **gPIE** is a modular, extensible Python framework for structured probabilistic inference via **Expectation Propagation (EP)** on factor graphs.
 It provides built-in support for complex-valued variables, NumPy/CuPy backend switching, and specialized components for computational imaging models.
 
