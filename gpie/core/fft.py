@@ -10,10 +10,10 @@ Key Features
 - Unified interface for 2D centered FFT and IFFT.
 - Pluggable backends via `set_fft_backend(name)`, supporting:
     - "numpy": Default NumPy FFT backend.
-    - "cupy": GPU-accelerated FFT using CuPy (if backend is set to CuPy).
+    - "cupy": GPU-accelerated FFT with cuFFT plan caching.
     - "fftw": High-performance CPU FFT using pyFFTW (requires NumPy backend).
-- Internal caching of FFTW plans and aligned buffers for efficient reuse.
-- Safe copying by default to avoid side-effects, with optional in-place operation.
+- Internal caching of FFTW/CuPy plans for efficient reuse.
+- Safe copying by default to avoid side-effects.
 
 Typical Usage
 -------------
@@ -35,7 +35,6 @@ See Also
 - gpie.core.linalg_utils: FFT utility functions that delegate to this backend.
 """
 
-
 from typing import Any, Tuple, Dict
 from .types import ArrayLike
 from ..core.backend import np, get_backend
@@ -46,6 +45,15 @@ try:
     import pyfftw
 except ImportError:
     pyfftw = None
+
+# Attempt to import CuPy (optional dependency)
+try:
+    import cupy as cp
+    import cupyx.scipy.fftpack as cufft
+except ImportError:
+    cp = None
+    cufft = None
+
 
 # ---- Abstract Interface ----
 
@@ -60,7 +68,7 @@ class FFTBackend:
         return self.__class__.__name__
 
 
-# ---- NumPy/Cupy Backend ----
+# ---- NumPy Backend ----
 
 class DefaultFFTBackend(FFTBackend):
     def fft2_centered(self, x):
@@ -89,67 +97,20 @@ class DefaultFFTBackend(FFTBackend):
 class FFTWBackend(FFTBackend):
     """
     FFT backend using pyFFTW (a Python wrapper for FFTW).
-
-    This class provides centered 2D FFT and IFFT operations using FFTW's
-    high-performance planning and multithreading features.
-
-    Overview
-    --------
-    FFTW is a "planning" FFT library. It benchmarks many different
-    FFT strategies to determine the fastest method for a given array
-    shape and data type. These plans are cached and reused for future
-    computations with the same shape and dtype.
-
-    Features
-    --------
-    - Threaded execution via `threads` parameter.
-    - Plan caching keyed on (shape, dtype, direction).
-    - Uses aligned memory buffers via `pyfftw.empty_aligned`.
-    - Centered FFTs via ifftshift → fft2 → fftshift.
-
-    Parameters
-    ----------
-    threads : int
-        Number of threads to use for FFTW computations.
-    planner_effort : str
-        Planning strategy (e.g. "FFTW_MEASURE", "FFTW_PATIENT", etc.).
-        See FFTW documentation for details.
-
-    Notes
-    -----
-    - This backend requires NumPy as the numerical backend.
-    - Input arrays are copied into preallocated aligned buffers.
-      The plan object itself retains references to these buffers.
-    - To avoid unintended mutation, results are copied by default
-      unless `copy=False` is passed.
-
-    Raises
-    ------
-    RuntimeError
-        If FFTW is used when the global numerical backend is not NumPy.
-
-    Examples
-    --------
-    >>> set_fft_backend("fftw", threads=4)
-    >>> fft = get_fft_backend()
-    >>> y = fft.fft2_centered(x)
-    >>> x_rec = fft.ifft2_centered(y)
+    Provides centered 2D FFT and IFFT operations with plan caching.
     """
 
     def __init__(self, threads: int = 1, planner_effort: str = "FFTW_MEASURE"):
         self.threads = threads
         self.planner_effort = planner_effort
-        self._plans: Dict[Tuple[Tuple[int, ...], Any, str], Tuple[pyfftw.FFTW, np().ndarray, np().ndarray]] = {}
+        self._plans: Dict[Tuple[Tuple[int, ...], Any, str], Tuple[pyfftw.FFTW, Any, Any]] = {}
 
     def _get_plan(self, shape: Tuple[int, ...], dtype: Any, direction: str):
         key = (shape, dtype, direction)
         if key not in self._plans:
-            # Create aligned input/output arrays
             a = pyfftw.empty_aligned(shape, dtype=dtype)
             b = pyfftw.empty_aligned(shape, dtype=dtype)
-
             fftw_dir = "FFTW_FORWARD" if direction == "fft" else "FFTW_BACKWARD"
-
             plan = pyfftw.FFTW(
                 a, b,
                 axes=(-2, -1),
@@ -158,35 +119,66 @@ class FFTWBackend(FFTBackend):
                 flags=(self.planner_effort,)
             )
             self._plans[key] = (plan, a, b)
-
         return self._plans[key]
 
     def fft2_centered(self, x: ArrayLike) -> ArrayLike:
         x = np().asarray(x)
         plan, a, b = self._get_plan(x.shape, x.dtype, "fft")
-
         a[:] = np().fft.ifftshift(x, axes=(-2, -1))
         plan()
         result = np().fft.fftshift(b, axes=(-2, -1))
-
-        # Normalize for unitary transform
         norm = np().sqrt(np().prod(x.shape[-2:]))
-        result = result / norm
-        return result
+        return result / norm
 
     def ifft2_centered(self, x: ArrayLike) -> ArrayLike:
         x = np().asarray(x)
         plan, a, b = self._get_plan(x.shape, x.dtype, "ifft")
-
         a[:] = np().fft.ifftshift(x, axes=(-2, -1))
         plan()
         result = np().fft.fftshift(b, axes=(-2, -1))
-
-        # Normalize for unitary transform
         norm = np().sqrt(np().prod(x.shape[-2:]))
-        result = result * norm
-        return result
+        return result * norm
 
+
+# ---- CuPy Backend ----
+
+class CuPyFFTBackend(FFTBackend):
+    """
+    FFT backend using CuPy with cuFFT plan caching.
+    Provides centered 2D FFT and IFFT operations on the GPU.
+    """
+
+    def __init__(self):
+        if cp is None or cufft is None:
+            raise RuntimeError("CuPy is not available.")
+        self._plans: Dict[Tuple[Tuple[int, ...], Any, str], Any] = {}
+
+    def _get_plan(self, x, direction: str):
+        key = (x.shape, x.dtype, direction)
+        if key not in self._plans:
+            axes = (-2, -1)
+            self._plans[key] = cufft.get_fft_plan(x, axes=axes, value_type="C2C")
+        return self._plans[key]
+
+    def fft2_centered(self, x: ArrayLike) -> ArrayLike:
+        x = cp.asarray(x)
+        plan = self._get_plan(x, "fft")
+        with plan:
+            y = cp.fft.fftshift(
+                cp.fft.fft2(cp.fft.ifftshift(x, axes=(-2, -1)), axes=(-2, -1), norm = "ortho"),
+                axes=(-2, -1)
+            )
+        return y
+
+    def ifft2_centered(self, x: ArrayLike) -> ArrayLike:
+        x = cp.asarray(x)
+        plan = self._get_plan(x, "ifft")
+        with plan:
+            y = cp.fft.fftshift(
+                cp.fft.ifft2(cp.fft.ifftshift(x, axes=(-2, -1)), axes=(-2, -1), norm = "ortho"),
+                axes=(-2, -1)
+            )
+        return y 
 
 
 # ---- Global Backend Management ----
@@ -197,12 +189,19 @@ def set_fft_backend(name: str, **kwargs):
     global _current_fft_backend
     xp_name = np().__name__
 
-    if name in ("numpy", "cupy"):
+    if name == "numpy":
         _current_fft_backend = DefaultFFTBackend()
+
+    elif name == "cupy":
+        if cp is None:
+            raise RuntimeError("CuPy backend selected but CuPy is not installed.")
+        _current_fft_backend = CuPyFFTBackend()
 
     elif name == "fftw":
         if xp_name != "numpy":
             raise RuntimeError("FFTW backend requires NumPy as numerical backend.")
+        if pyfftw is None:
+            raise RuntimeError("pyFFTW is not installed.")
         _current_fft_backend = FFTWBackend(**kwargs)
 
     else:
