@@ -36,6 +36,7 @@ viz = [
 dev = [
     # development and testing
     "pytest",
+    "pytest-cov",
     "coverage",
     "tqdm",
     "scikit-image>=0.25",
