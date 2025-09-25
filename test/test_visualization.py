@@ -9,11 +9,15 @@ from gpie import SparsePrior, GaussianMeasurement, UnitaryPropagator
 from gpie.graph.structure.visualization import visualize_graph
 from gpie.core.linalg_utils import random_unitary_matrix
 
-# Optional CuPy support
-cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
-    import cupy as cp
+# Optional dependencies
+bokeh_spec = importlib.util.find_spec("bokeh")
+matplotlib_spec = importlib.util.find_spec("matplotlib")
+pygraphviz_spec = importlib.util.find_spec("pygraphviz")
+
+has_bokeh = bokeh_spec is not None
+has_matplotlib = matplotlib_spec is not None
+has_graphviz = pygraphviz_spec is not None
+
 
 # --- Define test graph ---
 @pytest.fixture(scope="module")
@@ -26,9 +30,16 @@ def test_graph():
             GaussianMeasurement(var=1e-3) << (UnitaryPropagator(U) @ x)
     return cs_model()
 
+
 # --- Backends and Layouts ---
-backends = ["bokeh", "matplotlib"]
+backends = []
+if has_bokeh:
+    backends.append("bokeh")
+if has_matplotlib:
+    backends.append("matplotlib")
+
 layouts = ["graphviz", "spring", "shell", "kamada_kawai", "circular"]
+
 
 @pytest.mark.parametrize("backend", backends)
 @pytest.mark.parametrize("layout", layouts)
@@ -46,12 +57,11 @@ def test_visualization_runs_without_error(test_graph, backend, layout):
     try:
         visualize_graph(test_graph, backend=backend, layout=layout, output_path=tmp_path)
     except RuntimeError as e:
-        if layout == "graphviz" and "pygraphviz" in str(e):
-            pytest.skip("Graphviz not available")
+        if layout == "graphviz" and not has_graphviz:
+            pytest.skip("Graphviz (pygraphviz) not available")
         else:
             raise
     finally:
-        # Clean up the temporary file manually
         try:
             os.remove(tmp_path)
         except OSError:

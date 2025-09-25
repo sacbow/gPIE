@@ -9,13 +9,11 @@ from gpie.core.rng_utils import get_rng
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
+if cupy_spec is not None:
     import cupy as cp
-
-backend_libs = [np]
-if has_cupy:
-    backend_libs.append(cp)
+    backend_libs = [np, cp]
+else:
+    backend_libs = [np]
 
 
 class StructuredRandomModel(Graph):
@@ -26,7 +24,7 @@ class StructuredRandomModel(Graph):
         for mask in phase_masks:
             x = fft2(mask * x)  # MultiplyConstPropagator applied internally
         with self.observe():
-            AmplitudeMeasurement(var=var, damping = 0.2) << x
+            AmplitudeMeasurement(var=var, damping=0.2) << x
         self.compile()
 
 
@@ -44,17 +42,14 @@ def test_structured_random_model_reconstruction(xp):
     n_layers = 2
     phase_masks = [random_phase_mask(shape, dtype=xp.complex64, rng=rng) for _ in range(n_layers)]
 
-    # Build graph
     g = StructuredRandomModel(support=support, n_layers=n_layers, phase_masks=phase_masks, var=1e-4)
 
     sample_wave = g.get_wave("sample")
 
-    # Initialize RNG and generate samples
     g.set_init_rng(get_rng(seed=1))
     g.generate_sample(rng=get_rng(seed=2), update_observed=True)
     true_sample = sample_wave.get_sample()
 
-    # Run inference
     def monitor(graph, t):
         est = graph.get_wave("sample").compute_belief().data
         err = pmse(est, true_sample)
@@ -80,16 +75,15 @@ def test_structured_random_model_to_backend(xp):
     support = circular_aperture(shape, radius=0.3)
     phase_masks = [random_phase_mask(shape, dtype=np.complex128, rng=rng) for _ in range(2)]
 
-    g = StructuredRandomModel(support=support, n_layers=2, phase_masks=phase_masks, dtype = np.complex64)
+    g = StructuredRandomModel(support=support, n_layers=2, phase_masks=phase_masks, dtype=np.complex64)
 
-    # Transfer to GPU
-    if xp is cp:
+    # Transfer to GPU (only if xp is CuPy)
+    if getattr(xp, "__name__", "") == "cupy":
         backend.set_backend(cp)
         g.to_backend()
         for wave in g._waves:
-            assert wave.dtype == cp.dtype('complex64')
+            assert wave.dtype == cp.complex64
 
-    # Quick inference to confirm backend consistency
     g.set_init_rng(get_rng(seed=1))
     g.generate_sample(rng=get_rng(seed=2), update_observed=True)
     g.run(n_iter=5, verbose=False)

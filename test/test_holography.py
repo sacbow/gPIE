@@ -4,27 +4,24 @@ import numpy as np
 
 from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, mse
 from gpie.core import backend
-from gpie.graph.wave import Wave
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
 from gpie.core.rng_utils import get_rng
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
+if cupy_spec is not None:
     import cupy as cp
-
-backend_libs = [np]
-if has_cupy:
-    backend_libs.append(cp)
+    backend_libs = [np, cp]
+else:
+    backend_libs = [np]
 
 
 @model
 def holography_model(var, ref_wave, support, dtype=np.complex64):
     """gPIE holography model with DSL-based graph definition."""
-    obj = ~SupportPrior(event_shape = ref_wave.shape, support=support, label="obj", dtype=dtype)
+    obj = ~SupportPrior(event_shape=ref_wave.shape, support=support, label="obj", dtype=dtype)
     AmplitudeMeasurement(var=var) << fft2(ref_wave + obj)
-    return 
+    return
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -37,19 +34,16 @@ def test_holography_reconstruction(xp, obj_dtype):
     shape = (H, W)
     noise = 1e-4
 
-    # Generate true object and support
     support_x = circular_aperture(shape, radius=0.2, center=(-0.2, -0.2))
     support_y = circular_aperture(shape, radius=0.2, center=(0.2, 0.2))
     ref_wave = masked_random_array(support_x, dtype=xp.complex128, rng=rng)
 
-    # Build graph via @model
     g = holography_model(var=noise, ref_wave=ref_wave, support=support_y, dtype=obj_dtype)
     g.set_init_rng(get_rng(seed=11))
     g.generate_sample(rng=get_rng(seed=9), update_observed=True)
 
     true_obj = g.get_wave("obj").get_sample()
 
-    # Inference loop with MSE monitoring
     def monitor(graph, t):
         x = graph.get_wave("obj").compute_belief().data
         err = mse(x, true_obj)
@@ -76,8 +70,8 @@ def test_holography_to_backend(xp):
 
     g = holography_model(var=1e-4, ref_wave=ref_wave, support=support)
 
-    # GPU transfer
-    if xp is cp:
+    # GPU transfer (only if cupy available)
+    if xp.__name__ == "cupy":
         backend.set_backend(cp)
         g.to_backend()
         for w in g._waves:

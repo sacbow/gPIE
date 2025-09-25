@@ -9,13 +9,12 @@ from gpie.core.types import PrecisionMode
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
+if cupy_spec is not None:
     import cupy as cp
-
-backend_libs = [np]
-if has_cupy:
-    backend_libs.append(cp)
+    backend_libs = [np, cp]
+else:
+    cp = None
+    backend_libs = [np]
 
 
 class DummyFactor:
@@ -76,27 +75,34 @@ def test_wave_to_backend_converts_all_messages(xp):
     w = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.complex64)
     w._set_precision_mode("array")
     child = DummyFactor()
+    parent = DummyFactor()
     w.add_child(child)
+    w.set_parent(parent)
 
     msg = UncertainArray(xp.full((2, 2, 2), 1.0), precision=xp.ones((2, 2, 2)))
+    parent_msg = UncertainArray(xp.full((2, 2, 2), 1.0), precision=xp.ones((2, 2, 2)))
     w.receive_message(child, msg)
-
+    w.receive_message(parent, parent_msg)
     belief = w.compute_belief()
-    w.set_parent(DummyFactor())
-    w.receive_message(w.parent, msg)
-    w.compute_belief()
 
-    new_backend = cp if xp is np else np
-    backend.set_backend(new_backend)
-    w.to_backend()
-
-    assert isinstance(w.belief.data, new_backend.ndarray)
-    for m in w.child_messages.values():
-        assert isinstance(m.data, new_backend.ndarray)
+    if cp is not None and xp.__name__ == "numpy":
+        backend.set_backend(cp)
+        w.to_backend()
+        assert isinstance(w.belief.data, cp.ndarray)
+        for m in w.child_messages.values():
+            assert isinstance(m.data, cp.ndarray)
+    elif cp is None and xp.__name__ == "numpy":
+        pytest.skip("CuPy not available, skipping transfer-to-backend test")
+    else:
+        backend.set_backend(np)
+        w.to_backend()
+        assert isinstance(w.belief.data, np.ndarray)
+        for m in w.child_messages.values():
+            assert isinstance(m.data, np.ndarray)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_wave_to_backend_converts_all_messages(xp):
+def test_wave_to_backend_converts_all_messages_with_parent(xp):
     backend.set_backend(xp)
     w = Wave(event_shape=(2, 2), batch_size=2, dtype=xp.complex64)
     w._set_precision_mode("array")
@@ -109,12 +115,19 @@ def test_wave_to_backend_converts_all_messages(xp):
     w.receive_message(child, msg)
     w.receive_message(parent, msg)
 
-    w.compute_belief()  
+    w.compute_belief()
 
-    new_backend = cp if xp is np else np
-    backend.set_backend(new_backend)
-    w.to_backend()
-
-    assert isinstance(w.belief.data, new_backend.ndarray)
-    for m in w.child_messages.values():
-        assert isinstance(m.data, new_backend.ndarray)
+    if cp is not None and xp.__name__ == "numpy":
+        backend.set_backend(cp)
+        w.to_backend()
+        assert isinstance(w.belief.data, cp.ndarray)
+        for m in w.child_messages.values():
+            assert isinstance(m.data, cp.ndarray)
+    elif cp is None and xp.__name__ == "numpy":
+        pytest.skip("CuPy not available, skipping transfer-to-backend test")
+    else:
+        backend.set_backend(np)
+        w.to_backend()
+        assert isinstance(w.belief.data, np.ndarray)
+        for m in w.child_messages.values():
+            assert isinstance(m.data, np.ndarray)

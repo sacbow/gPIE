@@ -10,13 +10,12 @@ from gpie.core.types import PrecisionMode
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
-has_cupy = cupy_spec is not None
-if has_cupy:
+if cupy_spec is not None:
     import cupy as cp
-
-backend_libs = [np]
-if has_cupy:
-    backend_libs.append(cp)
+    backend_libs = [np, cp]
+else:
+    cp = None  # define cp = None so it won't cause NameError
+    backend_libs = [np]
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -39,10 +38,17 @@ def test_support_prior_initialization_and_backend(xp):
     assert prior.output.batch_size == 2
 
     # to_backend test
-    new_backend = cp if xp is np else np
-    backend.set_backend(new_backend)
-    prior.to_backend()
-    assert isinstance(prior.support, new_backend.ndarray)
+    if cp is not None and xp.__name__ == "numpy":
+        backend.set_backend(cp)
+        prior.to_backend()
+        assert isinstance(prior.support, cp.ndarray)
+    elif cp is None and xp.__name__ == "numpy":
+        pytest.skip("CuPy not available, skipping transfer-to-backend test")
+    else:
+        backend.set_backend(np)
+        prior.to_backend()
+        assert isinstance(prior.support, np.ndarray)
+
     assert prior.support.dtype == bool
     assert prior._fixed_msg_array.data.shape == (2, 2, 2)
 
