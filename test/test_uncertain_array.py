@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import importlib.util
-
+import warnings
 
 from gpie.core import backend
 from gpie.core.uncertain_array import UncertainArray
@@ -16,6 +16,66 @@ if has_cupy:
 backend_libs = [np]
 if has_cupy:
     backend_libs.append(cp)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_astype_complex_to_real_with_warning(xp):
+    backend.set_backend(xp)
+    # complex UA with nonzero imaginary part
+    data = xp.array([[1+1j, 2+2j]], dtype=xp.complex64)
+    ua = UncertainArray(data, dtype=xp.complex64, precision=2.0)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        ua_real = ua.astype(xp.float32)
+        # warning should be raised
+        assert any("discard imaginary part" in str(wi.message) for wi in w)
+
+    # dtype changed to real
+    assert ua_real.is_real()
+    # precision doubled
+    assert np.allclose(ua_real.precision(raw=False), 4.0)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_astype_complex_to_real_no_warning_if_imag_zero(xp):
+    backend.set_backend(xp)
+    # complex UA with zero imaginary part
+    data = xp.array([[1+0j, 2+0j]], dtype=xp.complex64)
+    ua = UncertainArray(data, dtype=xp.complex64, precision=3.0)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        ua_real = ua.astype(xp.float32)
+        # no warnings expected
+        assert len(w) == 0
+
+    # precision doubled
+    assert np.allclose(ua_real.precision(raw=False), 6.0)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_real_property_from_complex(xp):
+    backend.set_backend(xp)
+    data = xp.array([[1+2j, 3+4j]], dtype=xp.complex64)
+    ua = UncertainArray(data, dtype=xp.complex64, precision=5.0)
+
+    ua_real = ua.real
+    # dtype is real counterpart
+    assert ua_real.is_real()
+    # precision doubled
+    assert np.allclose(ua_real.precision(raw=False), 10.0)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_real_property_when_already_real(xp):
+    backend.set_backend(xp)
+    data = xp.array([[1.0, 2.0]], dtype=xp.float32)
+    ua = UncertainArray(data, dtype=xp.float32, precision=7.0)
+
+    ua_real = ua.real
+    # should return self, not a new object
+    assert ua_real is ua
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -151,3 +211,66 @@ def test_fft2_ifft2_centered_reconstruction(xp, fft_backend):
 
     assert np.allclose(ua.data, ua_rec.data, atol=1e-5), f"FFT->IFFT failed for {fft_backend}, {xp.__name__}"
 
+@pytest.mark.parametrize("xp", backend_libs)
+def test_fork_basic_and_error(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.zeros(event_shape=(4, 4), batch_size=1, precision=2.0)
+    ua4 = ua.fork(batch_size=4)
+    assert ua4.batch_size == 4
+    assert ua4.event_shape == (4, 4)
+    # All copies should match original
+    for i in range(4):
+        assert np.allclose(ua4.data[i], ua.data[0])
+        assert np.allclose(ua4.precision()[i], ua.precision()[0])
+    # Error if batch_size != 1
+    ua_multi = UncertainArray.zeros(event_shape=(4, 4), batch_size=2)
+    with pytest.raises(ValueError):
+        _ = ua_multi.fork(batch_size=3)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_zero_pad_data_and_precision(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.zeros(event_shape=(4, 4), batch_size=1, precision=5.0)
+    ua_padded = ua.zero_pad(((1, 1), (2, 2)))
+    assert ua_padded.event_shape == (6, 8)
+    # Original data region should remain zero, padded region also zero
+    assert xp.allclose(ua_padded.data, 0.0)
+    # Precision in pad region must be zero
+    center_prec = ua_padded.precision()[0, 1:-1, 2:-2]
+    pad_prec = ua_padded.precision()[0]
+    assert xp.allclose(center_prec, 5.0)
+    assert xp.all(pad_prec >= 0)
+    assert xp.allclose(pad_prec[:, :2], 1e8)  # left pad zero
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_getitem_basic_and_error(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(8, 8), batch_size=1, precision=3.0)
+    sub = ua[2:6, 2:6]
+    assert sub.event_shape == (4, 4)
+    assert sub.batch_size == 1
+    # Error if batch_size != 1
+    ua_multi = UncertainArray.random(event_shape=(8, 8), batch_size=2)
+    with pytest.raises(ValueError):
+        _ = ua_multi[2:6, 2:6]
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_patches_basic_and_error(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(8, 8), batch_size=1, precision=1.0)
+    patches = ua.extract_patches([
+        (slice(0, 4), slice(0, 4)),
+        (slice(4, 8), slice(4, 8))
+    ])
+    assert patches.batch_size == 2
+    assert patches.event_shape == (4, 4)
+    # Check that extracted patches match original UA data
+    assert xp.allclose(patches.data[0], ua.data[0, 0:4, 0:4])
+    assert xp.allclose(patches.data[1], ua.data[0, 4:8, 4:8])
+    # Error if batch_size != 1
+    ua_multi = UncertainArray.random(event_shape=(8, 8), batch_size=2)
+    with pytest.raises(ValueError):
+        _ = ua_multi.extract_patches([(slice(0, 4), slice(0, 4))])
