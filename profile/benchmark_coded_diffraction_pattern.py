@@ -2,27 +2,42 @@ import argparse
 from gpie.core.rng_utils import get_rng
 import numpy as np
 from numpy.typing import NDArray
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
 from gpie.core.linalg_utils import random_phase_mask
 from benchmark_utils import run_with_timer, profile_with_cprofile, set_backend
 
 
-# ==== CDI definition ====
+# ==== CDI definition (fork-based) ====
 @model
-def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: list[NDArray], shape: tuple[int, int]):
+def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: np.ndarray, shape: tuple[int, int]):
+    """
+    Fork-based coded diffraction pattern model.
+    phase_masks: ndarray with shape (B, H, W)
+    """
+    H, W = shape
+    B = n_measurements
+
+    # single object prior
     x = ~GaussianPrior(event_shape=shape, label="sample", dtype=np.complex64)
-    for i in range(n_measurements):
-        y = phase_masks[i] * x
-        z = fft2(y)
-        AmplitudeMeasurement(var=noise, damping=0.3) << z
+
+    # replicate across batch
+    x_batch = replicate(x, batch_size=B)
+
+    # apply masks (batched)
+    y = fft2(phase_masks * x_batch)
+
+    # single amplitude measurement (batched)
+    AmplitudeMeasurement(var=noise, damping=0.3) << y
 
 
 def build_cdp_graph(H=1024, W=1024, noise=1e-4, n_measurements=4):
     rng = get_rng(seed=42)
     shape = (H, W)
-    phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
+    # batched random phase masks
+    phase_masks = random_phase_mask((n_measurements, *shape), rng=rng, dtype=np.complex64)
 
-    g = coded_diffraction_pattern(noise=noise, n_measurements=n_measurements, phase_masks=phase_masks, shape=shape)
+    g = coded_diffraction_pattern(noise=noise, n_measurements=n_measurements,
+                                  phase_masks=phase_masks, shape=shape)
     g.set_init_rng(get_rng(seed=1))
     g.generate_sample(rng=get_rng(seed=999), update_observed=True)
     return g
