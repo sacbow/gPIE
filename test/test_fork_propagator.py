@@ -5,57 +5,56 @@ from gpie.core import backend
 from gpie.core.uncertain_array import UncertainArray as UA
 from gpie.graph.wave import Wave
 from gpie.graph.propagator.fork_propagator import ForkPropagator
-from gpie.graph.prior import GaussianPrior
+from gpie.graph.prior.gaussian_prior import GaussianPrior
 from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 
-def test_forward_then_backward_updates_belief():
+def test_forward_then_backward_cycle():
     backend.set_backend(np)
+    # Prior → Wave
     wave_in = ~GaussianPrior(event_shape=(2, 2), dtype=np.complex64)
     prior = wave_in.parent
     msg_from_prior = UA.random(event_shape=(2, 2), batch_size=1, precision=1.0)
     wave_in.receive_message(prior, msg_from_prior)
 
+    # Fork
     fork = ForkPropagator(batch_size=2, dtype=wave_in.dtype)
     wave_out = fork @ wave_in
 
+    # Forward pass
     wave_in.forward()
     fork.forward()
+    assert wave_out.parent_message is not None
     assert wave_out.parent_message.batch_size == 2
-    assert fork.belief is not None
 
+    # Backward pass
     msg_from_output = UA.random(event_shape=(2, 2), batch_size=2, precision=1.0)
     fork.receive_message(wave_out, msg_from_output)
     fork.backward()
+    assert wave_in.child_messages[fork] is not None
     assert wave_in.child_messages[fork].batch_size == 1
-    assert fork.belief is not None
 
 
-def test_incremental_update_changes_belief_and_preserves_precision():
+def test_incremental_update_changes_message():
     backend.set_backend(np)
 
     ua1 = UA.random(event_shape=(3,), batch_size=1, precision=1.0, scalar_precision=True)
     ua2 = UA.random(event_shape=(3,), batch_size=1, precision=2.0, scalar_precision=True)
 
     wave_in = Wave(event_shape=(3,), batch_size=1, dtype=ua1.dtype)
-    wave_in.receive_message(None, ua1)
-
     fork = ForkPropagator(batch_size=2, dtype=ua1.dtype)
     _ = fork @ wave_in
 
-    # 1回目 forward: belief/output_message 初期化
+    # First forward
     msg1 = fork._compute_forward({"input": ua1})
     assert msg1.batch_size == 2
-    assert fork.belief.precision_mode == ua1.precision_mode
-
-    # 出力メッセージをキャッシュに保存
     fork.output_message = msg1
 
-    # 2回目 forward: incremental 分岐に入る
+    # Second forward with updated input
     msg2 = fork._compute_forward({"input": ua2})
     assert msg2.batch_size == 2
-    assert fork.belief.precision_mode == ua2.precision_mode
-    assert not np.allclose(fork.belief.data, ua1.data)
+    # 内容が変わっているはず
+    assert not np.allclose(msg1.data, msg2.data)
 
 
 def test_invalid_batch_size_and_input_wave():

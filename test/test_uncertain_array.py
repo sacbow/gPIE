@@ -118,13 +118,40 @@ def test_damp_with_extremes(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_product_reduce_over_batch(xp):
+def test_product_reduce_over_batch_preserves_precision_mode(xp):
     backend.set_backend(xp)
-    ua = UncertainArray.random(event_shape=(4, 4), batch_size=10, precision=2.0)
-    reduced = ua.product_reduce_over_batch()
 
-    assert reduced.event_shape == (4, 4)
-    assert np.allclose(reduced.precision(), np.sum(ua.precision(), axis=0), atol=1e-5)
+    # Case 1: scalar precision mode
+    ua_scalar = UncertainArray.random(event_shape=(4, 4), batch_size=10, precision=2.0, scalar_precision=True)
+    scalar_precision =  ua_scalar.precision(raw = True)
+    assert scalar_precision.shape == (10,1,1)
+
+    reduced_scalar = ua_scalar.product_reduce_over_batch()
+
+    assert reduced_scalar.event_shape == (4, 4)
+    assert xp.allclose(
+        reduced_scalar.precision(),
+        xp.sum(ua_scalar.precision(), axis=0),
+        atol=1e-5
+    )
+    # Precision mode should remain scalar
+    assert reduced_scalar.precision_mode == ua_scalar.precision_mode
+    #reduced_precision = reduced_scalar.precision(True)
+    #assert reduced_precision.shape == (1,1,1)
+
+    # Case 2: array precision mode
+    ua_array = UncertainArray.random(event_shape=(4, 4), batch_size=10, precision=2.0, scalar_precision=False)
+    reduced_array = ua_array.product_reduce_over_batch()
+
+    assert reduced_array.event_shape == (4, 4)
+    assert xp.allclose(
+        reduced_array.precision(),
+        xp.sum(ua_array.precision(), axis=0),
+        atol=1e-5
+    )
+    # Precision mode should remain array
+    assert reduced_array.precision_mode == ua_array.precision_mode
+
 
 
 @pytest.mark.parametrize("xp", backend_libs)
