@@ -489,6 +489,44 @@ class UncertainArray:
         new_precision = np().broadcast_to(self.precision(raw=True),
                                         (batch_size,) + (1,) * len(self.event_shape))
         return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
+    
+    def fork(self, batch_size: int) -> "UncertainArray":
+        """
+        Replicate this UncertainArray into a new batched UncertainArray.
+
+        This method creates a new UncertainArray in which the current single
+        atomic Gaussian belief (batch_size=1) is duplicated into a batch of
+        identical copies. It is typically used when one latent variable
+        needs to be expanded into multiple identical instances, e.g., in
+        ptychography models where the same probe illuminates multiple positions.
+        """
+        if self.batch_size != 1:
+            raise ValueError("fork() expects batch_size=1 UncertainArray as input.")
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1.")
+
+        new_data = np().broadcast_to(
+            self.data,
+            (batch_size,) + self.event_shape
+        ).copy()
+
+        raw_prec = self.precision(raw=True)
+        # handle scalar vs array precision
+        if self._scalar_precision:
+            # e.g. shape (1,1,1) → (B,1,1)
+            new_precision = np().broadcast_to(
+                raw_prec,
+                (batch_size,) + (1,) * len(self.event_shape)
+            )
+        else:
+            # e.g. shape (1,H,W) → (B,H,W)
+            new_precision = np().broadcast_to(
+                raw_prec,
+                (batch_size,) + self.event_shape
+            )
+
+        return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
+
 
 
     
