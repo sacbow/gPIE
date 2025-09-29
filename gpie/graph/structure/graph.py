@@ -141,6 +141,7 @@ class Graph:
         for factor in self._factors:
             if factor.precision_mode is None:
                 factor._set_precision_mode("scalar")
+                
         # --- Step 6 : initialize messages ---
         for wave in self._waves:
             for factor in wave.children:

@@ -122,3 +122,11 @@ class ForkPropagator(Propagator):
         m_out = output_msg.product_reduce_over_batch()
         self.child_product = m_out
         return m_out
+    
+    def get_sample_for_output(self, rng):
+        x_wave = self.inputs["input"]
+        x = x_wave.get_sample()
+        if x is None:
+            raise RuntimeError("Input sample not set.")
+        forked_sample = np().broadcast_to(x, (self.batch_size,) + x_wave.event_shape).copy()
+        return forked_sample

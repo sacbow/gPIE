@@ -135,7 +135,7 @@ class MultiplyConstPropagator(Propagator):
         else:
             input_msg = self.input_messages[self.inputs["input"]]
             qx = (msg * input_msg.as_array_precision()).as_scalar_precision()
-            msg_to_send = qx / msg
+            msg_to_send = qx / input_msg
             self.inputs["input"].receive_message(self, msg_to_send)
 
     def get_sample_for_output(self, rng=None):

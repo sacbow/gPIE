@@ -57,4 +57,5 @@ from .graph.measurement import (
 from .graph.shortcuts import (
     fft2,
     ifft2,
+    replicate
 )

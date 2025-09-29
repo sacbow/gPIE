@@ -7,7 +7,7 @@ from gpie.graph.wave import Wave
 from gpie.graph.propagator.multiply_const_propagator import MultiplyConstPropagator
 from gpie.core.uncertain_array import UncertainArray as UA
 from gpie.core.rng_utils import get_rng
-from gpie.core.types import UnaryPropagatorPrecisionMode
+from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -130,3 +130,109 @@ def test_repr(xp):
     prop_array = MultiplyConstPropagator(xp.ones((2, 2)))
     assert "scalar" in repr(prop_scalar)
     assert "shape" in repr(prop_array)
+
+@pytest.mark.parametrize("xp", [np])
+def test_set_precision_mode_conflicts_and_invalid(xp):
+    backend.set_backend(xp)
+    prop = MultiplyConstPropagator(2.0)
+
+    # invalid string
+    with pytest.raises(ValueError):
+        prop._set_precision_mode("invalid")
+
+    # set once, then conflict
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
+    with pytest.raises(ValueError):
+        prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+
+
+@pytest.mark.parametrize("xp", [np])
+def test_set_precision_mode_forward_and_backward(xp):
+    backend.set_backend(xp)
+    shape = (2, 2)
+    B = 1
+
+    # forward: input wave SCALAR → SCALAR_TO_ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+    wave._set_precision_mode(PrecisionMode.SCALAR)
+    prop.set_precision_mode_forward()
+    assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY
+
+    # backward: output SCALAR → ARRAY_TO_SCALAR
+    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+    prop.output._set_precision_mode(PrecisionMode.SCALAR)
+    prop.set_precision_mode_backward()
+    assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
+
+    # backward: input SCALAR → SCALAR_TO_ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+    wave._set_precision_mode(PrecisionMode.SCALAR)
+    prop.output._set_precision_mode(PrecisionMode.ARRAY)
+    prop.set_precision_mode_backward()
+    assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY
+
+    # backward: both ARRAY → ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+    wave._set_precision_mode(PrecisionMode.ARRAY)
+    prop.output._set_precision_mode(PrecisionMode.ARRAY)
+    prop.set_precision_mode_backward()
+    assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY
+
+
+@pytest.mark.parametrize("xp", [np])
+def test_get_input_output_precision_modes(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+
+    # none
+    assert prop.get_input_precision_mode(wave) is None
+    assert prop.get_output_precision_mode() is None
+
+    # SCALAR_TO_ARRAY
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+    assert prop.get_input_precision_mode(wave) == PrecisionMode.SCALAR
+    assert prop.get_output_precision_mode() == PrecisionMode.ARRAY
+
+    # ARRAY_TO_SCALAR
+    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+    prop._precision_mode = UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
+    assert prop.get_input_precision_mode(wave) == PrecisionMode.ARRAY
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+
+@pytest.mark.parametrize("xp", [np])
+def test_backward_with_scalar_input(xp):
+    backend.set_backend(xp)
+    rng = get_rng(seed=123)
+    shape = (2, 2)
+    B = 1
+
+    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    output = MultiplyConstPropagator(2.0) @ wave
+    prop = output.parent
+
+    # input SCALAR
+    wave._set_precision_mode(PrecisionMode.SCALAR)
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+    ua_in = UA.random(shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    ua_out = UA.random(shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=False)
+
+    prop.input_messages[wave] = ua_in
+    prop.output_message = ua_out
+
+    # should go through the "else:" branch in backward
+    prop.backward()
+    assert wave in prop.input_messages
+    assert isinstance(prop.input_messages[wave], UA)
