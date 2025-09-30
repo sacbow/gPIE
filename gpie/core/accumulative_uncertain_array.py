@@ -38,8 +38,8 @@ class AccumulativeUncertainArray:
         real_dtype = get_real_dtype(dtype)
 
         # initialize arrays
-        self.weighted_data = np().zeros((1,) + event_shape, dtype=dtype)
-        self.precision = np().zeros((1,) + event_shape, dtype=real_dtype)
+        self.weighted_data = np().zeros(event_shape, dtype=dtype)
+        self.precision = np().zeros(event_shape, dtype=real_dtype)
 
         # precompute coords for all patches
         self._coords_all, self._sizes, self._indices = self._precompute_coords(indices)
@@ -74,9 +74,10 @@ class AccumulativeUncertainArray:
 
         coords = tuple(self._coords_all.T)
 
-        scatter_add(self.precision[0], coords, flat_prec)
-        scatter_add(self.weighted_data[0].real, coords, flat_weighted.real)
-        scatter_add(self.weighted_data[0].imag, coords, flat_weighted.imag)
+        scatter_add(self.precision, coords, flat_prec)
+        scatter_add(self.weighted_data.real, coords, flat_weighted.real)
+        scatter_add(self.weighted_data.imag, coords, flat_weighted.imag)
+
 
     def as_uncertain_array(self):
         """
@@ -104,8 +105,8 @@ class AccumulativeUncertainArray:
         """
         from .uncertain_array import UncertainArray
 
-        data_slices = [self.weighted_data[(0,) + idx] for idx in self._indices]
-        prec_slices = [self.precision[(0,) + idx] for idx in self._indices]
+        data_slices = [self.weighted_data[idx] for idx in self._indices]
+        prec_slices = [self.precision[idx] for idx in self._indices]
 
         stacked_weighted = np().stack(data_slices, axis=0)
         stacked_prec = np().stack(prec_slices, axis=0)
@@ -117,19 +118,25 @@ class AccumulativeUncertainArray:
         return UncertainArray(data, dtype=self.dtype, precision=stacked_prec, batched=True)
 
 
-
-    def initialize_from_ua(self, ua) -> None:
+    def clear(self):
         """
-        Initialize weighted_data and precision from a given UncertainArray.
+        Reset weighted_data and precision to zeros, keeping cached indices.
 
-        This reuses the precomputed indices cache (_coords_all, _sizes, _indices),
-        while resetting the content of the AUA.
+        This is useful when reusing the same AUA structure (event_shape + indices)
+        for multiple forward/backward passes.
+        """
+        self.weighted_data[...] = 0
+        self.precision[...] = 0
+    
+    def mul_ua(self, ua) -> None:
+        """
+        Multiply (fuse) a full-size UncertainArray into this AUA.
 
         Args:
-            ua (UncertainArray): Must have batch_size=1 and event_shape matching self.event_shape.
+            ua (UncertainArray): UA with batch_size=1 and event_shape == self.event_shape.
         """
         if ua.batch_size != 1:
-            raise ValueError("initialize_from_ua expects a UA with batch_size=1.")
+            raise ValueError("mul_ua expects a UA with batch_size=1.")
         if ua.event_shape != self.event_shape:
             raise ValueError(
                 f"event_shape mismatch: expected {self.event_shape}, got {ua.event_shape}"
@@ -139,9 +146,11 @@ class AccumulativeUncertainArray:
                 f"dtype mismatch: expected {self.dtype}, got {ua.dtype}"
             )
 
-        # overwrite with new arrays
-        self.weighted_data = ua.data[0] * ua.precision(raw=True)[0]
-        self.precision = ua.precision(raw=False)[0]
+        prec = ua.precision(raw=False)[0]   # shape = event_shape
+        data = ua.data[0]
+
+        self.precision += prec
+        self.weighted_data += data * prec
 
 
     def __repr__(self):

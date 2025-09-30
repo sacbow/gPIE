@@ -18,37 +18,28 @@ if has_cupy:
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_initialize_from_ua_and_repr(xp):
+def test_repr_and_clear(xp):
     backend.set_backend(xp)
     event_shape = (4, 4)
     indices = [(slice(0, 2), slice(0, 2))]
-
     aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
-    ua = UncertainArray.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=2.0)
 
-    aua.initialize_from_ua(ua)
-    assert xp.allclose(aua.precision, ua.precision(raw=False))
-    assert xp.allclose(aua.weighted_data, ua.data * ua.precision(raw=True))
+    # UA with one patch: fill with ones, precision=1
+    ua = UncertainArray.zeros((2, 2), batch_size=1, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = 1.0
+    aua.scatter_mul(ua)
+
+    assert xp.any(aua.precision != 0)
+    assert xp.any(aua.weighted_data != 0)
+
+    # clear must reset both arrays
+    aua.clear()
+    assert xp.allclose(aua.precision, 0)
+    assert xp.allclose(aua.weighted_data, 0)
 
     # repr sanity check
     rep = repr(aua)
     assert "AUA" in rep and "event_shape" in rep
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_initialize_from_ua_invalid_cases(xp):
-    backend.set_backend(xp)
-    event_shape = (2, 2)
-    indices = [(slice(0, 2), slice(0, 2))]
-    aua = AccumulativeUncertainArray(event_shape, indices)
-
-    ua_batched = UncertainArray.zeros(event_shape, batch_size=3)
-    with pytest.raises(ValueError):
-        aua.initialize_from_ua(ua_batched)
-
-    ua_shape_mismatch = UncertainArray.zeros((3, 3), batch_size=1)
-    with pytest.raises(ValueError):
-        aua.initialize_from_ua(ua_shape_mismatch)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -61,7 +52,7 @@ def test_scatter_mul_and_extract_patches(xp):
     ]
     aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
 
-    # UA with two patches
+    # UA with two patches: all zeros, precision=1
     ua = UncertainArray.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
     aua.scatter_mul(ua)
 
@@ -69,7 +60,6 @@ def test_scatter_mul_and_extract_patches(xp):
     ua_out = aua.extract_patches()
     assert ua_out.batch_size == 2
     assert ua_out.event_shape == (2, 2)
-    # Each patch should have mean==0, precision==1
     assert xp.allclose(ua_out.data, xp.zeros_like(ua_out.data))
     assert xp.allclose(ua_out.precision(raw=False), xp.ones_like(ua_out.data))
 
@@ -84,15 +74,16 @@ def test_scatter_mul_with_overlapping_indices(xp):
     ]
     aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
 
-    # UA with two patches, values=1, precision=1
+    # UA with two patches: all ones, precision=1
     ua = UncertainArray.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = 1.0
     aua.scatter_mul(ua)
 
-    # Overlap at (1,1) should accumulate
-    total_prec = aua.precision[0, 1, 1]
-    total_weighted = aua.weighted_data[0, 1, 1]
+    # Overlap at (1,1) should accumulate precision=2, weighted=2
+    total_prec = aua.precision[1, 1]
+    total_weighted = aua.weighted_data[1, 1]
     assert xp.allclose(total_prec, 2.0)
-    assert xp.allclose(total_weighted, 0.0)  
+    assert xp.allclose(total_weighted, 2.0)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -102,11 +93,40 @@ def test_as_uncertain_array(xp):
     indices = [(slice(0, 2), slice(0, 2))]
     aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
 
+    # UA with one patch: ones, precision=2
     ua = UncertainArray.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=2.0)
-    aua.initialize_from_ua(ua)
+    ua.data[...] = 1.0
+    aua.scatter_mul(ua)
 
     ua_out = aua.as_uncertain_array()
     assert ua_out.batch_size == 1
     assert ua_out.event_shape == (2, 2)
-    assert xp.allclose(ua_out.data, xp.zeros_like(ua_out.data))
+    assert xp.allclose(ua_out.data, xp.ones_like(ua_out.data))
     assert xp.allclose(ua_out.precision(raw=False), xp.full((1, 2, 2), 2.0))
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_mul_ua(xp):
+    backend.set_backend(xp)
+    event_shape = (3, 3)
+    indices = [(slice(0, 3), slice(0, 3))]
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
+
+    # UA with batch_size=1, event_shape=(3,3), precision=2, data=1
+    ua = UncertainArray.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=2.0)
+    ua.data[...] = 1.0
+
+    aua.mul_ua(ua)
+
+    # precision must be filled with 2.0
+    assert xp.allclose(aua.precision, xp.full(event_shape, 2.0))
+    # weighted_data must be data * precision = 1*2 = 2
+    assert xp.allclose(aua.weighted_data, xp.full(event_shape, 2.0))
+
+    # apply mul_ua again → should accumulate
+    aua.mul_ua(ua)
+    assert xp.allclose(aua.precision, xp.full(event_shape, 4.0))
+    assert xp.allclose(aua.weighted_data, xp.full(event_shape, 4.0))
+
+
+
