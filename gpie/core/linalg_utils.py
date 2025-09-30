@@ -293,3 +293,18 @@ def angular_spectrum_phase_mask(shape, wavelength, distance, dx, dy=None, dtype=
     phase = 2j * np().pi * distance * np().sqrt(root)
 
     return np().exp(phase).astype(dtype)
+
+
+def scatter_add(a, indices, values):
+    """
+    Backend-agnostic scatter_add operation.
+    Overlapping indices are accumulated.
+
+    Args:
+        a (ndarray): Target array (NumPy or CuPy).
+        indices (tuple or ndarray): Indices where values are added.
+        values (ndarray): Values to add.
+    """
+    xp = np()
+    xp.add.at(a, indices, values)
+

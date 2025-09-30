@@ -16,6 +16,7 @@ from gpie.core.linalg_utils import (
     square_aperture,
     masked_random_array,
     angular_spectrum_phase_mask,
+    scatter_add
 )
 import warnings
 
@@ -179,3 +180,33 @@ def test_angular_spectrum_phase_mask(xp):
     assert mask.shape == (8, 8)
     assert xp.iscomplexobj(mask)
     assert xp.allclose(xp.abs(mask), 1.0, atol=1e-12)
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_scatter_add_accumulates(xp):
+    backend.set_backend(xp)
+
+    # 1D case with overlapping indices
+    a = xp.zeros((6,), dtype=xp.float32)
+    idx = (xp.array([1, 0, 1]),)  # tupleで渡す
+    vals = xp.array([1.0, 1.0, 1.0], dtype=xp.float32)
+
+    scatter_add(a, idx, vals)
+
+    expected = xp.array([1.0, 2.0, 0.0, 0.0, 0.0, 0.0], dtype=xp.float32)
+    assert xp.allclose(a, expected)
+
+    # 2D case with overlapping indices
+    b = xp.zeros((3, 3), dtype=xp.float32)
+    rows = xp.array([0, 1, 1, 2])
+    cols = xp.array([0, 1, 1, 2])
+    vals2 = xp.array([1.0, 2.0, 3.0, 4.0], dtype=xp.float32)
+
+    scatter_add(b, (rows, cols), vals2)
+
+    expected2 = xp.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 5.0, 0.0],
+        [0.0, 0.0, 4.0]
+    ], dtype=xp.float32)
+
+    assert xp.allclose(b, expected2)
