@@ -11,9 +11,10 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
 ```
 gpie/
 ├── gpie/ # Core package (importable as gpie)
-│ ├── __init__.py
+│ ├── init.py
 │ ├── core/ # Core data structures and utilities
 │ │ ├── uncertain_array.py
+│ │ ├── accumulative_uncertain_array.py
 │ │ ├── types.py
 │ │ ├── linalg_utils.py
 │ │ ├── rng_utils.py
@@ -24,17 +25,27 @@ gpie/
 │ │ ├── factor.py
 │ │ ├── shortcuts.py
 │ │ ├── prior/ # Priors: Gaussian, sparse, etc.
-│ │ ├── propagator/ # Binary/unary propagators: FFT, masks, etc.
+│ │ ├── propagator/ # Binary/unary propagators
+│ │ │ ├── fft_2d_propagator.py
+│ │ │ ├── ifft_2d_propagator.py
+│ │ │ ├── phase_mask_fft_propagator.py
+│ │ │ ├── fork_propagator.py
+│ │ │ ├── slice_propagator.py
+│ │ │ ├── zero_pad_propagator.py
+│ │ │ └── others...
 │ │ ├── measurement/ # Likelihood models: amplitude, Gaussian, etc.
-│ │ └── structure/ # Graph connectivity
-│ │         └── graph.py
+│ │ └── structure/ # Graph connectivity and visualization
+│ │  ├── graph.py
+│ │  ├── model.py
+│ │  └── visualization.py
+│ │
 │ └── Others
 
 ├── examples/ # Example scripts and notebooks
-│ ├── io_utils.py
-│ ├── sample_data/ # Output directory for example images
-│ ├── notebooks/ # Jupyter notebooks for tutorials
-│ └── scripts/ # Example Python scripts
+│  ├── io_utils.py
+│  ├── sample_data/ # Output directory for example images
+│  ├── notebooks/ # Jupyter notebooks for tutorials
+│  └── scripts/ # Example Python scripts
 
 ├── profile/ # Profiling & benchmarking scripts
 
@@ -66,21 +77,10 @@ gpie/
 - Visual graph inspection via `graph.visualize()`
 
 ## What's New
-See [CHANGELOG.md](./CHANGELOG.md) for the latest release notes (v0.1.1: FFT backend improvements and profiling updates).
+See [CHANGELOG.md](./CHANGELOG.md) for the latest release notes  
+(v0.1.2: Added fork/slice/zero_pad propagators and Wave.zero_pad/extract_patches).
 
 
-- **Flexible and High-Quality Graph Visualization**
-
-gPIE now supports full visual inspection of factor graphs with:
-
-> Layout engines: Choose between networkx (fast, layoutable) and graphviz (high-quality, canonical).
-
-> Rendering backends: Visualize with either matplotlib (static) or bokeh (interactive HTML).
-
-Usage:
-```bash
-  graph.visualize(layout="graphviz", backend="bokeh")
-```
 
 
 ## Tutorials & Notebooks

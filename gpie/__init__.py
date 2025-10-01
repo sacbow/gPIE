@@ -1,3 +1,5 @@
+__version__ = "0.1.2"
+
 # core modules
 from .core import (
     UncertainArray,
