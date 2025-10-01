@@ -11,6 +11,7 @@ from gpie.core.uncertain_array import UncertainArray
 from gpie.core.linalg_utils import random_phase_mask
 from gpie.core.rng_utils import get_rng
 from gpie.core.fft import get_fft_backend
+from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -131,3 +132,71 @@ def test_phase_mask_fft_batch_mask_handling(xp):
     y = PhaseMaskFFTPropagator(phase_mask_shared) @ x
     assert y.batch_size == B
     assert y.event_shape == (n, n)
+
+
+@pytest.mark.parametrize("mode", [
+    UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
+    UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
+])
+def test_phase_mask_fft_compute_belief_modes(mode):
+    backend.set_backend(np)
+    rng = get_rng(seed=10)
+    n, B = 4, 2
+    phase_mask = random_phase_mask((n, n), dtype=np.complex64, rng=rng)
+
+    x = Wave(event_shape=(n, n), batch_size=B, dtype=np.complex64)
+    y = PhaseMaskFFTPropagator(phase_mask, precision_mode=mode) @ x
+    prop = y.parent
+
+    # Input/output messages
+    ua_in = UncertainArray.random((n, n), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=True)
+    ua_out = UncertainArray.random((n, n), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=True)
+    prop.receive_message(x, ua_in)
+    prop.receive_message(y, ua_out)
+
+    # Compute belief for this mode
+    prop.compute_belief()
+    assert prop.x_belief is not None
+    assert prop.y_belief is not None
+    assert isinstance(prop.x_belief, UncertainArray)
+    assert isinstance(prop.y_belief, UncertainArray)
+
+
+def test_phase_mask_fft_forward_initializes_with_random():
+    backend.set_backend(np)
+    rng = get_rng(seed=11)
+    n, B = 3, 2
+    phase_mask = random_phase_mask((n, n), dtype=np.complex64, rng=rng)
+
+    x = Wave(event_shape=(n, n), batch_size=B, dtype=np.complex64)
+    y = PhaseMaskFFTPropagator(phase_mask) @ x
+    prop = y.parent
+    prop.set_init_rng(rng)
+
+    # No output_message, no y_belief → should initialize randomly
+    assert prop.output_message is None
+    assert prop.y_belief is None
+    prop.forward()
+    assert prop.output.parent_message is not None
+    assert isinstance(prop.output.parent_message, UncertainArray)
+
+
+def test_phase_mask_fft_precision_mode_getters():
+    backend.set_backend(np)
+    n = 2
+    phase_mask = random_phase_mask((n, n), dtype=np.complex64, rng=get_rng(seed=12))
+
+    # SCALAR_TO_ARRAY
+    prop = PhaseMaskFFTPropagator(phase_mask, precision_mode=UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+    assert prop.get_output_precision_mode() == PrecisionMode.ARRAY
+    assert prop.get_input_precision_mode(None) == PrecisionMode.SCALAR
+
+    # ARRAY_TO_SCALAR
+    prop = PhaseMaskFFTPropagator(phase_mask, precision_mode=UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+    assert prop.get_input_precision_mode(None) == PrecisionMode.ARRAY
+
+    # SCALAR
+    prop = PhaseMaskFFTPropagator(phase_mask, precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+    assert prop.get_input_precision_mode(None) == PrecisionMode.SCALAR

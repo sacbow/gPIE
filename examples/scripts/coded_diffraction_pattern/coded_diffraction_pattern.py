@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
 from gpie.core.linalg_utils import random_phase_mask
 import sys
 import os
@@ -17,19 +17,36 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 @model
 def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
-    x = ~GaussianPrior(event_shape=shape, label="sample", dtype = np.complex64)
-    for i in range(n_measurements):
-        y = phase_masks[i] * x
-        z = fft2(y)
-        AmplitudeMeasurement(var=noise, damping=0.3) << z
+    """
+    Coded diffraction pattern model using ForkPropagator via replicate().
+    phase_masks: ndarray of shape (B, H, W)
+    """
+    H, W = shape
+    B = n_measurements
+
+    # Prior object
+    x = ~GaussianPrior(event_shape=shape, label="sample", dtype=np.complex64)
+
+    # Replicate across batch dimension
+    x_batch = replicate(x, batch_size=B)
+
+    # Apply masks and FFT
+    y = fft2(phase_masks * x_batch)
+
+    # Amplitude measurement (batched)
+    AmplitudeMeasurement(var=noise, damping=0.3) << y
 
 
 def build_cdp_graph(H=256, W=256, noise=1e-4, n_measurements=4):
     rng = np.random.default_rng(seed=42)
     shape = (H, W)
-    phase_masks = [random_phase_mask(shape, rng=rng, dtype=np.complex64) for _ in range(n_measurements)]
+    # batched phase masks
+    phase_masks = random_phase_mask((n_measurements, *shape), rng=rng, dtype=np.complex64)
 
-    g = coded_diffraction_pattern(shape = shape, n_measurements = n_measurements, phase_masks = phase_masks, noise = noise)
+    g = coded_diffraction_pattern(shape=shape,
+                                  n_measurements=n_measurements,
+                                  phase_masks=phase_masks,
+                                  noise=noise)
     g.set_init_rng(np.random.default_rng(seed=1))
 
     amp = load_sample_image("camera", shape=shape)

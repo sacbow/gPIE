@@ -8,6 +8,7 @@ from gpie.graph.wave import Wave
 from gpie.core.uncertain_array import UncertainArray
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import random_unitary_matrix
+from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -109,3 +110,91 @@ def test_unitary_propagator_sample_generation(xp):
     x_norm = xp.linalg.norm(x_sample, axis=1)
     y_norm = xp.linalg.norm(y_sample, axis=1)
     assert xp.allclose(x_norm, y_norm, rtol=1e-5)
+
+
+
+def test_unitary_propagator_array_to_scalar_compute_belief():
+    backend.set_backend(np)
+    rng = get_rng(seed=100)
+    n, B = 3, 2
+    U = random_unitary_matrix(n, rng=rng)
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+
+    x_wave = Wave(event_shape=(n,), batch_size=B, dtype=np.complex64)
+    y_wave = prop @ x_wave
+
+    ua_in = UncertainArray.random((n,), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=False)
+    ua_out = UncertainArray.random((n,), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=False)
+    prop.receive_message(x_wave, ua_in)
+    prop.receive_message(y_wave, ua_out)
+
+    prop.compute_belief()
+    assert prop.x_belief is not None
+    assert prop.y_belief is not None
+
+
+def test_unitary_propagator_init_with_3d_and_invalid():
+    backend.set_backend(np)
+    rng = get_rng(seed=101)
+    n, B = 2, 3
+    U3d = np.stack([random_unitary_matrix(n, rng=rng) for _ in range(B)], axis=0)
+    prop = UnitaryPropagator(U3d)
+    assert prop.U.shape == (B, n, n)
+
+    # Invalid ndim
+    with pytest.raises(ValueError):
+        _ = UnitaryPropagator(np.ones((5,), dtype=np.complex64))
+
+
+def test_unitary_propagator_precision_mode_getters_and_setter():
+    backend.set_backend(np)
+    U = random_unitary_matrix(2, rng=get_rng(seed=102))
+
+    # SCALAR
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
+    assert prop.get_input_precision_mode(None) == PrecisionMode.SCALAR
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+    # ARRAY_TO_SCALAR
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+    assert prop.get_input_precision_mode(None) == PrecisionMode.ARRAY
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+    # SCALAR_TO_ARRAY
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+    assert prop.get_input_precision_mode(None) == PrecisionMode.SCALAR
+    assert prop.get_output_precision_mode() == PrecisionMode.ARRAY
+
+    # Invalid mode string
+    with pytest.raises(ValueError):
+        prop._set_precision_mode("invalid_mode")
+
+    # Conflict mode
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
+    with pytest.raises(ValueError):
+        prop._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+
+
+def test_unitary_propagator_matmul_shape_errors():
+    backend.set_backend(np)
+    U = random_unitary_matrix(3, rng=get_rng(seed=103))
+    prop = UnitaryPropagator(U)
+
+    # Wrong dimensional wave (2D instead of 1D)
+    bad_wave = Wave(event_shape=(2, 2), batch_size=1, dtype=np.complex64)
+    with pytest.raises(ValueError):
+        _ = prop @ bad_wave
+
+    # Shape mismatch between U and wave.event_shape
+    wave = Wave(event_shape=(5,), batch_size=1, dtype=np.complex64)
+    with pytest.raises(ValueError):
+        _ = prop @ wave
+
+
+def test_unitary_propagator_repr():
+    backend.set_backend(np)
+    U = random_unitary_matrix(2, rng=get_rng(seed=104))
+    prop = UnitaryPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
+    rep = repr(prop)
+    assert "UProp(" in rep
+    assert "mode=" in rep

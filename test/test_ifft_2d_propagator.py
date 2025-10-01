@@ -135,3 +135,47 @@ def test_ifft2d_repr():
     r = repr(prop)
     assert "IFFT2DProp" in r
     assert "mode=" in r
+
+
+def test_ifft2d_precision_mode_getters():
+    backend.set_backend(np)
+    n = 4
+    x = Wave(event_shape=(n, n), batch_size=1, dtype=np.complex64)
+
+    # SCALAR
+    prop = IFFT2DPropagator(event_shape=(n, n), precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
+    y = prop @ x
+    assert prop.get_input_precision_mode(x) == PrecisionMode.SCALAR
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+    # SCALAR_TO_ARRAY
+    prop = IFFT2DPropagator(event_shape=(n, n), precision_mode=UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+    y = prop @ x
+    assert prop.get_input_precision_mode(x) == PrecisionMode.SCALAR
+    assert prop.get_output_precision_mode() == PrecisionMode.ARRAY
+
+    # ARRAY_TO_SCALAR
+    prop = IFFT2DPropagator(event_shape=(n, n), precision_mode=UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
+    y = prop @ x
+    assert prop.get_input_precision_mode(x) == PrecisionMode.ARRAY
+    assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+
+def test_ifft2d_forward_initializes_with_random():
+    backend.set_backend(np)
+    rng = get_rng(seed=2026)
+    n, B = 4, 2
+    x = Wave(event_shape=(n, n), batch_size=B, dtype=np.complex64)
+
+    prop = IFFT2DPropagator(event_shape=(n, n))
+    y = prop @ x
+    prop.set_init_rng(rng)
+
+    # 状態を初期化したまま forward → UA.random が呼ばれる分岐に入る
+    assert prop.output_message is None
+    assert prop.y_belief is None
+    prop.forward()
+
+    assert prop.output.parent_message is not None
+    assert prop.output.parent_message.batch_size == B
+    assert prop.output.parent_message.event_shape == (n, n)

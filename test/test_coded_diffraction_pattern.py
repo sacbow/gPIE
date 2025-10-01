@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import importlib.util
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse
+from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
 from gpie.core import backend
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import random_normal_array
@@ -20,9 +20,30 @@ if has_cupy:
 
 @model
 def coded_diffraction_model(var, masks, dtype=np.complex64):
-    obj = ~GaussianPrior(event_shape=masks[0].shape, label="obj", dtype=dtype)
-    for mask in masks:
-        AmplitudeMeasurement(var=var, damping = 0.3) << fft2(mask * obj)
+    """
+    Coded diffraction pattern model using ForkPropagator via replicate().
+
+    Args:
+        var (float): Noise variance.
+        masks (ndarray): Shape (B, H, W), batch of random phase masks.
+        dtype: Complex dtype.
+    """
+    B, H, W = masks.shape
+
+    # Prior object (single sample, batch_size=1)
+    obj = ~GaussianPrior(event_shape=(H, W), label="obj", dtype=dtype)
+
+    # Replicate across batch dimension
+    obj_batch = replicate(obj, batch_size=B)
+
+    # Apply masks (batched elementwise multiplication)
+    masked = masks * obj_batch
+
+    # FFT
+    Y = fft2(masked)
+
+    # Amplitude measurement (batched)
+    AmplitudeMeasurement(var=var, damping=0.3) << Y
     return
 
 
@@ -31,13 +52,16 @@ def test_coded_diffraction_model_reconstruction(xp):
     backend.set_backend(xp)
     rng = get_rng(seed=123)
 
-    shape = (64,64)
+    shape = (64, 64)
     n_measurements = 4
     dtype = xp.complex64
     noise = 1e-4
 
+    # ground-truth object
     true_obj = random_normal_array((1, *shape), dtype=dtype, rng=rng)
-    masks = [random_normal_array(shape, dtype=dtype, rng=rng) for _ in range(n_measurements)]
+
+    # batched random masks
+    masks = random_normal_array((n_measurements, *shape), dtype=dtype, rng=rng)
 
     # Build graph with @model
     g = coded_diffraction_model(var=noise, masks=masks, dtype=dtype)
@@ -47,22 +71,19 @@ def test_coded_diffraction_model_reconstruction(xp):
     g.get_wave("obj").set_sample(true_obj)
     g.generate_sample(rng=get_rng(seed=2), update_observed=True)
 
-    # Inference
+    # Inference with monitoring
     history = []
-    
+
     def monitor(graph, t):
         x = graph.get_wave("obj").compute_belief().data
         err = pmse(x, true_obj)
         history.append(err)
 
-
     g.run(n_iter=100, callback=monitor)
-    assert len(g.get_wave("obj").children) == n_measurements
+
+    # Check convergence
     assert history[-1] < 1e-3
 
     est = g.get_wave("obj").compute_belief().data
     assert est.shape == (1, *shape)
     assert isinstance(est, xp.ndarray)
-
-
-

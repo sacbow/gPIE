@@ -370,13 +370,6 @@ class Wave:
         """Set backend-agnostic random generator."""
         self._init_rng = rng
 
-    @property
-    def ndim(self) -> int:
-        """
-        Deprecated: Use `len(.event_shape)` instead.
-        """
-        warnings.warn("Wave.ndim is deprecated. Use len(.event_shape) instead.", DeprecationWarning, stacklevel=2)
-        return len(self.event_shape)
     
     def _generate_sample(self, rng) -> None:
         """Pull sample from parent factor if not already set."""
@@ -405,10 +398,95 @@ class Wave:
 
         self._sample = broadcasted.copy()
 
-
     def clear_sample(self) -> None:
         """Clear the stored sample."""
         self._sample = None
+    
+    def extract_patches(self, indices: list[tuple[slice, ...]]) -> "Wave":
+        """
+        Extract multiple patches from this Wave using SlicePropagator.
+
+        Args:
+            indices (list of tuple[slice,...]): List of slice tuples.
+                Each tuple must match the rank of event_shape.
+
+        Returns:
+            Wave: Output wave whose batch_size = len(indices),
+                  and event_shape = shape of each patch.
+        """
+        from .propagator.slice_propagator import SlicePropagator
+
+        return SlicePropagator(indices) @ self
+    
+    def __getitem__(self, index) -> "Wave":
+        """
+        Extract a single patch via slicing syntax.
+
+        Supports both slice objects and integer indices.
+
+        Example:
+            >>> x = Wave(event_shape=(32,32), batch_size=1)
+            >>> y1 = x[0:16, 0:16]   # slice
+            >>> y2 = x[0, 0:16]      # int + slice
+        """
+        if not isinstance(index, tuple):
+            index = (index,)
+
+        norm_index = []
+        for dim, idx in enumerate(index):
+            if isinstance(idx, bool):
+                raise TypeError(
+                    f"Invalid index type bool at dim {dim}. "
+                    f"Must be int or slice."
+                )
+            if isinstance(idx, int):
+                # Convert int to slice(i, i+1)
+                if idx < 0:
+                    idx += self.event_shape[dim]  # support negative indexing
+                if idx < 0 or idx >= self.event_shape[dim]:
+                    raise IndexError(
+                        f"Index {idx} out of bounds for dimension {dim} "
+                        f"with size {self.event_shape[dim]}"
+                    )
+                norm_index.append(slice(idx, idx + 1))
+            elif isinstance(idx, slice):
+                start = idx.start if idx.start is not None else 0
+                stop = idx.stop if idx.stop is not None else self.event_shape[dim]
+                step = idx.step
+                norm_index.append(slice(start, stop, step))
+            else:
+                raise TypeError(
+                    f"Invalid index type {type(idx)} at dim {dim}. "
+                    f"Must be int or slice."
+                )
+
+        return self.extract_patches([tuple(norm_index)])
+
+
+    def zero_pad(self, pad_width: tuple[tuple[int, int], ...]) -> "Wave":
+        """
+        Zero-pad this Wave along its event dimensions.
+
+        Args:
+            pad_width (tuple[tuple[int,int], ...]):
+                Same format as numpy.pad, but excluding the batch dimension.
+                Example: ((2,2), (3,3)) will pad rows by 2 top/bottom
+                and cols by 3 left/right.
+
+        Returns:
+            Wave: A new Wave with event_shape expanded according to pad_width.
+
+        Example:
+            >>> x = Wave(event_shape=(32, 32), batch_size=1)
+            >>> y = x.zero_pad(((2,2), (2,2)))
+            >>> y.event_shape
+            (36, 36)
+        """
+        from gpie.graph.propagator.zero_pad_propagator import ZeroPadPropagator
+
+        return ZeroPadPropagator(pad_width) @ self
+
+
 
     def __add__(self, other):
         """

@@ -107,10 +107,6 @@ class UncertainArray:
 
         self.dtype = self.data.dtype
         self._set_precision_internal(precision, batched)
-        self._scalar_precision = self.is_scalar(self._precision) or (
-            batched and self._precision.shape == (self.batch_size,) + (1,) * len(self.event_shape)
-        )
-
 
     
     def is_scalar(self, value):
@@ -192,64 +188,81 @@ class UncertainArray:
         """
         Internal setter for precision. Handles both scalar and array precision modes.
 
-        This method sets `self._precision` to a broadcastable array representation,
-        with the following conventions:
-
         - Scalar mode:
-            If `value` is a float or scalar-like object, it is expanded to shape:
-                (batch_size,) + (1,) * len(event_shape)
-            This ensures it can be broadcast over `self.data` of shape:
-                (batch_size, *event_shape)
-            The flag `self._scalar_precision` is set to True.
-
+            * batched=True: precision has shape (batch_size, 1, ..., 1)
+            * batched=False: precision is a scalar value or shape == ()
         - Array mode:
-            If `value` is an array, its shape must be broadcast-compatible with `self.data`.
-            A special case is handled where a 1D array of shape (batch_size,) is reshaped to:
-                (batch_size,) + (1,) * len(event_shape)
-            The flag `self._scalar_precision` is set to False.
-
-        Raises:
-            ValueError: If any precision value is non-positive or the shape is not broadcastable.
+            * batched=True: precision is broadcastable to (batch_size, *event_shape)
+            * batched=False: precision has shape == event_shape
         """
-
         real_dtype = get_real_dtype(self.dtype)
-
+        # ----- Case 1: scalar-like value ----
         if self.is_scalar(value):
             if value <= 0:
                 raise ValueError("Precision must be positive.")
-            
-            # Compute minimal broadcastable shape for scalar precision
-            if batched:
-                # Shape: (batch_size,) + (1,)*len(event_shape)
-                shape = (self.batch_size,) + (1,) * len(self.event_shape)
-            else:
-                # Shape: (1,)*ndim
-                shape = (1,) * self.data.ndim
-            
+
+            # broadcastable scalar precision
+            shape = (self.batch_size,) + (1,) * len(self.event_shape) if batched else (1,) * self.data.ndim
             self._precision = np().full(shape, float(value), dtype=real_dtype)
             self._scalar_precision = True
-
-        else:
-            # Convert to ndarray of proper dtype
-            arr = (
+            return
+        
+        # ----- Case 2: ndarray-like -----
+        arr = (
                 value if isinstance(value, np().ndarray) and value.dtype == real_dtype
                 else np().asarray(value, dtype=real_dtype)
             )
 
-            if batched and arr.ndim == 1 and arr.shape[0] == self.batch_size:
+        if batched:
+            # must match batch dimension
+            if arr.shape[0] != self.batch_size:
+                raise ValueError(
+                    f"Precision batch dimension mismatch: {arr.shape[0]} vs batch_size={self.batch_size}"
+                )
+            
+            # scalar precision case: shape == (batch_size,)
+            if arr.shape == (self.batch_size,):
                 arr = arr.reshape((self.batch_size,) + (1,) * len(self.event_shape))
+                self._precision = arr
+                self._scalar_precision = True
+                return
+            
+            # scalar precision case: shape == (batch_size, 1, 1, ..., 1)
+            if arr.shape == (self.batch_size,) + (1,) * len(self.event_shape):
+                self._precision = arr
+                self._scalar_precision = True
+                return
 
-            # Check broadcast compatibility
+            # array precision case: broadcast to data.shape
             try:
                 np().broadcast_shapes(arr.shape, self.data.shape)
             except Exception:
                 raise ValueError(
                     f"Precision shape {arr.shape} is not broadcastable to data shape {self.data.shape}."
                 )
-            
+
             self._precision = arr
             self._scalar_precision = False
+            return
 
+        else:
+            # batched = False
+            # scalar precision: shape == () or is scalar-like
+            
+            if arr.size == 1 and len(arr.shape) == len(self.event_shape):
+                self._precision = arr.reshape((1,) + arr.shape)
+                self._scalar_precision = True
+                return
+
+            # array precision: must match event_shape
+            if arr.shape == self.event_shape:
+                self._precision = arr.reshape((1,) + self.event_shape)
+                self._scalar_precision = False
+                return
+
+            raise ValueError(
+                f"Invalid precision shape {arr.shape} for event_shape {self.event_shape} with batched=False."
+            )
 
     def precision(self, raw: bool = False) -> NDArray | float:
         """
@@ -455,6 +468,66 @@ class UncertainArray:
         result_data = (p1 * d1 + p2 * d2) / precision_sum
 
         return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum)
+    
+
+    def fork(self, batch_size: int) -> "UncertainArray":
+        """
+        Replicate this UncertainArray into a new batched UncertainArray.
+
+        This method creates a new UncertainArray in which the current single
+        atomic Gaussian belief (batch_size=1) is duplicated into a batch of
+        identical copies. It is typically used when one latent variable
+        needs to be expanded into multiple identical instances, e.g., in
+        ptychography models where the same probe illuminates multiple positions.
+        """
+        if self.batch_size != 1:
+            raise ValueError("fork() expects batch_size=1 UncertainArray as input.")
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1.")
+
+        new_data = np().broadcast_to(self.data, (batch_size,) + self.event_shape).copy()
+        new_precision = np().broadcast_to(self.precision(raw=True),
+                                        (batch_size,) + (1,) * len(self.event_shape))
+        return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
+    
+    def fork(self, batch_size: int) -> "UncertainArray":
+        """
+        Replicate this UncertainArray into a new batched UncertainArray.
+
+        This method creates a new UncertainArray in which the current single
+        atomic Gaussian belief (batch_size=1) is duplicated into a batch of
+        identical copies. It is typically used when one latent variable
+        needs to be expanded into multiple identical instances, e.g., in
+        ptychography models where the same probe illuminates multiple positions.
+        """
+        if self.batch_size != 1:
+            raise ValueError("fork() expects batch_size=1 UncertainArray as input.")
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1.")
+
+        new_data = np().broadcast_to(
+            self.data,
+            (batch_size,) + self.event_shape
+        ).copy()
+
+        raw_prec = self.precision(raw=True)
+        # handle scalar vs array precision
+        if self._scalar_precision:
+            # e.g. shape (1,1,1) → (B,1,1)
+            new_precision = np().broadcast_to(
+                raw_prec,
+                (batch_size,) + (1,) * len(self.event_shape)
+            )
+        else:
+            # e.g. shape (1,H,W) → (B,H,W)
+            new_precision = np().broadcast_to(
+                raw_prec,
+                (batch_size,) + self.event_shape
+            )
+
+        return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
+
+
 
     
     def product_reduce_over_batch(self) -> "UncertainArray":
@@ -537,6 +610,99 @@ class UncertainArray:
         damped_precision = 1.0 / (damped_std ** 2)
 
         return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision)
+    
+
+    def zero_pad(self, pad_width: tuple[tuple[int, int], ...]) -> "UncertainArray":
+        """
+        Apply zero-padding to the UncertainArray along event dimensions.
+
+        Data in the padded regions are set to 0, and precision in those regions
+        is set to a very large number (≈1e8) with the same real dtype as the UA,
+        representing deterministic zeros.
+        """
+        pad_full = ((0, 0),) + pad_width
+        padded_data = np().pad(self.data, pad_full, mode="constant", constant_values=0)
+
+        # select real dtype (float32 for complex64, etc.)
+        real_dtype = get_real_dtype(self.dtype)
+        large_prec = real_dtype(1e8)  # precision scalar in correct dtype
+
+        padded_prec = np().pad(
+            self.precision(raw=False),
+            pad_full,
+            mode="constant",
+            constant_values=large_prec,
+        )
+
+        return UncertainArray(padded_data, dtype=self.dtype, precision=padded_prec)
+
+
+    def __getitem__(self, idx) -> "UncertainArray":
+        """
+        Return a sliced view of the UncertainArray along event dimensions.
+
+        This method behaves similarly to NumPy slicing, but only applies
+        to the event dimensions (batch dimension is fixed at 1).
+
+        Note:
+            For extracting *many* patches in one call, use
+            `UncertainArray.extract_patches` for better performance.
+
+        Args:
+            idx (slice or tuple of slices):
+                Slice object(s) specifying which portion of the event_shape
+                to extract. Do not include the batch dimension.
+
+        Returns:
+            UncertainArray:
+                A new UncertainArray containing the sliced region.
+        """
+
+        if self.batch_size != 1:
+            raise ValueError("__getitem__ expects batch_size=1 UncertainArray as input.")
+
+        if not isinstance(idx, tuple):
+            idx = (idx,)
+
+        sliced_data = self.data[(0,) + idx]        # pick batch 0 explicitly
+        sliced_prec = self.precision(raw=False)[(0,) + idx]
+
+        # reshape back to (1, *sliced_event_shape)
+        sliced_data = sliced_data.reshape((1,) + sliced_data.shape)
+        sliced_prec = sliced_prec.reshape((1,) + sliced_prec.shape)
+
+        return UncertainArray(sliced_data, dtype=self.dtype, precision=sliced_prec)
+
+
+    def extract_patches(self, indices: list[tuple]) -> "UncertainArray":
+        """
+        Extract multiple patches (slices) from the UncertainArray and
+        aggregate them into a new batched UncertainArray.
+
+        Each index in `indices` corresponds to a slice on the event_shape.
+        The resulting UncertainArray has batch_size = len(indices).
+
+        Args:
+            indices (list[tuple]):
+                List of slice tuples specifying patches to extract.
+                Each tuple should be compatible with the event_shape.
+
+        Returns:
+            UncertainArray:
+                A new UncertainArray with batch_size = len(indices), where
+                each batch entry corresponds to one extracted patch.
+        """
+        if self.batch_size != 1:
+            raise ValueError("extract_patches() expects batch_size=1 UncertainArray as input.")
+
+        data_slices = [self.data[(0,) + idx] for idx in indices]
+        stacked_data = np().stack(data_slices, axis=0)
+
+        prec_slices = [self.precision(raw=False)[(0,) + idx] for idx in indices]
+        stacked_prec = np().stack(prec_slices, axis=0)
+
+        return UncertainArray(stacked_data, dtype=self.dtype, precision=stacked_prec)
+
 
 
     def as_scalar_precision(self) -> "UncertainArray":
