@@ -2,10 +2,10 @@ from __future__ import annotations
 from numbers import Number
 from typing import Union, Optional, Literal, overload
 
-from .backend import np, move_array_to_current_backend
-from .types import ArrayLike, PrecisionMode, Precision, get_real_dtype
-from .linalg_utils import reduce_precision_to_scalar, random_normal_array
-from .fft import get_fft_backend
+from ..backend import np, move_array_to_current_backend
+from ..types import ArrayLike, PrecisionMode, Precision, get_real_dtype
+from ..linalg_utils import reduce_precision_to_scalar, random_normal_array
+from ..fft import get_fft_backend
 
 from numpy.typing import NDArray
 import warnings
@@ -15,7 +15,6 @@ import numpy as _np
 if TYPE_CHECKING:
     RealNDArray = NDArray[_np.float64]
     ComplexNDArray = NDArray[_np.complex128]
-
 
 class UncertainArray:
     """
@@ -326,17 +325,6 @@ class UncertainArray:
     def event_shape(self) -> tuple[int, ...]:
         return self.data.shape[1:]
 
-    @property
-    def shape(self) -> tuple[int, ...]:
-        warnings.warn("UncertainArray.shape is deprecated. Use .event_shape instead.", DeprecationWarning, stacklevel=2)
-        return self.data.shape
-
-    @property
-    def ndim(self) -> int:
-        warnings.warn("UncertainArray.ndim is deprecated. Use len(.event_shape) instead.", DeprecationWarning, stacklevel=2)
-        return self.data.ndim
-
-
     @classmethod
     def random(
         cls,
@@ -367,7 +355,7 @@ class UncertainArray:
 
         shape = (batch_size,) + event_shape
 
-        from .linalg_utils import random_normal_array
+        from ..linalg_utils import random_normal_array
         data = random_normal_array(shape, dtype=dtype, rng=rng)
 
         if scalar_precision:
@@ -450,336 +438,7 @@ class UncertainArray:
                 f"{self.precision_mode} vs {other.precision_mode}"
             )
 
-
-    def __mul__(self, other: "UncertainArray") -> "UncertainArray":
-        """
-        Combine two UncertainArrays under the additive precision model.
-
-        This corresponds to fusing two independent Gaussian beliefs:
-            posterior_precision = p1 + p2
-            posterior_mean = (p1 * m1 + p2 * m2) / (p1 + p2)
-        """
-        self.assert_compatible(other, context="__mul__")
-
-        d1, d2 = self.data, other.data
-        p1, p2 = self.precision(raw = True), other.precision(raw = True) 
-
-        precision_sum = p1 + p2
-        result_data = (p1 * d1 + p2 * d2) / precision_sum
-
-        return UncertainArray(result_data, dtype=self.dtype, precision=precision_sum)
     
-
-    def fork(self, batch_size: int) -> "UncertainArray":
-        """
-        Replicate this UncertainArray into a new batched UncertainArray.
-
-        This method creates a new UncertainArray in which the current single
-        atomic Gaussian belief (batch_size=1) is duplicated into a batch of
-        identical copies. It is typically used when one latent variable
-        needs to be expanded into multiple identical instances, e.g., in
-        ptychography models where the same probe illuminates multiple positions.
-        """
-        if self.batch_size != 1:
-            raise ValueError("fork() expects batch_size=1 UncertainArray as input.")
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1.")
-
-        new_data = np().broadcast_to(self.data, (batch_size,) + self.event_shape).copy()
-        new_precision = np().broadcast_to(self.precision(raw=True),
-                                        (batch_size,) + (1,) * len(self.event_shape))
-        return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
-    
-    def fork(self, batch_size: int) -> "UncertainArray":
-        """
-        Replicate this UncertainArray into a new batched UncertainArray.
-
-        This method creates a new UncertainArray in which the current single
-        atomic Gaussian belief (batch_size=1) is duplicated into a batch of
-        identical copies. It is typically used when one latent variable
-        needs to be expanded into multiple identical instances, e.g., in
-        ptychography models where the same probe illuminates multiple positions.
-        """
-        if self.batch_size != 1:
-            raise ValueError("fork() expects batch_size=1 UncertainArray as input.")
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1.")
-
-        new_data = np().broadcast_to(
-            self.data,
-            (batch_size,) + self.event_shape
-        ).copy()
-
-        raw_prec = self.precision(raw=True)
-        # handle scalar vs array precision
-        if self._scalar_precision:
-            # e.g. shape (1,1,1) → (B,1,1)
-            new_precision = np().broadcast_to(
-                raw_prec,
-                (batch_size,) + (1,) * len(self.event_shape)
-            )
-        else:
-            # e.g. shape (1,H,W) → (B,H,W)
-            new_precision = np().broadcast_to(
-                raw_prec,
-                (batch_size,) + self.event_shape
-            )
-
-        return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
-
-
-
-    
-    def product_reduce_over_batch(self) -> "UncertainArray":
-        """
-        Reduce batchedd UA by fusing all atomic instances into one.
-
-        This is equivalent to multiplying N Gaussians together:
-            posterior_precision = sum_i p_i
-            posterior_mean = sum_i (p_i * m_i) / sum_i p_i
-
-        Returns:
-            A new UncertainArray with batched=False.
-        """
-
-        # Get broadcasted precision of shape (N, *event_shape)
-        precision = self.precision(raw = True)       # shape: (N, ...)
-        weighted_data = precision * self.data  # shape: (N, ...)
-
-        # Sum over batch axis (axis=0)
-        precision_sum = np().sum(precision, axis=0)       # shape: event_shape
-        weighted_data_sum = np().sum(weighted_data, axis=0)  # shape: event_shape
-        reduced_data = np().divide(weighted_data_sum, precision_sum)
-
-        return UncertainArray(reduced_data, dtype=self.dtype, precision=precision_sum, batched = False)
-
-
-    def __truediv__(self, other: "UncertainArray") -> "UncertainArray":
-        """
-        Subtract a message from this UncertainArray under the additive precision model.
-
-        This corresponds to computing a residual message in EP-style belief propagation:
-            residual_precision = p1 - p2
-            residual_mean = (p1 * m1 - p2 * m2) / max(p1 - p2, 1.0)
-        """
-        self.assert_compatible(other, context="__truediv__")
-
-        d1, d2 = self.data, other.data
-        p1, p2 = self.precision(raw = True), other.precision(raw = True)  # ← raw=False → shape == data.shape
-
-        precision_diff = p1 - p2
-        precision_safe = np().maximum(precision_diff, 1.0)  # ← element-wise safety
-
-        result_data = (p1 * d1 - p2 * d2) / precision_safe
-
-        return UncertainArray(result_data, dtype=self.dtype, precision=precision_safe)
-
-
-    def damp_with(self, other: "UncertainArray", alpha: float) -> "UncertainArray":
-        """
-        Apply damping between this UncertainArray and another one.
-
-        Performs convex interpolation of:
-            - mean values (data)
-            - standard deviation (not precision)
-
-        This is used in EP/AMP-like updates where overcorrection is prevented.
-
-        References:
-            - Sarkar et al., "MRI Image Recovery using Damped Denoising Vector AMP", ICASSP 2021
-
-        Args:
-            other: Target UA to interpolate toward.
-            alpha: Damping coefficient in [0, 1].
-
-        Returns:
-            New UA with damped mean and raw (unbroadcasted) precision.
-        """
-        self.assert_compatible(other, context="damp_with")
-
-        if not (0.0 <= alpha <= 1.0):
-            raise ValueError(f"Alpha must be in [0, 1], but got {alpha}")
-
-        # Interpolate means
-        damped_data = (1 - alpha) * self.data + alpha * other.data
-
-        # Interpolate standard deviations (use raw precision to preserve shape)
-        std1 = np().sqrt(1.0 / self.precision(raw=True)).astype(get_real_dtype(self.dtype))
-        std2 = np().sqrt(1.0 / other.precision(raw=True)).astype(get_real_dtype(self.dtype))
-        damped_std = (1 - alpha) * std1 + alpha * std2
-        damped_precision = 1.0 / (damped_std ** 2)
-
-        return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision)
-    
-
-    def zero_pad(self, pad_width: tuple[tuple[int, int], ...]) -> "UncertainArray":
-        """
-        Apply zero-padding to the UncertainArray along event dimensions.
-
-        Data in the padded regions are set to 0, and precision in those regions
-        is set to a very large number (≈1e8) with the same real dtype as the UA,
-        representing deterministic zeros.
-        """
-        pad_full = ((0, 0),) + pad_width
-        padded_data = np().pad(self.data, pad_full, mode="constant", constant_values=0)
-
-        # select real dtype (float32 for complex64, etc.)
-        real_dtype = get_real_dtype(self.dtype)
-        large_prec = real_dtype(1e8)  # precision scalar in correct dtype
-
-        padded_prec = np().pad(
-            self.precision(raw=False),
-            pad_full,
-            mode="constant",
-            constant_values=large_prec,
-        )
-
-        return UncertainArray(padded_data, dtype=self.dtype, precision=padded_prec)
-
-
-    def __getitem__(self, idx) -> "UncertainArray":
-        """
-        Return a sliced view of the UncertainArray along event dimensions.
-
-        This method behaves similarly to NumPy slicing, but only applies
-        to the event dimensions (batch dimension is fixed at 1).
-
-        Note:
-            For extracting *many* patches in one call, use
-            `UncertainArray.extract_patches` for better performance.
-
-        Args:
-            idx (slice or tuple of slices):
-                Slice object(s) specifying which portion of the event_shape
-                to extract. Do not include the batch dimension.
-
-        Returns:
-            UncertainArray:
-                A new UncertainArray containing the sliced region.
-        """
-
-        if self.batch_size != 1:
-            raise ValueError("__getitem__ expects batch_size=1 UncertainArray as input.")
-
-        if not isinstance(idx, tuple):
-            idx = (idx,)
-
-        sliced_data = self.data[(0,) + idx]        # pick batch 0 explicitly
-        sliced_prec = self.precision(raw=False)[(0,) + idx]
-
-        # reshape back to (1, *sliced_event_shape)
-        sliced_data = sliced_data.reshape((1,) + sliced_data.shape)
-        sliced_prec = sliced_prec.reshape((1,) + sliced_prec.shape)
-
-        return UncertainArray(sliced_data, dtype=self.dtype, precision=sliced_prec)
-
-
-    def extract_patches(self, indices: list[tuple]) -> "UncertainArray":
-        """
-        Extract multiple patches (slices) from the UncertainArray and
-        aggregate them into a new batched UncertainArray.
-
-        Each index in `indices` corresponds to a slice on the event_shape.
-        The resulting UncertainArray has batch_size = len(indices).
-
-        Args:
-            indices (list[tuple]):
-                List of slice tuples specifying patches to extract.
-                Each tuple should be compatible with the event_shape.
-
-        Returns:
-            UncertainArray:
-                A new UncertainArray with batch_size = len(indices), where
-                each batch entry corresponds to one extracted patch.
-        """
-        if self.batch_size != 1:
-            raise ValueError("extract_patches() expects batch_size=1 UncertainArray as input.")
-
-        data_slices = [self.data[(0,) + idx] for idx in indices]
-        stacked_data = np().stack(data_slices, axis=0)
-
-        prec_slices = [self.precision(raw=False)[(0,) + idx] for idx in indices]
-        stacked_prec = np().stack(prec_slices, axis=0)
-
-        return UncertainArray(stacked_data, dtype=self.dtype, precision=stacked_prec)
-
-
-
-    def as_scalar_precision(self) -> "UncertainArray":
-        """
-        Convert to scalar precision mode (batch-wise harmonic reduction).
-        """
-        if self._scalar_precision:
-            return self
-
-        scalar_prec = reduce_precision_to_scalar(self.precision(raw=True))
-        return UncertainArray(self.data, dtype=self.dtype, precision=scalar_prec)
-
-    
-    def as_array_precision(self) -> "UncertainArray":
-        """
-        Convert this UncertainArray to array precision mode.
-
-        Promotes scalar precision to full per-element array.
-        """
-        if not self._scalar_precision:
-            return self
-
-        # Extract scalar value (guaranteed to be broadcastable constant)
-        raw_prec = self.precision(raw=True)
-
-        scalar_value = raw_prec.reshape((self.batch_size,) + (1,) * len(self.event_shape))
-
-        array_precision = np().full(self.data.shape, scalar_value, dtype=get_real_dtype(self.dtype))
-
-        return UncertainArray(self.data, dtype=self.dtype, precision=array_precision)
-    
-    
-    def fft2_centered(self) -> "UncertainArray":
-        """
-        Apply centered 2D FFT to the UncertainArray, assuming EP-style Gaussian message.
-
-        This operation applies `ifftshift → fft2 → fftshift` to the data.
-        The resulting UncertainArray always uses **scalar precision**:
-        - If the input is already scalar precision: precision remains unchanged
-        - If the input is array precision: precision is reduced using harmonic mean
-
-        Returns:
-            UncertainArray: FFT-transformed UA with scalar precision.
-        """
-        fft_backend = get_fft_backend()
-        transformed_data = fft_backend.fft2_centered(self.data)
-
-        if self._scalar_precision:
-            new_precision = self.precision(raw=True)
-        else:
-            new_precision = reduce_precision_to_scalar(self.precision(raw=True))
-
-        return UncertainArray(transformed_data, dtype=self.dtype, precision=new_precision)
-
-    def ifft2_centered(self) -> "UncertainArray":
-        """
-        Apply centered 2D inverse FFT to the UncertainArray.
-
-        This operation applies `ifftshift → ifft2 → fftshift` to the data.
-        The resulting UncertainArray always uses **scalar precision**:
-        - If the input is already scalar precision: precision remains unchanged
-        - If the input is array precision: precision is reduced using harmonic mean
-
-        Returns:
-            UncertainArray: Inverse FFT-transformed UA with scalar precision.
-        """
-        fft_backend = get_fft_backend()
-        transformed_data = fft_backend.ifft2_centered(self.data)
-
-        if self._scalar_precision:
-            new_precision = self.precision(raw=True)
-        else:
-            new_precision = reduce_precision_to_scalar(self.precision(raw=True))
-
-        return UncertainArray(transformed_data, dtype=self.dtype, precision=new_precision)
-
-
     def __repr__(self) -> str:
         """
         Return a string summary of the UncertainArray including event shape, batch size, and precision mode.
@@ -793,8 +452,3 @@ class UncertainArray:
                 f"precision={self.precision_mode}), "
                 f"UA(..., dtype={self.dtype.name})"
             )
-
-
-
-
-

@@ -176,16 +176,6 @@ def test_repr_contains_batch_info(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_shape_ndim_warns(xp):
-    backend.set_backend(xp)
-    ua = UncertainArray.zeros(event_shape=(4, 4))
-    with pytest.warns(DeprecationWarning):
-        _ = ua.shape
-    with pytest.warns(DeprecationWarning):
-        _ = ua.ndim
-
-
-@pytest.mark.parametrize("xp", backend_libs)
 def test_to_backend_roundtrip(xp):
     import numpy as np
 
