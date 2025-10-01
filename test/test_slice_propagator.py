@@ -222,3 +222,51 @@ def test_get_sample_for_output_without_sample(xp):
 
     with pytest.raises(RuntimeError, match="Input sample not set"):
         _ = prop.get_sample_for_output()
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_wave_extract_patches_and_getitem_slices(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+
+    # 複数パッチ
+    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
+    out = wave.extract_patches(indices)
+    assert isinstance(out, Wave)
+    assert out.batch_size == 2
+    assert out.event_shape == (2, 2)
+
+    # 単一パッチ (__getitem__)
+    out2 = wave[0:2, 0:2]
+    assert isinstance(out2, Wave)
+    assert out2.batch_size == 1
+    assert out2.event_shape == (2, 2)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_wave_getitem_with_int_index(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+
+    # 整数 index + slice
+    out = wave[0, 1:3]
+    assert out.batch_size == 1
+    assert out.event_shape == (1, 2)  # row fixed, 2 columns
+
+    # ネガティブ index
+    out2 = wave[-1, :]
+    assert out2.batch_size == 1
+    assert out2.event_shape == (1, 4)
+
+    # 整数 out of range
+    with pytest.raises(IndexError):
+        _ = wave[4, :]
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_wave_getitem_invalid_index_type(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+
+    # bool は未対応
+    with pytest.raises(TypeError):
+        _ = wave[True, :]
