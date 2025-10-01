@@ -300,7 +300,6 @@ class Graph:
                 ref=wave,
             )
         for factor in self._factors:
-            # Factor に label が無ければクラス名を使う
             factor_label = getattr(factor, "label", None)
             if not isinstance(factor_label, str) or not factor_label:
                 factor_label = factor.__class__.__name__

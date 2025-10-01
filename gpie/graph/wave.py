@@ -463,6 +463,31 @@ class Wave:
         return self.extract_patches([tuple(norm_index)])
 
 
+    def zero_pad(self, pad_width: tuple[tuple[int, int], ...]) -> "Wave":
+        """
+        Zero-pad this Wave along its event dimensions.
+
+        Args:
+            pad_width (tuple[tuple[int,int], ...]):
+                Same format as numpy.pad, but excluding the batch dimension.
+                Example: ((2,2), (3,3)) will pad rows by 2 top/bottom
+                and cols by 3 left/right.
+
+        Returns:
+            Wave: A new Wave with event_shape expanded according to pad_width.
+
+        Example:
+            >>> x = Wave(event_shape=(32, 32), batch_size=1)
+            >>> y = x.zero_pad(((2,2), (2,2)))
+            >>> y.event_shape
+            (36, 36)
+        """
+        from gpie.graph.propagator.zero_pad_propagator import ZeroPadPropagator
+
+        return ZeroPadPropagator(pad_width) @ self
+
+
+
     def __add__(self, other):
         """
         x + other → AddConstPropagator if other is scalar or ndarray,
