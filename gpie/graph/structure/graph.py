@@ -293,14 +293,30 @@ class Graph:
 
         G = nx.DiGraph()
         for wave in self._waves:
-            G.add_node(id(wave), label=wave.label or "Wave", type="wave", ref=wave)
+            G.add_node(
+                id(wave),
+                label=(wave.label if getattr(wave, "label", None) else "Wave"),
+                type="wave",
+                ref=wave,
+            )
         for factor in self._factors:
-            G.add_node(id(factor), label=factor.label or factor.__class__.__name__, type="factor", ref=factor)
+            # Factor に label が無ければクラス名を使う
+            factor_label = getattr(factor, "label", None)
+            if not isinstance(factor_label, str) or not factor_label:
+                factor_label = factor.__class__.__name__
+
+            G.add_node(
+                id(factor),
+                label=factor_label,
+                type="factor",
+                ref=factor,
+            )
             for wave in factor.inputs.values():
                 G.add_edge(id(wave), id(factor))
-            if factor.output:
+            if getattr(factor, "output", None):
                 G.add_edge(id(factor), id(factor.output))
         return G
+
 
     def visualize(
         self,

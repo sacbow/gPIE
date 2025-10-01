@@ -109,3 +109,20 @@ def test_get_sample_for_output_zero_pad(xp):
     padded = prop.get_sample_for_output()
     assert padded.shape == (1, 4, 4)   # (2+1+1, 2+2+0)
     assert xp.allclose(padded[:, 1:3, 2:4], sample)
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_wave_zero_pad_get_sample(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
+    sample = xp.arange(4, dtype=xp.complex64).reshape(1, 2, 2)
+    wave.set_sample(sample)
+
+    pad_width = ((1, 0), (0, 2))
+    out = wave.zero_pad(pad_width)
+
+    padded = out.parent.get_sample_for_output()
+    assert padded.shape == (1, 3, 4)
+
+    # 中央部分が元の sample に一致する
+    assert xp.allclose(padded[:, 1:, 0:2], sample)
+
