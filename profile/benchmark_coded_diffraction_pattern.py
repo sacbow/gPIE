@@ -30,9 +30,9 @@ def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: np
     AmplitudeMeasurement(var=noise, damping=0.3) << y
 
 
-def build_cdp_graph(H=1024, W=1024, noise=1e-4, n_measurements=4):
+def build_cdp_graph(size = 1024, noise=1e-4, n_measurements=4):
     rng = get_rng(seed=42)
-    shape = (H, W)
+    shape = (size, size)
     # batched random phase masks
     phase_masks = random_phase_mask((n_measurements, *shape), rng=rng, dtype=np.complex64)
 
@@ -43,8 +43,8 @@ def build_cdp_graph(H=1024, W=1024, noise=1e-4, n_measurements=4):
     return g
 
 
-def run_cdp(n_iter=100, verbose=False):
-    g = build_cdp_graph()
+def run_cdp(size, n_measurements, n_iter=100, verbose=False):
+    g = build_cdp_graph(size = size, n_measurements=n_measurements)
     true_x = g.get_wave("sample").get_sample()
 
     def monitor(graph, t):
@@ -86,10 +86,10 @@ if __name__ == "__main__":
     )
 
     if args.profile:
-        profile_with_cprofile(run_cdp, n_iter=args.n_iter, verbose=args.verbose)
+        profile_with_cprofile(run_cdp, n_iter=args.n_iter, verbose=args.verbose, size = args.size, n_measurements = args.measurements)
     else:
         _, elapsed = run_with_timer(
-            run_cdp, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True
+            run_cdp, size = args.size, n_measurements = args.measurements, n_iter=args.n_iter, verbose=args.verbose, sync_gpu=True
         )
         fft_mode = "fftw" if args.fftw else args.backend
         print(f"[{fft_mode}] Total time: {elapsed:.3f} s")

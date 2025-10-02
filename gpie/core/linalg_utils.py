@@ -2,6 +2,7 @@ from .backend import np
 from .types import ArrayLike
 from .rng_utils import get_rng, normal, choice, shuffle, uniform
 import warnings
+import math
 
 
 def reduce_precision_to_scalar(precision_array: np().ndarray) -> np().ndarray | float:
@@ -28,6 +29,7 @@ def reduce_precision_to_scalar(precision_array: np().ndarray) -> np().ndarray | 
     inv_var = 1.0 / precision_array
     harmonic_mean = 1.0 / np().mean(inv_var, axis=tuple(range(1, precision_array.ndim)))
     return harmonic_mean
+
 
 
 
@@ -129,7 +131,7 @@ def random_unitary_matrix(n, dtype=None, rng=None):
     Returns:
         np.ndarray: Unitary matrix of shape (n, n).
     """
-    dtype = np().complex128 if dtype is None else dtype
+    dtype = np().complex64 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
     A = random_normal_array((n, n), dtype=dtype, rng=rng)
     U, _, _ = np().linalg.svd(A)
@@ -164,7 +166,7 @@ def random_phase_mask(shape, dtype=None, rng=None):
     Returns:
         ndarray: Complex array with unit modulus (e.g., exp(1j * theta)).
     """
-    dtype = np().complex128 if dtype is None else dtype
+    dtype = np().complex64 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
     theta = uniform(rng, low=0.0, high=2 * np().pi, size=shape)
     return np().exp(1j * theta).astype(dtype)
@@ -254,7 +256,7 @@ def masked_random_array(support: ArrayLike, dtype=None, rng=None):
     Returns:
         np.ndarray: Array where entries are random in support region, zero elsewhere.
     """
-    dtype = np().complex128 if dtype is None else dtype
+    dtype = np().complex64 if dtype is None else dtype
     rng = get_rng() if rng is None else rng
     shape = support.shape
     full = random_normal_array(shape, dtype=dtype, rng=rng)
