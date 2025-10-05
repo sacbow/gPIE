@@ -13,14 +13,21 @@ class PtychographyDataset:
     def __init__(self):
         self.obj: Optional[np().ndarray] = None
         self.prb: Optional[np().ndarray] = None
+        self.pixel_size_um: Optional[float] = 1.0
         self._diff_data: List[DiffractionData] = []
 
-    # --- Object and Probe ---
+    # --- Object ,Probe, and pixel scale---
     def set_object(self, obj: np().ndarray):
         self.obj = obj
 
     def set_probe(self, prb: np().ndarray):
         self.prb = prb
+    
+    def set_pixel_size(self, pixel_size_um: float):
+        if pixel_size_um <= 0:
+            raise ValueError("pixel_size_um must be positive.")
+        self.pixel_size_um = pixel_size_um
+
 
     @property
     def obj_shape(self) -> Optional[Tuple[int, int]]:
