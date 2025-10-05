@@ -2,6 +2,8 @@
 
 from typing import List, Tuple, Union, Optional
 from .diffraction_data import DiffractionData
+from ..simulator.forward import generate_diffraction_data
+from ..utils.geometry import realspace_to_pixel_coords, filter_positions_within_object, slices_from_positions
 from gpie.core.backend import np
 
 
@@ -102,3 +104,76 @@ class PtychographyDataset:
 
     def __getitem__(self, idx: int) -> DiffractionData:
         return self._diff_data[idx]
+    
+    # ---- sumulation ----
+    def simulate_diffraction(
+        self,
+        scan_generator: "Generator[Tuple[float, float], None, None]",
+        max_num_points: int,
+        noise: float = 1e-4,
+        rng: Optional["np.random.Generator"] = None,
+    ):
+        """
+        Generate synthetic diffraction data using internal object/probe and a scan generator.
+
+        Parameters
+        ----------
+        scan_generator : generator
+            Generator yielding (y_um, x_um) real-space scan coordinates.
+        max_num_points : int
+            Maximum number of scan points to generate.
+        noise : float
+            Noise variance (σ²) for amplitude measurements.
+        rng : np.random.Generator, optional
+            Random number generator.
+        """
+        if self.obj is None or self.prb is None or self.pixel_size_um is None:
+            raise ValueError("Object, probe, and pixel size must be set before simulation.")
+
+        # Step 1: Generate real-space scan positions
+        positions_real = [next(scan_generator) for _ in range(max_num_points)]
+
+        # Step 2: Convert to pixel coordinates
+        positions_pixel = realspace_to_pixel_coords(
+            positions_real, pixel_size_um=self.pixel_size_um, obj_shape=self.obj.shape
+        )
+
+        # Step 3: Filter out invalid positions
+        valid_pixel_positions = filter_positions_within_object(
+            positions_pixel, obj_shape=self.obj.shape, probe_shape=self.prb.shape
+        )
+
+        # Step 4: Get slice indices
+        indices = slices_from_positions(
+            valid_pixel_positions, probe_shape=self.prb.shape, obj_shape=self.obj.shape
+        )
+
+        # Step 5: Generate diffraction data
+        from ..simulator.forward import ptychography_graph
+        from ..data.diffraction_data import DiffractionData
+
+        graph = ptychography_graph(
+            obj_shape=self.obj.shape,
+            prb_shape=self.prb.shape,
+            indices=indices,
+            noise=noise,
+        )
+        graph.get_wave("object").set_sample(self.obj)
+        graph.get_wave("probe").set_sample(self.prb)
+        graph.generate_sample(rng=rng, update_observed=True)
+        diffs = graph.get_factor("meas").get_sample()
+
+        # Step 6: Store results
+        results = []
+        for i, (pix_pos, idx) in enumerate(zip(valid_pixel_positions, indices)):
+            real_pos = (
+                (pix_pos[0] - self.obj.shape[0] // 2) * self.pixel_size_um,
+                (pix_pos[1] - self.obj.shape[1] // 2) * self.pixel_size_um,
+            )
+            results.append(DiffractionData(
+                position=real_pos,
+                diffraction=diffs[i],
+                noise=noise,
+                indices=idx,
+            ))
+        self.add_data(results)
