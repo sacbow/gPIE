@@ -27,13 +27,13 @@ class Measurement(Factor, ABC):
     expected_input_dtype: Optional[Any] = None     # e.g. np.floating or np.complexfloating
     expected_observed_dtype: Optional[Any] = None  # e.g. np.floating or np.complexfloating
 
-    def __init__(self, with_mask: bool = False) -> None:
+    def __init__(self, with_mask: bool = False, label: str = None) -> None:
         super().__init__()
 
         self._sample: Optional[np().ndarray] = None
         self.observed: Optional[UncertainArray] = None
         self._mask: Optional[np().ndarray] = None
-        self.label: Optional[str] = None
+        self.label: Optional[str] = label
         self._with_mask = with_mask
         self.input_dtype: Optional[np().dtype] = None
         self.observed_dtype: Optional[np().dtype] = None
@@ -117,7 +117,7 @@ class Measurement(Factor, ABC):
 
         dtype = data.dtype
         var = getattr(self, "_var", 1.0)
-        prec = precision if precision is not None else 1.0 / var
+        prec = precision if precision is not None else 1.0 / np().maximum(var, 1e-8)
 
         if not batched:
             data = data.reshape((1,) + data.shape)

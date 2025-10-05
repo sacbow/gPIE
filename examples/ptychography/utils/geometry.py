@@ -60,3 +60,51 @@ def filter_positions_within_object(
             j - w // 2 >= 0 and j + w // 2 < W):
             valid.append((i, j))
     return valid
+
+
+
+def slices_from_positions(
+    pixel_positions: List[Tuple[int, int]],
+    probe_shape: Tuple[int, int],
+    obj_shape: Tuple[int, int] = None,
+) -> List[Tuple[slice, slice]]:
+    """
+    Convert scan positions in pixel coordinates into slice tuples for object patches.
+
+    Parameters
+    ----------
+    pixel_positions : List of (i, j)
+        Center positions in pixel coordinates (row, col).
+    probe_shape : (h, w)
+        Shape of the probe window (height, width).
+    obj_shape : (H, W), optional
+        Shape of the object array. If provided, validity is checked and ValueError raised on overflow.
+
+    Returns
+    -------
+    List[Tuple[slice, slice]]
+        List of (slice_y, slice_x) usable with array indexing.
+    """
+    h, w = probe_shape
+    h_half = h // 2
+    w_half = w // 2
+
+    slices = []
+    for i, j in pixel_positions:
+        y_start = i - h_half
+        y_end = y_start + h
+        x_start = j - w_half
+        x_end = x_start + w
+
+        if obj_shape is not None:
+            H, W = obj_shape
+            if not (0 <= y_start < y_end <= H and 0 <= x_start < x_end <= W):
+                raise ValueError(
+                    f"Slice out of bounds: pos=({i},{j}), "
+                    f"slice=({y_start}:{y_end}, {x_start}:{x_end}), "
+                    f"obj_shape={obj_shape}"
+                )
+
+        slices.append((slice(y_start, y_end), slice(x_start, x_end)))
+
+    return slices

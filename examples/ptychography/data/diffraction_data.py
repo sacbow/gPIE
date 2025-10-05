@@ -15,7 +15,7 @@ class DiffractionData:
         indices: Optional slice for cropping into the object region.
         meta: Arbitrary metadata dictionary.
     """
-    position: Tuple[int, int]
+    position: Tuple[float, float]
     diffraction: np().ndarray
     noise: Optional[float] = None  # Variance
     indices: Optional[Tuple[slice, slice]] = None

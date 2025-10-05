@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 
 import pytest
-from examples.ptychography.utils.geometry import realspace_to_pixel_coords, filter_positions_within_object
+from examples.ptychography.utils.geometry import realspace_to_pixel_coords, filter_positions_within_object, slices_from_positions
 
 
 def test_realspace_to_pixel_coords_center_mapping():
@@ -86,3 +86,31 @@ def test_filter_positions_empty_when_all_outside():
     positions = [(0, 0), (63, 63), (5, 60), (60, 5)]
     filtered = filter_positions_within_object(positions, obj_shape, probe_shape)
     assert filtered == []
+
+
+def test_slices_from_positions_basic_and_filtered():
+    obj_shape = (100, 100)
+    probe_shape = (20, 20)
+
+    positions = [(50, 50), (40, 40), (60, 60)]
+    valid_positions = filter_positions_within_object(positions, obj_shape, probe_shape)
+
+    slices = slices_from_positions(valid_positions, probe_shape, obj_shape)
+    assert len(slices) == len(valid_positions)
+
+    s_y, s_x = slices[0]
+    assert isinstance(s_y, slice) and isinstance(s_x, slice)
+    assert s_y.start == 50 - probe_shape[0] // 2
+    assert s_y.stop == s_y.start + probe_shape[0]
+    assert s_x.start == 50 - probe_shape[1] // 2
+    assert s_x.stop == s_x.start + probe_shape[1]
+
+
+def test_slices_from_positions_raises_on_out_of_bounds():
+    obj_shape = (64, 64)
+    probe_shape = (32, 32)
+
+    out_of_bounds_positions = [(0, 0)]  # invalid
+
+    with pytest.raises(ValueError):
+        slices_from_positions(out_of_bounds_positions, probe_shape, obj_shape)
