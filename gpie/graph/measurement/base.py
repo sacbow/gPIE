@@ -117,7 +117,7 @@ class Measurement(Factor, ABC):
 
         dtype = data.dtype
         var = getattr(self, "_var", 1.0)
-        prec = precision if precision is not None else 1.0 / np().maximum(var, 1e-8)
+        prec = precision if precision is not None else 1.0 / var
 
         if not batched:
             data = data.reshape((1,) + data.shape)

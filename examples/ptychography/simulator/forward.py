@@ -1,4 +1,5 @@
 from gpie import Graph, model, GaussianPrior, fft2, AmplitudeMeasurement, replicate
+from gpie.core.backend import np
 from typing import Tuple, List
 
 # ---------- model definition ----------
@@ -9,6 +10,8 @@ def ptychography_graph(
     prb_shape: Tuple[int, int],
     indices: List[Tuple[slice, slice]],
     noise: float,
+    dtype = np().complex64,
+    damping :float = 0.0
 ) -> Graph:
     """
     Construct a factor graph for ptychography simulation.
@@ -30,8 +33,8 @@ def ptychography_graph(
         Assembled factor graph ready for sampling or inference.
     """
     # Object and probe priors
-    obj = ~GaussianPrior(event_shape = obj_shape, label="object", dtype="complex64")
-    prb = ~GaussianPrior(event_shape = prb_shape, label="probe", dtype="complex64")
+    obj = ~GaussianPrior(event_shape = obj_shape, label="object", dtype=dtype)
+    prb = ~GaussianPrior(event_shape = prb_shape, label="probe", dtype=dtype)
 
     # Extract patches from object
     patches = obj.extract_patches(indices)
@@ -43,4 +46,4 @@ def ptychography_graph(
     exit_waves = patches * prb_repl
 
     # Amplitude measurement (i.e., diffraction)
-    AmplitudeMeasurement(var=noise, label = "meas", damping = 0.3) << fft2(exit_waves)
+    AmplitudeMeasurement(var=noise, label = "meas", damping = damping) << fft2(exit_waves)
