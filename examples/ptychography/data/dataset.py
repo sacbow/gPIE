@@ -2,8 +2,12 @@
 
 from typing import List, Tuple, Union, Optional
 from .diffraction_data import DiffractionData
-from ..simulator.forward import generate_diffraction_data
 from ..utils.geometry import realspace_to_pixel_coords, filter_positions_within_object, slices_from_positions
+from ..utils.visualization import (
+    plot_scan_positions,
+    plot_diffraction_patterns,
+    plot_object_and_probe,
+)
 from gpie.core.backend import np
 
 
@@ -177,3 +181,21 @@ class PtychographyDataset:
                 indices=idx,
             ))
         self.add_data(results)
+    
+    def show_scan_positions(self):
+        """Visualize scan positions in real space."""
+        if not self._diff_data:
+            raise RuntimeError("No diffraction data to visualize.")
+        return plot_scan_positions(self.scan_positions)
+
+    def show_diffraction_patterns(self, ncols=4, log_scale=True):
+        """Display all diffraction patterns."""
+        if not self._diff_data:
+            raise RuntimeError("No diffraction data to visualize.")
+        return plot_diffraction_patterns(self._diff_data, ncols=ncols, log_scale=log_scale)
+
+    def show_object_and_probe(self):
+        """Display object and probe amplitude/phase."""
+        if self.obj is None or self.prb is None:
+            raise RuntimeError("Object and probe must be set before visualization.")
+        return plot_object_and_probe(self.obj, self.prb)
