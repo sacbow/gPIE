@@ -8,10 +8,11 @@ PIE, ePIE, and rPIE.
 """
 
 from gpie.core.backend import np
-from gpie.core.rng_utils import get_rng, random_normal_array
+from gpie.core.rng_utils import get_rng
+from gpie.core.linalg_utils import random_normal_array
 from gpie.core.fft import get_fft_backend
 from gpie.core.types import get_real_dtype
-from examples.ptychography.data.dataset import PtychographyDataset
+from ..data.dataset import PtychographyDataset
 
 
 class BasePIE:
