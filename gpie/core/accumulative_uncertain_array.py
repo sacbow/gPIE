@@ -36,10 +36,11 @@ class AccumulativeUncertainArray:
         self.event_shape = event_shape
         self.dtype = dtype
         real_dtype = get_real_dtype(dtype)
+        eps = real_dtype(1e-8)
 
         # initialize arrays
         self.weighted_data = np().zeros(event_shape, dtype=dtype)
-        self.precision = np().zeros(event_shape, dtype=real_dtype)
+        self.precision = np().full(event_shape, eps, dtype=real_dtype)
 
         # precompute coords for all patches
         self._coords_all, self._sizes, self._indices = self._precompute_coords(indices)
@@ -125,8 +126,10 @@ class AccumulativeUncertainArray:
         This is useful when reusing the same AUA structure (event_shape + indices)
         for multiple forward/backward passes.
         """
+        real_dtype = get_real_dtype(self.dtype)
+        eps = real_dtype(1e-8)
         self.weighted_data[...] = 0
-        self.precision[...] = 0
+        self.precision[...] = eps
     
     def mul_ua(self, ua) -> None:
         """
