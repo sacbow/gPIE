@@ -19,7 +19,7 @@ class MultiplyConstPropagator(Propagator):
         self._init_rng = None
 
         abs_vals = np().abs(self.const)
-        eps = np().array(1e-12, dtype=abs_vals.dtype)
+        eps = np().array(1e-8, dtype=abs_vals.dtype)
         self.const_safe = self.const.copy()
         self.const_safe[abs_vals < eps] = eps * np().exp(1j * np().angle(self.const_safe[abs_vals < eps]))
         self.inv_amp_sq = 1 / np().abs(self.const_safe) ** 2

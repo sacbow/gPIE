@@ -88,11 +88,7 @@ class AccumulativeUncertainArray:
             UncertainArray: with data = weighted_data / precision.
         """
         from .uncertain_array import UncertainArray
-
-        eps = get_real_dtype(self.dtype)(1e-8)
-        precision_safe = np().maximum(self.precision, eps)
-        data = self.weighted_data / precision_safe
-
+        data = self.weighted_data / self.precision
         return UncertainArray(data, dtype=self.dtype, precision=self.precision, batched=False)
 
 
@@ -112,9 +108,7 @@ class AccumulativeUncertainArray:
         stacked_weighted = np().stack(data_slices, axis=0)
         stacked_prec = np().stack(prec_slices, axis=0)
 
-        eps = get_real_dtype(self.dtype)(1e-8)
-        precision_safe = np().maximum(stacked_prec, eps)
-        data = stacked_weighted / precision_safe
+        data = stacked_weighted / stacked_prec
 
         return UncertainArray(data, dtype=self.dtype, precision=stacked_prec, batched=True)
 
