@@ -1,11 +1,24 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from typing import List
 from gpie.imaging.ptychography.data.diffraction_data import DiffractionData
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None  # Allow import without matplotlib (headless or CI environment)
+
+def _require_matplotlib():
+    """Raise an informative error if matplotlib is not installed."""
+    if plt is None:
+        raise ImportError(
+            "matplotlib is required for visualization functions. "
+            "Please install it via `pip install matplotlib`."
+        )
 
 
 def plot_scan_positions(positions: List[tuple], ax=None):
     """Plot scan positions in real space (μm)."""
+    _require_matplotlib()
     if ax is None:
         fig, ax = plt.subplots(figsize=(4, 4))
     else:
@@ -25,6 +38,7 @@ def plot_scan_positions(positions: List[tuple], ax=None):
 
 def plot_diffraction_patterns(diff_data_list: List[DiffractionData], ncols=4, log_scale=True):
     """Plot a grid of diffraction patterns."""
+    _require_matplotlib()
     n = len(diff_data_list)
     nrows = int(np.ceil(n / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols , 3 * nrows + 3))
@@ -49,6 +63,7 @@ def plot_diffraction_patterns(diff_data_list: List[DiffractionData], ncols=4, lo
 
 def plot_object_and_probe(obj: np.ndarray, prb: np.ndarray):
     """Visualize object and probe amplitude/phase."""
+    _require_matplotlib()
     fig, axes = plt.subplots(2, 2, figsize=(8, 8))
     amp_obj = np.abs(obj)
     phs_obj = np.angle(obj)
