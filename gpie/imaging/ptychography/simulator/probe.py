@@ -56,9 +56,9 @@ def generate_probe(
     *,
     kind: Literal["circular", "square"] = "circular",
     space: Literal["fourier", "real"] = "real",
-    smooth_edge_sigma: float = 0.05,
+    smooth_edge_sigma: float = 0.01,
     random_phase: bool = False,
-    cutoff_radius: float = 0.03,
+    cutoff_radius: float = 0.01,
     seed: Optional[int] = None,
 ) -> np().ndarray:
     """

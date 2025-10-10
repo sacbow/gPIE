@@ -43,7 +43,7 @@ def coded_diffraction_model(var, masks, dtype=np.complex64):
     Y = fft2(masked)
 
     # Amplitude measurement (batched)
-    AmplitudeMeasurement(var=var, damping=0.2) << Y
+    AmplitudeMeasurement(var=var, damping=0.3) << Y
     return
 
 
@@ -87,3 +87,6 @@ def test_coded_diffraction_model_reconstruction(xp):
     est = g.get_wave("obj").compute_belief().data
     assert est.shape == (1, *shape)
     assert isinstance(est, xp.ndarray)
+
+
+

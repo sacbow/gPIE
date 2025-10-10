@@ -1,4 +1,4 @@
-from ...core.backend import np
+from ...core.backend import np, move_array_to_current_backend
 from typing import Optional, Tuple, Any
 
 from .base import Prior
@@ -49,7 +49,7 @@ class GaussianPrior(Prior):
         
         real_dtype = get_real_dtype(dtype)
         self.var: float = real_dtype(var)
-        self.precision: float = 1.0 / var
+        self.precision: float = np().asarray(1.0 / var)
 
         super().__init__(
             event_shape=event_shape,
@@ -58,6 +58,9 @@ class GaussianPrior(Prior):
             precision_mode=precision_mode,
             label=label
         )
+    
+    def to_backend(self):
+        move_array_to_current_backend(self.precision)
 
 
     def _compute_message(self, incoming: UA) -> UA:

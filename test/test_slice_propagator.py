@@ -6,6 +6,7 @@ from gpie.core import backend
 from gpie.graph.wave import Wave
 from gpie.core.uncertain_array import UncertainArray as UA
 from gpie.graph.propagator.slice_propagator import SlicePropagator
+from gpie.core import AccumulativeUncertainArray
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -212,3 +213,64 @@ def test_get_sample_for_output_without_sample(xp):
 
     with pytest.raises(RuntimeError, match="Input sample not set"):
         _ = prop.get_sample_for_output()
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy not installed")
+def test_to_backend_numpy_cupy_roundtrip():
+    # --- NumPy backend ---
+    backend.set_backend(np)
+    event_shape = (4, 4)
+    indices = [(slice(0, 2), slice(0, 2))]
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=np.complex64)
+    prop = SlicePropagator(indices)
+    _ = prop @ wave
+
+    # AUA should initially be numpy-based
+    assert isinstance(prop.output_product.weighted_data, np.ndarray)
+    assert isinstance(prop.output_product.precision, np.ndarray)
+
+    # --- Move to CuPy backend ---
+    backend.set_backend(cp)
+    prop.to_backend()
+
+    # Ensure AUA internal arrays are CuPy ndarrays
+    assert isinstance(prop.output_product.weighted_data, cp.ndarray)
+    assert isinstance(prop.output_product.precision, cp.ndarray)
+    assert prop.dtype == cp.dtype("complex64")
+
+    # --- Move back to NumPy backend ---
+    backend.set_backend(np)
+    prop.to_backend()
+
+    # Ensure AUA internal arrays return to NumPy ndarrays
+    assert isinstance(prop.output_product.weighted_data, np.ndarray)
+    assert isinstance(prop.output_product.precision, np.ndarray)
+    assert prop.dtype == np.dtype("complex64")
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy not installed")
+def test_to_backend_numpy_cupy_roundtrip():
+    backend.set_backend(np)
+    event_shape = (4, 4)
+    indices = [(slice(0, 2), slice(0, 2))]
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=np.complex64)
+
+    # Fill with known pattern
+    aua.weighted_data[...] = (1.0 + 1.0j)
+    aua.precision[...] = 2.0
+
+    # --- Move to CuPy backend ---
+    backend.set_backend(cp)
+    aua.to_backend()
+
+    assert isinstance(aua.weighted_data, cp.ndarray)
+    assert isinstance(aua.precision, cp.ndarray)
+    assert cp.allclose(aua.weighted_data, cp.full(event_shape, 1.0 + 1.0j))
+    assert cp.allclose(aua.precision, cp.full(event_shape, 2.0))
+
+    # --- Move back to NumPy backend ---
+    backend.set_backend(np)
+    aua.to_backend()
+
+    assert isinstance(aua.weighted_data, np.ndarray)
+    assert isinstance(aua.precision, np.ndarray)
+    assert np.allclose(aua.weighted_data, np.full(event_shape, 1.0 + 1.0j))
+    assert np.allclose(aua.precision, np.full(event_shape, 2.0))

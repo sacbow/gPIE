@@ -27,7 +27,7 @@ def plot_diffraction_patterns(diff_data_list: List[DiffractionData], ncols=4, lo
     """Plot a grid of diffraction patterns."""
     n = len(diff_data_list)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 3 * nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols , 3 * nrows + 3))
     axes = np.array(axes).ravel()
 
     for i, (d, ax) in enumerate(zip(diff_data_list, axes)):
@@ -42,7 +42,7 @@ def plot_diffraction_patterns(diff_data_list: List[DiffractionData], ncols=4, lo
     for ax in axes[n:]:
         ax.axis("off")
 
-    fig.suptitle("Diffraction patterns", fontsize=14)
+    fig.suptitle("Diffraction patterns", fontsize=20)
     fig.tight_layout()
     return fig
 

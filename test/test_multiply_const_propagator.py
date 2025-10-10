@@ -7,7 +7,7 @@ from gpie.graph.wave import Wave
 from gpie.graph.propagator.multiply_const_propagator import MultiplyConstPropagator
 from gpie.core.uncertain_array import UncertainArray as UA
 from gpie.core.rng_utils import get_rng
-from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode
+from gpie.core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_real_dtype
 
 # Optional CuPy support
 cupy_spec = importlib.util.find_spec("cupy")
@@ -32,7 +32,7 @@ def test_forward_backward_scalar_and_uniform(xp, const_val):
     shape = (2, 2)
     B = 1
     wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    ua_in = UA.random(event_shape = shape, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    ua_in = UA.random(event_shape=shape, dtype=xp.complex64, rng=rng, scalar_precision=True)
 
     prop = MultiplyConstPropagator(const=const_val)
     output = prop @ wave
@@ -42,11 +42,21 @@ def test_forward_backward_scalar_and_uniform(xp, const_val):
 
     msg_out = prop._compute_forward(ua_in)
     assert msg_out.event_shape == shape
-    assert xp.allclose(msg_out.data, ua_in.data * prop.const_safe)
+
+    abs_sq = xp.abs(prop.const) ** 2
+    eps = xp.array(prop._eps, dtype=get_real_dtype(prop.const_dtype))
+
+    expected_mu_out = ua_in.data * prop.const
+    expected_prec_out = ua_in.precision(raw=True) / (abs_sq + eps)
+    assert xp.allclose(msg_out.data, expected_mu_out)
+    assert xp.allclose(msg_out.precision(raw=True), expected_prec_out)
 
     msg_back = prop._compute_backward(msg_out)
+    expected_mu_in = msg_out.data * xp.conj(prop.const) / (abs_sq + eps)
+    expected_prec_in = msg_out.precision(raw=True) * abs_sq
     assert msg_back.event_shape == shape
-    assert xp.allclose(msg_back.data, msg_out.data / prop.const_safe)
+    assert xp.allclose(msg_back.data, expected_mu_in)
+    assert xp.allclose(msg_back.precision(raw=True), expected_prec_in)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -104,8 +114,9 @@ def test_to_backend_transfer(xp):
     prop.to_backend()
 
     assert isinstance(prop.const, new_backend.ndarray)
-    assert isinstance(prop.const_safe, new_backend.ndarray)
-    assert isinstance(prop.inv_amp_sq, new_backend.ndarray)
+    assert isinstance(prop.const_conj, new_backend.ndarray)
+    assert isinstance(prop.const_abs_sq, new_backend.ndarray)
+    assert isinstance(prop._eps, new_backend.ndarray)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
@@ -130,6 +141,7 @@ def test_repr(xp):
     prop_array = MultiplyConstPropagator(xp.ones((2, 2)))
     assert "scalar" in repr(prop_scalar)
     assert "shape" in repr(prop_array)
+
 
 @pytest.mark.parametrize("xp", [np])
 def test_set_precision_mode_conflicts_and_invalid(xp):
