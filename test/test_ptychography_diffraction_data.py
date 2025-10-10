@@ -34,12 +34,19 @@ def test_summary_string():
     assert "test" in str(data.meta)
 
 
+@pytest.mark.skipif(
+    pytest.importorskip("matplotlib", reason="matplotlib not installed") is None,
+    reason="matplotlib not available"
+)
 def test_show_runs_without_error():
+    """Ensure DiffractionData.show() runs without GUI errors."""
     import matplotlib
-    matplotlib.use("Agg")  # headless
-    set_backend(np)
+    matplotlib.use("Agg")  # headless backend for CI
+    import matplotlib.pyplot as plt
 
     arr = backend_np().ones((8, 8), dtype=backend_np().complex64)
     data = DiffractionData(position=(0, 0), diffraction=arr)
+
     ax = data.show()
     assert ax is not None
+    plt.close(ax.figure)
