@@ -49,6 +49,15 @@ class SlicePropagator(Propagator):
 
         # AUA will be initialized later, once we know input dtype/event_shape
         self.output_product: Optional[AUA] = None
+    
+    def to_backend(self) -> None:
+        """
+        Ensures that this propagator and its associated AccumulativeUncertainArray (AUA)
+        remain consistent when switching between NumPy and CuPy backends.
+        """
+        # move associated AUA (if initialized)
+        if self.output_product is not None:
+            self.output_product.to_backend()
 
 
     def __matmul__(self, wave: Wave) -> Wave:

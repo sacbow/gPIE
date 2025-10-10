@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional
-from .backend import np
+from .backend import np, move_array_to_current_backend
 from .types import get_real_dtype
 from .linalg_utils import scatter_add
 
@@ -44,6 +44,24 @@ class AccumulativeUncertainArray:
 
         # precompute coords for all patches
         self._coords_all, self._sizes, self._indices = self._precompute_coords(indices)
+    
+    def to_backend(self) -> None:
+        """
+        Move internal arrays to the current backend (NumPy or CuPy).
+
+        This ensures that AUA remains consistent when switching between
+        NumPy and CuPy backends via gpie.set_backend().
+        """
+        from .backend import np, move_array_to_current_backend
+        real_dtype = get_real_dtype(self.dtype)
+
+        # Move main arrays
+        self.weighted_data = move_array_to_current_backend(self.weighted_data, dtype=self.dtype)
+        self.precision = move_array_to_current_backend(self.precision, dtype=real_dtype)
+
+        # Move cached coordinate arrays
+        self._coords_all = move_array_to_current_backend(self._coords_all, dtype=int)
+
 
     def _precompute_coords(self, indices):
         coords_all = []
@@ -121,7 +139,7 @@ class AccumulativeUncertainArray:
         for multiple forward/backward passes.
         """
         real_dtype = get_real_dtype(self.dtype)
-        eps = real_dtype(1e-8)
+        eps = real_dtype(1e-12)
         self.weighted_data[...] = 0
         self.precision[...] = eps
     
