@@ -1,7 +1,10 @@
 import pytest
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")  # disable GUI backend for headless test environments
+
+# --- Optional matplotlib import ---
+matplotlib = pytest.importorskip("matplotlib", reason="matplotlib not installed in this environment")
+matplotlib.use("Agg")  # Use non-interactive backend for headless CI
+plt = pytest.importorskip("matplotlib.pyplot")
 
 from gpie.imaging.ptychography.data.dataset import PtychographyDataset
 from gpie.imaging.ptychography.simulator.scan import generate_raster_positions
@@ -38,25 +41,28 @@ def test_load_sample_image(tmp_path):
     assert np.all((0.0 <= img) & (img <= 1.0)), "Image must be normalized to [0, 1]."
 
 
+@pytest.mark.skipif(plt is None, reason="matplotlib not available, skipping visualization tests")
 def test_show_object_and_probe(sample_dataset):
     """Ensure that object/probe visualization runs without errors."""
     ds = sample_dataset
     fig = ds.show_object_and_probe()
     assert hasattr(fig, "savefig"), "Expected matplotlib Figure."
-    fig.clf()  # release memory
+    plt.close(fig)
 
 
+@pytest.mark.skipif(plt is None, reason="matplotlib not available, skipping visualization tests")
 def test_show_scan_positions(sample_dataset):
     """Ensure that scan position visualization runs."""
     ds = sample_dataset
     fig = ds.show_scan_positions()
     assert hasattr(fig, "savefig"), "Expected matplotlib Figure."
-    fig.clf()
+    plt.close(fig)
 
 
+@pytest.mark.skipif(plt is None, reason="matplotlib not available, skipping visualization tests")
 def test_show_diffraction_patterns(sample_dataset):
     """Ensure that diffraction pattern visualization runs."""
     ds = sample_dataset
     fig = ds.show_diffraction_patterns(ncols=2)
     assert hasattr(fig, "savefig"), "Expected matplotlib Figure."
-    fig.clf()
+    plt.close(fig)
