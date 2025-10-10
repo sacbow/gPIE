@@ -32,9 +32,8 @@ def div_ua(self: UncertainArray, other: UncertainArray) -> UncertainArray:
 
     d1, d2 = self.data, other.data
     p1, p2 = self.precision(raw = True), other.precision(raw = True)  # ← raw=False → shape == data.shape
-
     precision_diff = p1 - p2
-    precision_safe = np().maximum(precision_diff, 1.0)  # ← element-wise safety
+    precision_safe = np().maximum(precision_diff, 1e-2 * p2)
 
     result_data = (p1 * d1 - p2 * d2) / precision_safe
 

@@ -43,7 +43,7 @@ def coded_diffraction_model(var, masks, dtype=np.complex64):
     Y = fft2(masked)
 
     # Amplitude measurement (batched)
-    AmplitudeMeasurement(var=var, damping=0.3) << Y
+    AmplitudeMeasurement(var=var, damping=0.2) << Y
     return
 
 
