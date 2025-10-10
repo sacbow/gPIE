@@ -1,5 +1,23 @@
 # Changelog
 
+
+## [0.2.0] - 2025-10-10
+### Added
+- Ptychography support via new factor-graph modules:
+
+  - PtychographyDataset: unified container for object, probe, and diffraction data.
+
+  - SlicePropagator + AccumulativeUncertainArray: A syntax to describe the physical model of ptychography.
+
+- Example script:
+  - examples/notebook/ptychography_demo.ipynb — An introduction to ptychographic phase retrieval via gPIE
+
+  - examples/scripts/ptychography/ptychography.py — complete forward and reconstruction workflow.
+
+### Note
+- Ptychographic reconstruction via gPIE is seen as an implementation of the Ptycho-EP algorithm proposed in our paper **Ueda, H., Katakami, S., & Okada, M. (2025). A Message-Passing Perspective on Ptychographic Phase Retrieval** on [Arxiv](https://arxiv.org/abs/2504.05668).
+
+
 ## [0.1.2] - 2025-10-01
 ### Added
 - New propagators:

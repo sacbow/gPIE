@@ -87,3 +87,6 @@ def test_coded_diffraction_model_reconstruction(xp):
     est = g.get_wave("obj").compute_belief().data
     assert est.shape == (1, *shape)
     assert isinstance(est, xp.ndarray)
+
+
+

@@ -213,3 +213,7 @@ class Factor(ABC):
             NotImplementedError: If the factor does not support generative sampling.
         """
         raise NotImplementedError(f"{type(self).__name__} does not implement `get_sample_for_output()`.")
+    
+    #override if necessary
+    def to_backend(self):
+        pass

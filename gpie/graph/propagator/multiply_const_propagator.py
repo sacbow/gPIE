@@ -12,27 +12,110 @@ from ...core.types import (
 
 
 class MultiplyConstPropagator(Propagator):
-    def __init__(self, const: Union[float, complex, np().ndarray]):
+    """
+    MultiplyConstPropagator
+    -----------------------
+    Deterministic unary propagator that multiplies the incoming wave
+    by a fixed constant or field (e.g., a probe illumination function in ptychography).
+
+    This propagator performs elementwise multiplication:
+        Forward :  μ_out = μ_in × const
+        Backward:  μ_in  = μ_out × conj(const) / (|const|² + ε)
+
+    Precision (inverse variance) propagation:
+        Forward :  prec_out = prec_in / (|const|² + ε)
+        Backward:  prec_in  = prec_out × |const|²
+
+    where ε > 0 is a small stabilizer added to the denominator to avoid
+    precision explosion when |const| → 0.
+
+    Parameters
+    ----------
+    const : float | complex | ndarray
+        Constant multiplier (illumination field). Can be scalar or any array
+        broadcastable to the input wave shape.
+    eps : float, optional (default: 1e-8)
+        Positive stabilizer added to |const|² in divisions for numerical stability.
+
+    Attributes
+    ----------
+    const : ndarray
+        The complex multiplicative field.
+    const_conj : ndarray
+        Complex conjugate of `const`.
+    const_abs_sq : ndarray
+        Squared amplitude |const|² used for precision scaling.
+    _eps : ndarray
+        Stabilization constant stored as a scalar array on the current backend.
+    const_dtype : dtype
+        Data type of the constant field.
+    _init_rng : Generator | None
+        Optional RNG for initializing messages when needed.
+    """
+
+    def __init__(self, const: Union[float, complex, np().ndarray], *, eps: float = 1e-12, dtype = np().complex128):
+        """
+        Initialize a propagator that multiplies the incoming message by a fixed complex field.
+
+        Parameters
+        ----------
+        const : float | complex | ndarray
+            The illumination field (probe) or any constant multiplicative field.
+            It can be scalar or an array broadcastable to the wave shape later in `__matmul__`.
+        eps : float, optional (default: 1e-8)
+            Non-negative stabilizer added to |const|^2 in divisions to avoid precision blow-ups:
+                forward  : precision_out = precision_in / (|const|^2 + eps)
+                backward : mean_in = mean_out * conj(const) / (|const|^2 + eps)
+            Note: this does NOT clamp const itself; it regularizes only the denominators.
+        """
         super().__init__(input_names=("input",))
-        self.const = np().asarray(const)
+        # Store the raw constant as provided (no clamping). Keep dtype for later synchronization.
+        self.const = np().asarray(const, dtype = dtype)
         self.const_dtype = self.const.dtype
         self._init_rng = None
 
-        abs_vals = np().abs(self.const)
-        eps = np().array(1e-12, dtype=abs_vals.dtype)
-        self.const_safe = self.const.copy()
-        self.const_safe[abs_vals < eps] = eps * np().exp(1j * np().angle(self.const_safe[abs_vals < eps]))
-        self.inv_amp_sq = 1 / np().abs(self.const_safe) ** 2
+        # Validate and store stabilizer epsilon in a dtype-consistent 0-D array.
+        if eps < 0:
+            raise ValueError("eps must be non-negative.")
+        self._eps = np().array(eps, dtype=get_real_dtype(self.const_dtype))
+
+        # Precompute caches used by forward/backward:
+        #   - const_conj  : complex conjugate of const
+        #   - const_abs_sq: |const|^2 (real)
+        self._rebuild_cached_fields()
+
+    def _rebuild_cached_fields(self) -> None:
+        """(Re)build cached arrays derived from `self.const`. Call after dtype/backend changes."""
+        # Conjugate shares the complex dtype with `const`.
+        self.const_conj = np().conj(self.const)
+        # |const|^2 is real-valued with the corresponding real dtype.
+        self.const_abs_sq = np().abs(self.const) ** 2
 
     def to_backend(self):
+        """
+        Move internal arrays to the current backend and refresh cached fields.
+
+        Notes
+        -----
+        - `const` is moved first and becomes the source of truth.
+        - `const_conj` and `const_abs_sq` are rebuilt to guarantee consistency.
+        - `_eps` is cast to the current real dtype to keep arithmetic stable.
+        """
+        # Move `const` to the active backend with its original complex dtype.
         self.const = move_array_to_current_backend(self.const, dtype=self.const_dtype)
-        self.const_safe = move_array_to_current_backend(self.const_safe, dtype=self.const_dtype)
-        self.inv_amp_sq = move_array_to_current_backend(self.inv_amp_sq, dtype=get_real_dtype(self.const_dtype))
-        self.const_dtype = self.const.dtype
+        self.const_dtype = self.const.dtype  # sync dtype after move
+
+        # Rebuild caches on the active backend to ensure exact consistency.
+        self._rebuild_cached_fields()
+
+        # Cast epsilon to the current backend and real dtype corresponding to `const`.
+        self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
+
 
     def set_init_rng(self, rng):
         self._init_rng = rng
     
+
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
         if isinstance(mode, str):
             mode = UnaryPropagatorPrecisionMode(mode)
@@ -84,21 +167,55 @@ class MultiplyConstPropagator(Propagator):
         else:
             return PrecisionMode.ARRAY
 
-    def _compute_forward(self, input_msg : UA) -> UA:
+    def _compute_forward(self, input_msg: UA) -> UA:
+        """
+        Compute the forward message through the multiplicative constant factor.
+
+        Forward mapping:
+            μ_out = μ_in × const
+            prec_out = prec_in / (|const|² + ε)
+
+        Notes
+        -----
+        - This operation propagates the uncertainty through elementwise multiplication.
+        - The denominator regularization (|const|² + ε) prevents precision blow-up
+        near regions where |const| ≈ 0.
+        """
         dtype = np().result_type(input_msg.dtype, self.const_dtype)
         input_msg = input_msg.astype(dtype)
-        const = self.const_safe.astype(dtype)
+
+        const = self.const.astype(dtype)
+        abs_sq = self.const_abs_sq.astype(get_real_dtype(dtype))
+        eps = self._eps.astype(get_real_dtype(dtype))
+
         mu = input_msg.data * const
-        prec = input_msg.precision(raw=True) * self.inv_amp_sq
+        prec = input_msg.precision(raw=True) / (abs_sq + eps)
         return UA(mu, dtype=dtype, precision=prec)
 
 
     def _compute_backward(self, output_msg: UA) -> UA:
+        """
+        Compute the backward message through the multiplicative constant factor.
+
+        Backward mapping (adjoint of the forward transform):
+            μ_in = μ_out × conj(const) / (|const|² + ε)
+            prec_in = prec_out × |const|²
+
+        Notes
+        -----
+        - Uses complex conjugation to ensure correct adjoint mapping.
+        - The same regularization ε used in forward ensures numerical stability
+        while maintaining conjugate symmetry.
+        """
         dtype = np().result_type(output_msg.dtype, self.const_dtype)
-        const = self.const_safe.astype(dtype)
-        mu = output_msg.data / const
-        prec = output_msg.precision(raw=True) / self.inv_amp_sq
+        const_conj = self.const_conj.astype(dtype)
+        abs_sq = self.const_abs_sq.astype(get_real_dtype(dtype))
+        eps = self._eps.astype(get_real_dtype(dtype))
+
+        mu = output_msg.data * const_conj / (abs_sq + eps)
+        prec = output_msg.precision(raw=True) * abs_sq
         return UA(mu, dtype=dtype, precision=prec)
+
 
     def forward(self):
         input_msg = self.input_messages[self.inputs["input"]]
@@ -146,30 +263,57 @@ class MultiplyConstPropagator(Propagator):
         return x * const
 
     def __matmul__(self, wave: Wave) -> Wave:
+        """
+        Connect this propagator to a Wave via the `@` operator.
+
+        This operation determines the common dtype, broadcasts the constant
+        to match the Wave shape, and constructs the output Wave.
+
+        Parameters
+        ----------
+        wave : Wave
+            Input Wave node. Its (batch_size, event_shape, dtype) determine
+            how `const` will be broadcast and cast.
+
+        Returns
+        -------
+        Wave
+            Output Wave produced by this propagator.
+        """
+        # --- dtype negotiation ---
         self.dtype = get_lower_precision_dtype(wave.dtype, self.const_dtype)
         self.const = np().asarray(self.const, dtype=self.dtype)
         self.const_dtype = self.const.dtype
-        self.const_safe = self.const_safe.astype(self.dtype)
-        self.inv_amp_sq = self.inv_amp_sq.astype(get_real_dtype(self.dtype))
 
+        # --- broadcast constant to expected shape ---
         expected_shape = (wave.batch_size, *wave.event_shape)
         try:
             self.const = np().broadcast_to(self.const, expected_shape)
-            self.const_safe = np().broadcast_to(self.const_safe, expected_shape)
-            self.inv_amp_sq = np().broadcast_to(self.inv_amp_sq, expected_shape)
         except ValueError:
             raise ValueError(
-                f"MultiplyConstPropagator: constant shape {self.const.shape} not broadcastable to wave shape {expected_shape}"
+                f"MultiplyConstPropagator: constant shape {self.const.shape} "
+                f"is not broadcastable to wave shape {expected_shape}"
             )
 
+        self._rebuild_cached_fields()
+
+        # Ensure epsilon lives on the same backend and dtype
+        self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
+
+        # --- connect graph structure ---
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
 
-        out_wave = Wave(event_shape=wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
+        out_wave = Wave(
+            event_shape=wave.event_shape,
+            batch_size=wave.batch_size,
+            dtype=self.dtype,
+        )
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
+
 
 
     def __repr__(self) -> str:

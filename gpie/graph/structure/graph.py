@@ -189,6 +189,27 @@ class Graph:
         if len(matches) > 1:
             raise ValueError(f"Multiple waves found with label '{label}'")
         return matches[0]
+    
+    def get_factor(self, label: str):
+        """
+        Retrieve the Factor instance with the given label.
+
+        Args:
+            label (str): Label assigned to the Factor.
+
+        Returns:
+            Factor instance with the specified label.
+
+        Raises:
+            ValueError: If no factor with the given label exists or if multiple factors share the label.
+        """
+        matches = [f for f in self._factors if getattr(f, "label", None) == label]
+        if not matches:
+            raise ValueError(f"No factor found with label '{label}'")
+        if len(matches) > 1:
+            raise ValueError(f"Multiple factors found with label '{label}'")
+        return matches[0]
+
 
 
     def forward(self):

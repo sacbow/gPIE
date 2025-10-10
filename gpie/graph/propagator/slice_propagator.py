@@ -49,6 +49,15 @@ class SlicePropagator(Propagator):
 
         # AUA will be initialized later, once we know input dtype/event_shape
         self.output_product: Optional[AUA] = None
+    
+    def to_backend(self) -> None:
+        """
+        Ensures that this propagator and its associated AccumulativeUncertainArray (AUA)
+        remain consistent when switching between NumPy and CuPy backends.
+        """
+        # move associated AUA (if initialized)
+        if self.output_product is not None:
+            self.output_product.to_backend()
 
 
     def __matmul__(self, wave: Wave) -> Wave:
@@ -103,6 +112,11 @@ class SlicePropagator(Propagator):
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
+        self.output_product = AUA(
+            event_shape=wave.event_shape,
+            indices=self.indices,
+            dtype=self.dtype
+        )
         return self.output
 
     
@@ -162,17 +176,15 @@ class SlicePropagator(Propagator):
         if x_msg.batch_size != 1:
             raise ValueError("SlicePropagator expects batch_size=1 input message.")
 
-        # Initialize AUA if needed
-        if self.output_product is None:
-            self.output_product = AUA(event_shape=x_msg.event_shape,
-                                      indices=self.indices,
-                                      dtype=x_msg.dtype)
+        if self.output_message is None:
+            msg_to_send = x_msg.extract_patches(self.indices)
+            return msg_to_send
 
         # Fuse input UA into AUA
         self.output_product.mul_ua(x_msg)
-
+        msg_to_send = self.output_product.extract_patches() / self.output_message
         # Return extracted patches
-        return self.output_product.extract_patches()
+        return msg_to_send
 
     def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
         """

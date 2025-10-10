@@ -1,6 +1,6 @@
 from __future__ import annotations
 import warnings
-from typing import Optional, TYPE_CHECKING, Any
+from typing import Optional, TYPE_CHECKING, Any, List
 from ..core.rng_utils import get_rng
 from ..core.backend import np
 from ..core.types import ArrayLike, PrecisionMode, Precision

@@ -6,8 +6,8 @@ from skimage.transform import resize
 from skimage.io import imread, imsave
 
 # Always save/load cache here
-ROOT_DIR = Path(__file__).resolve().parents[1]
-SAMPLE_DATA_DIR = ROOT_DIR / "examples" / "sample_data"
+SAMPLE_DATA_DIR = Path(__file__).resolve().parent / "sample_data"
+SAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_sample_image(name="cameraman", shape=(512, 512), save_dir=SAMPLE_DATA_DIR) -> np.ndarray:

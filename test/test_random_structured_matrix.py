@@ -50,7 +50,7 @@ def test_structured_random_model_reconstruction(xp):
         if t % 20 == 0:
             print(f"[t={t}] PMSE = {err:.5e}")
 
-    g.run(n_iter=100, callback=monitor, verbose=False)
+    g.run(n_iter=200, callback=monitor, verbose=False)
 
     recon = sample_wave.compute_belief().data
     final_err = pmse(recon, true_sample)

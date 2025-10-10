@@ -142,6 +142,48 @@ python examples/scripts/compressed_sensing/compressed_sensing.py --n-iter 100 --
 
 ---
 
+## 5. Ptychography
+
+Reconstruction of unknown object image from diffraction measurements with overlapping probe illuminations.
+
+- The probe is scanned across the object following a Fermat spiral trajectory.
+
+- Each probe position yields one diffraction pattern (Fourier amplitude).
+
+- The inverse problem recovers the complex object from all diffraction data.
+
+### 🔧 Script
+```bash
+    python examples/scripts/ptychography/ptychography.py --n-iter 100 --size 256 --noise 1e-4 --save-graph
+```
+
+| Option         | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `--n-iter`     | Number of EP iterations                        |
+| `--size`       | Object size (H=W)                              |
+| `--noise`      | Measurement noise variance (σ²)                |
+| `--save-graph` | Save factor graph visualization (`graph.html`) |
+
+### 💾 Outputs (`examples/scripts/ptychography/results/`)
+- `reconstructed_amp.png`, `reconstructed_phase.png` — Reconstructed object
+
+- `reconstructed_composite.png` — Side-by-side amplitude/phase visualization
+
+- `graph.html` — Factor graph visualization (optional)
+
+### 📖 Reference
+
+Ueda, H., Katakami, S., & Okada, M. (2025).
+**A Message-Passing Perspective on Ptychographic Phase Retrieval**,
+IEEE Transactions on Computational Imaging (in press).
+[arXiv](https://arxiv.org/abs/2504.05668)
+
+Rodenburg, J. M., & Faulkner, H. M. L. (2004).
+**A phase retrieval algorithm for shifting illumination**,
+Applied Physics Letters, 85(20), 4795–4797.
+
+
+
 ## 📁 Data
 
 Sample images are downloaded via `skimage.data` into:

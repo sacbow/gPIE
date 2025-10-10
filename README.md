@@ -10,52 +10,71 @@ It provides built-in support for complex-valued variables, NumPy/CuPy backend sw
 ## Project Structure
 ```
 gpie/
-├── gpie/ # Core package (importable as gpie)
-│ ├── init.py
-│ ├── core/ # Core data structures and utilities
-│ │ ├── uncertain_array.py
-│ │ ├── accumulative_uncertain_array.py
-│ │ ├── types.py
-│ │ ├── linalg_utils.py
-│ │ ├── rng_utils.py
-│ │ └── metrics.py
-│ │
-│ ├── graph/ # Factor graph and EP components
-│ │ ├── wave.py
-│ │ ├── factor.py
-│ │ ├── shortcuts.py
-│ │ ├── prior/ # Priors: Gaussian, sparse, etc.
-│ │ ├── propagator/ # Binary/unary propagators
-│ │ │ ├── fft_2d_propagator.py
-│ │ │ ├── ifft_2d_propagator.py
-│ │ │ ├── phase_mask_fft_propagator.py
-│ │ │ ├── fork_propagator.py
-│ │ │ ├── slice_propagator.py
-│ │ │ ├── zero_pad_propagator.py
-│ │ │ └── others...
-│ │ ├── measurement/ # Likelihood models: amplitude, Gaussian, etc.
-│ │ └── structure/ # Graph connectivity and visualization
-│ │  ├── graph.py
-│ │  ├── model.py
-│ │  └── visualization.py
-│ │
-│ └── Others
-
-├── examples/ # Example scripts and notebooks
+├── gpie/  # Core package (importable as gpie)
+│  ├── __init__.py
+│  ├── core/                         # Core data structures and utils
+│  │  ├── uncertain_array/           # UA base + ops
+│  │  ├── accumulative_uncertain_array.py
+│  │  ├── backend.py
+│  │  ├── linalg_utils.py
+│  │  ├── rng_utils.py
+│  │  ├── fft.py
+│  │  └── metrics.py
+│  │
+│  ├── graph/                        # Factor graph + EP components
+│  │  ├── wave.py
+│  │  ├── factor.py
+│  │  ├── shortcuts.py
+│  │  ├── prior/                     # Gaussian, sparse, support priors
+│  │  ├── propagator/                # Unary/Binary propagators
+│  │  │  ├── fft_2d_propagator.py
+│  │  │  ├── ifft_2d_propagator.py
+│  │  │  ├── phase_mask_fft_propagator.py
+│  │  │  ├── fork_propagator.py
+│  │  │  ├── slice_propagator.py
+│  │  │  └── zero_pad_propagator.py
+│  │  ├── measurement/               # Amplitude, Gaussian, ...
+│  │  └── structure/                 # Graph + model DSL + visualization
+│  │     ├── graph.py
+│  │     ├── model.py
+│  │     └── visualization.py
+│  │
+│  └── imaging/
+│     └── ptychography/
+│        ├── data/
+│        │  ├── dataset.py           # PtychographyDataset
+│        │  └── diffraction_data.py
+│        ├── simulator/
+│        │  ├── forward.py           # ptychography_graph (sim)
+│        │  ├── probe.py             # generate_probe
+│        │  └── scan.py              # generate_fermat_spiral_positions
+│        └── utils/
+│           ├── geometry.py
+│           └── visualization.py     # show/plot helpers
+│
+├── examples/
 │  ├── io_utils.py
-│  ├── sample_data/ # Output directory for example images
-│  ├── notebooks/ # Jupyter notebooks for tutorials
-│  └── scripts/ # Example Python scripts
-
-├── profile/ # Profiling & benchmarking scripts
-
-├── test/ # Unit tests (pytest-based)
-
-├── pyproject.toml # Build configuration (PEP 621)
-├── requirements.txt # Dependency pinning for development
+│  ├── sample_data/
+│  ├── notebooks/
+│  │  ├── holography_demo.ipynb
+│  │  ├── coded_diffraction_pattern_demo.ipynb
+│  │  ├── random_structured_cdi_demo.ipynb
+│  │  ├── compressed_sensing_demo.ipynb
+│  │  └── ptychography_demo.ipynb
+│  └── scripts/
+│     ├── holography/
+│     ├── coded_diffraction_pattern/
+│     ├── random_structured_cdi/
+│     ├── compressed_sensing/
+│     └── ptychography/
+│        └── ptychography_demo.py
+│
+├── profile/
+├── test/
+├── pyproject.toml
+├── requirements.txt
 ├── README.md
 └── LICENSE
-
 
 ```
 
@@ -77,9 +96,9 @@ gpie/
 - Visual graph inspection via `graph.visualize()`
 
 ## What's New
-See [CHANGELOG.md](./CHANGELOG.md) for the latest release notes  
-(v0.1.2: Added fork/slice/zero_pad propagators and Wave.zero_pad/extract_patches).
+See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
+**v1.2.0**: Added **ptychography** support — dataset container, scan simulation, patch-based forward model (SlicePropagator + AUA), and a complete reconstruction demo script/notebook.
 
 
 
