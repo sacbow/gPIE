@@ -30,7 +30,7 @@ def coded_diffraction_pattern(noise: float, n_measurements: int, phase_masks: np
     AmplitudeMeasurement(var=noise, damping=0.3) << y
 
 
-def build_cdp_graph(size = 1024, noise=1e-4, n_measurements=4):
+def build_cdp_graph(size = 512, noise=1e-4, n_measurements=4):
     rng = get_rng(seed=42)
     shape = (size, size)
     # batched random phase masks
@@ -72,7 +72,7 @@ if __name__ == "__main__":
                         help="Enable cProfile profiling")
     parser.add_argument("--verbose", action="store_true",
                         help="Print progress and PMSE during iterations")
-    parser.add_argument("--size", type=int, default=1024,
+    parser.add_argument("--size", type=int, default=512,
                         help="Image size (H=W)")
     parser.add_argument("--measurements", type=int, default=4,
                         help="Number of coded diffraction measurements")

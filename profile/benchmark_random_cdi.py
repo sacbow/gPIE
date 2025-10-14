@@ -16,7 +16,7 @@ def random_cdi(support: NDArray[np.bool_], n_layers: int, phase_masks: list[NDAr
     AmplitudeMeasurement(var=var, damping=0.3) << x
 
 
-def build_random_cdi_graph(H=1024, W=1024, var=1e-4, support_radius=0.3, n_layers=2):
+def build_random_cdi_graph(H=512, W=512, var=1e-4, support_radius=0.3, n_layers=2):
     """Structured Random Matrix CDIモデルのGraph構築"""
     rng = get_rng(seed=42)
     shape = (H, W)

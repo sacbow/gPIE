@@ -12,7 +12,7 @@ def holography(support, var, ref_wave):
     AmplitudeMeasurement(var=var) << (fft2(ref_wave + obj))
 
 
-def build_holography_graph(H=1024, W=1024, noise=1e-4):
+def build_holography_graph(H=512, W=512, noise=1e-4):
     rng = get_rng(seed=42)
     support_x = circular_aperture((H, W), radius=0.2, center=(-0.2, -0.2))
     data_x = masked_random_array(support_x, dtype=np.complex64, rng=rng)
