@@ -92,49 +92,51 @@ class MultiplyPropagator(BinaryPropagator):
 
     def compute_variational_inference(self) -> None:
         """
-        Perform inner-loop variational updates for Q_x, Q_y, and compute Q_z.
-        Assumes:
-            - self.input_messages and self.input_beliefs are already populated.
-            - self.output_message is available.
-        Updates:
-            - self.input_beliefs["a"], self.input_beliefs["b"], self.output_belief
+        Perform inner-loop VMP updates for Q_x, Q_y and compute Q_z.
+        Also stores raw backward messages to inputs to avoid UA division shrinking.
         """
-        # Local references
         qx = self.input_beliefs["a"]
         qy = self.input_beliefs["b"]
         z_msg = self.output_message
 
-        # Shortcuts
         z_m, gamma_z = z_msg.data, z_msg.precision(raw=False)
 
-        # Iterative update of Q_x and Q_y
+        # Keep last messages for backward sending
+        last_msg_to_x = None
+        last_msg_to_y = None
+
         for _ in range(self.num_inner_loop):
             # --- Q_x update ---
             y_m, sy2 = qy.data, 1.0 / qy.precision(raw=False)
             abs_y2_plus_var = np().abs(y_m) ** 2 + sy2
             mean_x = np().conj(y_m) * z_m / abs_y2_plus_var
             prec_x = gamma_z * abs_y2_plus_var
-            msg_to_x = UA(mean_x, dtype=self.dtype, precision=prec_x)
+            msg_to_x = UA(mean_x, dtype=self.dtype, precision=prec_x)  # <-- raw VMP message
             self.input_beliefs["a"] = msg_to_x * self.input_messages[self.inputs["a"]].as_array_precision()
             qx = self.input_beliefs["a"]
+            last_msg_to_x = msg_to_x  # <-- store raw message
 
             # --- Q_y update ---
             x_m, sx2 = qx.data, 1.0 / qx.precision(raw=False)
             abs_x2_plus_var = np().abs(x_m) ** 2 + sx2
             mean_y = np().conj(x_m) * z_m / abs_x2_plus_var
             prec_y = gamma_z * abs_x2_plus_var
-            msg_to_y = UA(mean_y, dtype=self.dtype, precision=prec_y)
+            msg_to_y = UA(mean_y, dtype=self.dtype, precision=prec_y)  # <-- raw VMP message
             self.input_beliefs["b"] = msg_to_y * self.input_messages[self.inputs["b"]].as_array_precision()
             qy = self.input_beliefs["b"]
+            last_msg_to_y = msg_to_y  # <-- store raw message
 
-        # --- Compute Q_z after inner loop ---
+        # Save for backward() to send directly (no UA division)
+        self._last_backward_msgs = {"a": last_msg_to_x, "b": last_msg_to_y}
+
+        # --- Compute Q_z after inner loop (with eps stabilization) ---
         mu_z = qx.data * qy.data
-        var_z = (np().abs(qx.data) ** 2 + 1 / qx.precision(raw=False)) * \
-                (np().abs(qy.data) ** 2 + 1 / qy.precision(raw=False)) - np().abs(mu_z) ** 2
-
-        prec_z = 1.0 / var_z
-
+        var_z = (np().abs(qx.data) ** 2 + 1.0 / qx.precision(raw=False)) * \
+                (np().abs(qy.data) ** 2 + 1.0 / qy.precision(raw=False)) - np().abs(mu_z) ** 2
+        eps = np().array(1e-8, dtype=get_real_dtype(self.dtype))
+        prec_z = 1.0 / np().maximum(var_z, eps)
         self.output_belief = UA(mu_z, dtype=self.dtype, precision=prec_z)
+
 
 
 
@@ -169,31 +171,33 @@ class MultiplyPropagator(BinaryPropagator):
         z_wave.receive_message(self, msg)
 
 
+
     def backward(self) -> None:
         """
-        Perform variational inference (update Q_x, Q_y, Q_z) and send messages to inputs.
+        Run VMP updates and send messages to inputs.
+        - For array-precision waves: send raw VMP message (no UA division)
+        - For scalar-precision waves: send scalarized belief divided by incoming message
         """
         if self.output_message is None:
             raise RuntimeError("Output message missing.")
-
         if any(v is None for v in self.input_beliefs.values()):
             raise RuntimeError("Input beliefs not initialized before backward().")
 
-        # Run inner-loop inference
+        # Perform VMP updates (stores _last_backward_msgs and updates input_beliefs)
         self.compute_variational_inference()
 
-        # Send updated messages to inputs (precision-mode aware)
         for name, wave in self.inputs.items():
-            belief = self.input_beliefs[name]
             msg_in = self.input_messages[wave]
+            belief = self.input_beliefs[name]
 
             if wave.precision_mode_enum == PrecisionMode.SCALAR:
+                # Scalar precision → use scalarized belief / incoming message
                 msg = belief.as_scalar_precision() / msg_in
             else:
-                msg = belief / msg_in
+                # Array precision → send raw VMP message as-is
+                msg = self._last_backward_msgs[name]
 
             wave.receive_message(self, msg)
-
 
 
     def get_sample_for_output(self, rng):
