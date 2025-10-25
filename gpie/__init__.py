@@ -33,8 +33,7 @@ from .graph.factor import Factor
 from .graph.prior import (
     GaussianPrior,
     SparsePrior,
-    SupportPrior,
-    ConstWave,
+    SupportPrior
 )
 
 # Propagators

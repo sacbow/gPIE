@@ -130,6 +130,7 @@ class FFT2DPropagator(Propagator):
 
         self.output.receive_message(self, msg)
 
+
     def backward(self):
         x_wave = self.inputs["input"]
         if self.output_message is None:

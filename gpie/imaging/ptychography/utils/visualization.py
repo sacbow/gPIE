@@ -48,7 +48,7 @@ def plot_diffraction_patterns(diff_data_list: List[DiffractionData], ncols=4, lo
         img = np.abs(d.diffraction)
         if log_scale:
             img = np.log10(img + 1e-8)
-        ax.imshow(img, cmap="jet")
+        ax.imshow(img, cmap="viridis")
         ax.set_title(f"{i}: pos=({d.position[0]:.1f}, {d.position[1]:.1f})")
         ax.axis("off")
 

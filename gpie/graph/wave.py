@@ -491,11 +491,25 @@ class Wave:
     def __add__(self, other):
         """
         x + other → AddConstPropagator if other is scalar or ndarray,
-                    otherwise AddPropagator
+                    otherwise AddPropagator.
+        Includes implicit replicate() if batch sizes differ.
         """
         from .propagator.add_propagator import AddPropagator
         from .propagator.add_const_propagator import AddConstPropagator
+        from .shortcuts import replicate
+
         if isinstance(other, Wave):
+            # --- handle batch mismatch ---
+            if self.batch_size != other.batch_size:
+                if self.batch_size == 1:
+                    self = replicate(self, batch_size=other.batch_size)
+                elif other.batch_size == 1:
+                    other = replicate(other, batch_size=self.batch_size)
+                else:
+                    raise ValueError(
+                        f"Cannot add waves with mismatched batch sizes: "
+                        f"{self.batch_size} vs {other.batch_size}"
+                    )
             return AddPropagator() @ (self, other)
 
         if np().isscalar(other) or isinstance(other, np().ndarray):
@@ -503,10 +517,9 @@ class Wave:
 
         return NotImplemented
 
+
     def __radd__(self, other):
-        """
-        other + x → same as x + other
-        """
+        """other + x → same as x + other."""
         return self.__add__(other)
 
 
@@ -517,36 +530,38 @@ class Wave:
         Supports:
             - Wave * Wave → MultiplyPropagator
             - Wave * ndarray/scalar → MultiplyConstPropagator
-
-        Args:
-            other (Wave | ndarray | scalar)
-
-        Returns:
-            Wave
+        Includes implicit replicate() if batch sizes differ.
         """
         from .propagator.multiply_const_propagator import MultiplyConstPropagator
         from .propagator.multiply_propagator import MultiplyPropagator
+        from .shortcuts import replicate
 
         if isinstance(other, Wave):
+            # --- handle batch mismatch ---
+            if self.batch_size != other.batch_size:
+                if self.batch_size == 1:
+                    self = replicate(self, batch_size=other.batch_size)
+                elif other.batch_size == 1:
+                    other = replicate(other, batch_size=self.batch_size)
+                else:
+                    raise ValueError(
+                        f"Cannot multiply waves with mismatched batch sizes: "
+                        f"{self.batch_size} vs {other.batch_size}"
+                    )
             return MultiplyPropagator() @ (self, other)
+
         elif isinstance(other, (int, float, complex, np().ndarray)):
             return MultiplyConstPropagator(other) @ self
+
         return NotImplemented
 
+
     def __rmul__(self, other) -> Wave:
-        """
-        Right-side multiplication.
-
-        Supports:
-            - scalar * Wave
-            - ndarray * Wave
-
-        Returns:
-            Wave
-        """
+        """Right-side multiplication (scalar/ndarray * Wave)."""
         return self.__mul__(other)
 
-    def __repr__(self) -> str:
+
+    def __repr__(self) -> str: 
         label_str = f", label='{self.label}'" if self.label else ""
         dtype_str = f", dtype={np().dtype(self.dtype).name}" if self.dtype else ""
         precision_str = f", precision={self.precision_mode}" if self.precision_mode else ""
