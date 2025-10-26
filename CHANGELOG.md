@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.2.1] — 2025-10-26
+
+### Added
+- New demo: `examples/scripts/blind_ptychography_with_phase.py`  
+  Demonstrates bilinear inference (object × probe) under phase observation.
+
+### Improved
+- `MultiplyPropagator`: introduced inner-loop variational updates for more stable VMP convergence.
+
+### Notes
+This release improves numerical stability for bilinear models and adds a reproducible example for hybrid EP/VMP inference.
+
+
 
 ## [0.2.0] - 2025-10-10
 ### Added
