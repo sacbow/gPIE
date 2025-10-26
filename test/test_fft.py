@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-
+from gpie.core.backend import set_backend
 from gpie.core.fft import (
     set_fft_backend,
     get_fft_backend,
@@ -21,6 +21,8 @@ try:
 except ImportError:
     has_cupy = False
 
+set_backend(np)
+
 
 @pytest.mark.parametrize(
     "backend_name",
@@ -31,6 +33,7 @@ except ImportError:
 @pytest.mark.parametrize("shape", [(64, 64), (128, 128)])
 @pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
 def test_fft2_ifft2_centered_identity(backend_name, shape, dtype):
+    set_backend(np)
     set_fft_backend(backend_name)
     fft = get_fft_backend()
 

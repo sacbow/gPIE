@@ -35,9 +35,13 @@ class MultiplyPropagator(BinaryPropagator):
     """
 
 
-    def __init__(self, precision_mode: Optional[BPM] = None):
+    def __init__(self, precision_mode: Optional[BPM] = None, num_inner_loop: int = 2):
         super().__init__(precision_mode=precision_mode)
+        # Beliefs for input and output variables
         self.input_beliefs = {"a": None, "b": None}
+        self.output_belief: Optional[UA] = None
+        # Number of inner-loop updates
+        self.num_inner_loop = num_inner_loop
 
 
     def _set_precision_mode(self, mode: BPM) -> None:
@@ -85,125 +89,115 @@ class MultiplyPropagator(BinaryPropagator):
             else:
                 self._set_precision_mode(BPM.ARRAY)
 
-    def _compute_forward(self, input_beliefs: dict[str, UA], output_msg: Optional[UA]) -> UA:
-        """Compute the message to the output based on current input beliefs and output message."""
-        x = input_beliefs["a"]
-        y = input_beliefs["b"]
 
-        if x is None or y is None or output_msg is None:
-            raise RuntimeError("Belief not available for forward computation.")
+    def compute_variational_inference(self) -> None:
+        """
+        Perform inner-loop VMP updates for Q_x, Q_y and compute Q_z.
+        Also stores raw backward messages to inputs to avoid UA division shrinking.
+        """
+        qx = self.input_beliefs["a"]
+        qy = self.input_beliefs["b"]
+        z_msg = self.output_message
 
-        # Ensure same dtype
-        x, y = x.astype(self.dtype), y.astype(self.dtype)
-        x_m, y_m = x.data, y.data
-        sx2 = 1.0 / x.precision(raw=True)
-        sy2 = 1.0 / y.precision(raw=True)
+        z_m, gamma_z = z_msg.data, z_msg.precision(raw=False)
 
-        # Moment matching for Z = A * B
-        mu = x_m * y_m
-        var = (np().abs(x_m)**2 + sx2) * (np().abs(y_m)**2 + sy2) - np().abs(mu)**2
+        # Keep last messages for backward sending
+        last_msg_to_x = None
+        last_msg_to_y = None
 
+        for _ in range(self.num_inner_loop):
+            # --- Q_x update ---
+            y_m, sy2 = qy.data, 1.0 / qy.precision(raw=False)
+            abs_y2_plus_var = np().abs(y_m) ** 2 + sy2
+            mean_x = np().conj(y_m) * z_m / abs_y2_plus_var
+            prec_x = gamma_z * abs_y2_plus_var
+            msg_to_x = UA(mean_x, dtype=self.dtype, precision=prec_x)  # <-- raw VMP message
+            self.input_beliefs["a"] = msg_to_x * self.input_messages[self.inputs["a"]].as_array_precision()
+            qx = self.input_beliefs["a"]
+            last_msg_to_x = msg_to_x  # <-- store raw message
+
+            # --- Q_y update ---
+            x_m, sx2 = qx.data, 1.0 / qx.precision(raw=False)
+            abs_x2_plus_var = np().abs(x_m) ** 2 + sx2
+            mean_y = np().conj(x_m) * z_m / abs_x2_plus_var
+            prec_y = gamma_z * abs_x2_plus_var
+            msg_to_y = UA(mean_y, dtype=self.dtype, precision=prec_y)  # <-- raw VMP message
+            self.input_beliefs["b"] = msg_to_y * self.input_messages[self.inputs["b"]].as_array_precision()
+            qy = self.input_beliefs["b"]
+            last_msg_to_y = msg_to_y  # <-- store raw message
+
+        # Save for backward() to send directly (no UA division)
+        self._last_backward_msgs = {"a": last_msg_to_x, "b": last_msg_to_y}
+
+        # --- Compute Q_z after inner loop (with eps stabilization) ---
+        mu_z = qx.data * qy.data
+        var_z = (np().abs(qx.data) ** 2 + 1.0 / qx.precision(raw=False)) * \
+                (np().abs(qy.data) ** 2 + 1.0 / qy.precision(raw=False)) - np().abs(mu_z) ** 2
         eps = np().array(1e-8, dtype=get_real_dtype(self.dtype))
-        prec = 1.0 / np().maximum(var, eps)
-
-        belief_z = UA(mu, dtype=self.dtype, precision=prec)
-
-        # Scalar projection if necessary
-        if self.precision_mode_enum == BPM.ARRAY_AND_ARRAY_TO_SCALAR:
-            belief_z = belief_z.as_scalar_precision()
-
-        # Return message
-        return belief_z / output_msg
+        prec_z = 1.0 / np().maximum(var_z, eps)
+        self.output_belief = UA(mu_z, dtype=self.dtype, precision=prec_z)
 
 
-    def _compute_backward(self, output: UA, exclude: str) -> tuple[UA, UA]:
-        """
-        Compute the backward message and updated belief for the excluded input.
 
-        Args:
-            output: Message from z-wave (UncertainArray)
-            exclude: "a" or "b" — the target input wave for message passing
-
-        Returns:
-            Tuple of:
-                - Message to send to the excluded input
-                - Updated belief estimate for that input (to be stored internally)
-        """
-        z_m, gamma_z = output.data, output.precision(raw=True)
-        other_name = "b" if exclude == "a" else "a"
-        belief_y = self.input_beliefs[other_name]
-
-        if belief_y is None:
-            raise RuntimeError(f"Input belief '{other_name}' is not available.")
-
-        y_q = belief_y.data
-        sy2 = 1.0 / belief_y.precision(raw=True)
-        abs_y2_plus_var = np().abs(y_q) ** 2 + sy2
-
-        mean_msg = np().conj(y_q) * z_m / abs_y2_plus_var
-        prec_msg = gamma_z * abs_y2_plus_var
-        msg = UA(mean_msg, dtype=output.dtype, precision=prec_msg)
-
-        target_wave = self.inputs[exclude]
-        msg_in = self.input_messages.get(target_wave)
-
-        # Update belief q_x and adjust message if needed
-        if self.precision_mode_enum in {BPM.SCALAR_AND_ARRAY_TO_ARRAY, BPM.ARRAY_AND_SCALAR_TO_ARRAY}:
-            if target_wave.precision_mode_enum == PrecisionMode.SCALAR:
-                q_x = (msg * msg_in.as_array_precision()).as_scalar_precision()
-                q_x = q_x / msg_in
-                return q_x, q_x
-
-        q_x = msg * msg_in
-        return msg, q_x
 
 
     def forward(self) -> None:
-        """Send message from MultiplyPropagator to output wave."""
-
+        """
+        Send message to output wave based on current output_belief.
+        If output_belief is not ready, send a random initialization message.
+        """
         z_wave = self.output
 
-        # Initialize input beliefs if missing
-        for name in ("a", "b"):
+        # Initialize input beliefs from current input messages if missing
+        for name, wave in self.inputs.items():
             if self.input_beliefs[name] is None:
-                wave = self.inputs[name]
-                self.input_beliefs[name] = UA.random(
-                    event_shape=wave.event_shape,
-                    batch_size = wave.batch_size,
-                    dtype=self.dtype,
-                    scalar_precision=(wave.precision_mode_enum == PrecisionMode.SCALAR),
-                    rng=self._init_rng
-                )
+                self.input_beliefs[name] = self.input_messages[wave]
 
-        # Output message is not yet available → send random init message
-        if self.output_message is None:
+        # If no prior belief, random init message
+        if self.output_belief is None or self.output_message is None:
             msg = UA.random(
                 event_shape=z_wave.event_shape,
-                batch_size = z_wave.batch_size,
+                batch_size=z_wave.batch_size,
                 dtype=self.dtype,
                 scalar_precision=(z_wave.precision_mode_enum == PrecisionMode.SCALAR),
-                rng=self._init_rng
+                rng=self._init_rng,
             )
         else:
-            msg = self._compute_forward(self.input_beliefs, self.output_message)
+            if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
+                msg = self.output_belief.as_scalar_precision() / self.output_message
+            else:
+                msg = self.output_belief / self.output_message
 
         z_wave.receive_message(self, msg)
 
 
+
     def backward(self) -> None:
         """
-        Send messages to both inputs (A and B) based on the output belief.
-
-        This function uses approximate inversion of the product relation.
+        Run VMP updates and send messages to inputs.
+        - For array-precision waves: send raw VMP message (no UA division)
+        - For scalar-precision waves: send scalarized belief divided by incoming message
         """
         if self.output_message is None:
             raise RuntimeError("Output message missing.")
+        if any(v is None for v in self.input_beliefs.values()):
+            raise RuntimeError("Input beliefs not initialized before backward().")
 
-        for exclude in ("a", "b"):
-            msg, belief = self._compute_backward(self.output_message, exclude)
-            wave = self.inputs[exclude]
+        # Perform VMP updates (stores _last_backward_msgs and updates input_beliefs)
+        self.compute_variational_inference()
+
+        for name, wave in self.inputs.items():
+            msg_in = self.input_messages[wave]
+            belief = self.input_beliefs[name]
+
+            if wave.precision_mode_enum == PrecisionMode.SCALAR:
+                # Scalar precision → use scalarized belief / incoming message
+                msg = belief.as_scalar_precision() / msg_in
+            else:
+                # Array precision → send raw VMP message as-is
+                msg = self._last_backward_msgs[name]
+
             wave.receive_message(self, msg)
-            self.input_beliefs[exclude] = belief
 
 
     def get_sample_for_output(self, rng):

@@ -103,10 +103,12 @@ class ForkPropagator(Propagator):
 
         # First iteration (no belief yet): initialize and fork to output
         if self.child_product is None or self.output_message is None:
-            return m_in.fork(batch_size=self.batch_size)
+            msg = m_in.fork(batch_size=self.batch_size)
+            return msg
         # compute belief
         belief = m_in * self.child_product
-        return belief.fork(batch_size=self.batch_size) / self.output_message
+        msg = belief.fork(batch_size=self.batch_size) / self.output_message
+        return msg
 
     def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
         """

@@ -183,6 +183,35 @@ Rodenburg, J. M., & Faulkner, H. M. L. (2004).
 Applied Physics Letters, 85(20), 4795–4797.
 
 
+## 6. Blind Ptychography with Phase Observation (Bilinear Reconstruction)
+
+A simplified ptychographic reconstruction problem where both the object and probe are unknown, but the diffraction field (including phase) is directly observed.
+This example isolates the bilinear aspect of ptychography  — providing a minimal setting for testing EP/VMP hybrid inference.
+
+### 🔧 Script
+```bash
+    python examples/scripts/blind_ptychography_with_phase.py --n-iter 100 --size 256 --noise 1e-3 --save-graph
+```
+
+| Option         | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `--n-iter`     | Number of EP iterations                        |
+| `--size`       | Object size (H=W)                              |
+| `--noise`      | Measurement noise variance (σ²)                |
+| `--save-graph` | Save factor graph visualization (`graph.html`) |
+
+### 💾 Outputs (`examples/scripts/results/`)
+- `object_amplitude.png`, `object_phase.png`, `object_precision.png` — Reconstructed object
+
+- `probe_amplitude.png`, `probe_phase.png`, `probe_precision.png` — Reconstructed probe
+
+- `blind_ptychography_summary.png` — Combined amplitude/precision visualization
+
+- `graph.html` — Factor graph visualization (optional)
+
+
+
+
 
 ## 📁 Data
 

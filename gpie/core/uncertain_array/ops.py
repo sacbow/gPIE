@@ -1,6 +1,8 @@
 from .base import UncertainArray
 from ..backend import np
+from ..rng_utils import get_rng
 from ..types import get_real_dtype
+from typing import Any
 
 def mul_ua(self: UncertainArray, other: UncertainArray) -> UncertainArray:
     """
@@ -34,7 +36,7 @@ def div_ua(self: UncertainArray, other: UncertainArray) -> UncertainArray:
     p1, p2 = self.precision(raw = True), other.precision(raw = True)  # ← raw=False → shape == data.shape
     eps = np().asarray(1e-2, get_real_dtype(self.dtype))
     precision_diff = p1 - p2
-    precision_safe = np().maximum(precision_diff, eps * p2)
+    precision_safe = np().maximum(precision_diff, eps * p1)
 
     result_data = (p1 * d1 - p2 * d2) / precision_safe
 
@@ -141,7 +143,6 @@ def damp_with(self, other: "UncertainArray", alpha: float) -> "UncertainArray":
     damped_precision = 1.0 / (damped_std ** 2)
 
     return UncertainArray(damped_data, dtype=self.dtype, precision=damped_precision)
-
 
 # --- monkey patch ---
 UncertainArray.__mul__ = mul_ua
