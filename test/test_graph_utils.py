@@ -62,3 +62,54 @@ def test_get_factor_by_label():
 
     with pytest.raises(ValueError):
         g.get_factor("not_exist")
+
+def test_graph_set_init_strategy_manual_and_sample(monkeypatch):
+    """Graph.set_init_strategy should configure Prior init modes via label."""
+    backend.set_backend(np)
+    g = simple_graph()
+
+    # --- manual init with ndarray ---
+    init_data = np.ones((1, 4, 4), dtype=np.complex64)
+    g.set_init_strategy(label="obj", mode="manual", data=init_data, verbose=False)
+
+    prior = g.get_wave("obj").parent
+    assert np.allclose(prior._manual_init_msg.data, 1.0)
+    assert prior._init_strategy == "manual"
+
+    # --- change to sample mode ---
+    g.set_init_strategy(label="obj", mode="sample", verbose=False)
+    assert prior._init_strategy == "sample"
+
+    # --- change to uninformative mode ---
+    g.set_init_strategy(label="obj", mode="uninformative", verbose=False)
+    assert prior._init_strategy == "uninformative"
+
+
+def test_graph_set_init_strategy_invalid_cases():
+    """Graph.set_init_strategy should raise clear errors for invalid usage."""
+    backend.set_backend(np)
+    g = simple_graph()
+
+    # manual mode but missing data
+    with pytest.raises(ValueError, match="missing"):
+        g.set_init_strategy(label="obj", mode="manual", verbose=False)
+
+    # invalid mode name
+    with pytest.raises(ValueError, match="Invalid init strategy"):
+        g.set_init_strategy(label="obj", mode="nonsense", verbose=False)
+
+
+def test_graph_set_all_init_strategies_error_cases():
+    """Graph.set_all_init_strategies should raise for malformed entries."""
+    backend.set_backend(np)
+    g = simple_graph()
+
+    # manual mode but missing data
+    bad_dict = {"obj": ("manual", None)}
+    with pytest.raises(ValueError, match="requires ndarray"):
+        g.set_all_init_strategies(bad_dict, verbose=False)
+
+    # invalid mode string (handled inside Prior.set_init_strategy)
+    bad_dict = {"obj": ("invalid_mode", None)}
+    with pytest.raises(ValueError, match="Invalid init strategy"):
+        g.set_all_init_strategies(bad_dict, verbose=False)
