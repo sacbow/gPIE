@@ -84,3 +84,5 @@ def test_gaussian_prior_repr_contains_mean_and_var():
     assert "GaussianPrior" in r
     assert "var=1.0" in r
     assert "mean=" in r
+
+

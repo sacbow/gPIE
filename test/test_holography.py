@@ -20,7 +20,7 @@ else:
 def holography_model(var, ref_wave, support, dtype=np.complex64):
     """gPIE holography model with DSL-based graph definition."""
     obj = ~SupportPrior(event_shape=ref_wave.shape, support=support, label="obj", dtype=dtype)
-    AmplitudeMeasurement(var=var) << fft2(ref_wave + obj)
+    AmplitudeMeasurement(var=var, damping = 0.3) << fft2(ref_wave + obj)
     return
 
 
@@ -30,7 +30,7 @@ def test_holography_reconstruction(xp, obj_dtype):
     backend.set_backend(xp)
     rng = get_rng(seed=42)
 
-    H, W = 64, 64
+    H, W = 128, 128
     shape = (H, W)
     noise = 1e-4
 
