@@ -218,32 +218,53 @@ class MultiplyConstPropagator(Propagator):
 
 
     def forward(self):
-        input_msg = self.input_messages[self.inputs["input"]]
-        if input_msg is None:
-            raise RuntimeError("No message to forward")
-        if self.output_message is None:
-            if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured.")
-            else:
-                scalar = self.output._precision_mode == PrecisionMode.SCALAR
-                msg = UA.random(
-                event_shape=self.output.event_shape,
-                batch_size=self.output.batch_size,
-                dtype=self.dtype,
-                scalar_precision=scalar,
-                rng=self._init_rng,
-                )
-                self.output.receive_message(self, msg)
-                return
+        """
+        Forward message passing for MultiplyConstPropagator.
 
-        msg = self._compute_forward(input_msg)
-        if self.output.precision_mode_enum == PrecisionMode.ARRAY:
+        Logic:
+        - Initial iteration (no output_message or y_belief yet):
+            → Require an input message from the upstream wave.
+            → Use _compute_forward(input_msg) to deterministically propagate the message.
+            → Align precision mode (array vs scalar) with the output wave.
+            → If input_msg is missing, raise RuntimeError.
+        - Subsequent iterations:
+            → Perform EP-style update based on output_message and input_msg.
+        """
+        x_wave = self.inputs["input"]
+        input_msg = self.input_messages.get(x_wave)
+        out_msg = self.output_message
+
+        # --- Case A: initial iteration ---
+        if out_msg is None:
+            if input_msg is None:
+                raise RuntimeError(
+                    "MultiplyConstPropagator.forward(): missing input message on initial iteration. "
+                    "Upstream prior must emit an initial message before multiplication."
+                )
+
+            # Compute deterministic forward propagation
+            msg = self._compute_forward(input_msg)
+
+            # Align precision mode with the output wave
+            if self.output.precision_mode_enum == PrecisionMode.SCALAR:
+                msg = msg.as_scalar_precision()
+            else:
+                msg = msg.as_array_precision()
+
             self.output.receive_message(self, msg)
+            return
+
+        # --- Case B: subsequent iterations (EP-style update) ---
         else:
-            qy = (msg * self.output_message.as_array_precision()).as_scalar_precision()
-            msg_to_send = qy / self.output_message
-            self.output.receive_message(self, msg_to_send)
-        return
+            msg = self._compute_forward(input_msg)
+            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
+                self.output.receive_message(self, msg)
+            else:
+                qy = (msg * out_msg.as_array_precision()).as_scalar_precision()
+                msg_to_send = qy / out_msg
+                self.output.receive_message(self, msg_to_send)
+            return
+
 
     def backward(self):
         msg = self._compute_backward(self.output_message)
