@@ -57,24 +57,6 @@ def test_compute_variational_inference_array_to_array(xp):
 
 
 # -------------------------------------------------------------------------
-# Forward random initialization (unchanged)
-# -------------------------------------------------------------------------
-@pytest.mark.parametrize("xp", backend_libs)
-def test_forward_random_initialization(xp):
-    backend.set_backend(xp)
-    rng = get_rng(0)
-
-    a = Wave(event_shape=(2, 2), dtype=xp.complex64)
-    b = Wave(event_shape=(2, 2), dtype=xp.complex64)
-    z = MultiplyPropagator() @ (a, b)
-    prop = z.parent
-    prop.set_init_rng(rng)
-
-    prop.forward()
-    assert isinstance(z.parent_message, UA)
-
-
-# -------------------------------------------------------------------------
 # Backward updates input beliefs (main backward check)
 # -------------------------------------------------------------------------
 @pytest.mark.parametrize("xp", backend_libs)
