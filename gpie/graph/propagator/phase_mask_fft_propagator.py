@@ -140,20 +140,49 @@ class PhaseMaskFFTPropagator(Propagator):
             raise ValueError(f"Unknown precision_mode: {mode}")
 
     def forward(self):
-        if self.output_message is None or self.y_belief is None:
-            if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured.")
-            scalar = self.output.precision_mode_enum == PrecisionMode.SCALAR
-            msg = UA.random(
-                event_shape=self.event_shape,
-                batch_size=self.output.batch_size,
-                dtype=self.dtype,
-                scalar_precision=scalar,
-                rng=self._init_rng,
-            )
-        else:
-            msg = self.y_belief / self.output_message
-        self.output.receive_message(self, msg)
+        x_wave = self.inputs["input"]
+        msg_x = self.input_messages.get(x_wave)
+        out_msg = self.output_message
+        yb = self.y_belief
+
+        # --- Case A: initial iteration (no belief messages yet) ---
+        if out_msg is None and yb is None:
+            if msg_x is None:
+                raise RuntimeError(
+                    "PhaseMaskFFTPropagator.forward(): missing input message on the initial iteration. "
+                    "Upstream prior (or previous node) must emit an initial message before PM-FFT."
+                )
+
+            # Ensure complex dtype for the transform path
+            if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
+                msg_x = msg_x.astype(self.dtype)
+
+            # Transform to frequency domain, apply phase mask, then inverse-transform.
+            # We intentionally use UA helpers to preserve the Gaussian-EP semantics
+            # (fft2_centered() returns scalar precision; ifft2_centered() keeps scalar precision).
+            u = msg_x.fft2_centered()  # UA (scalar precision)
+            masked = UA(u.data * self.phase_mask, dtype=self.dtype, precision=u.precision(raw=True))
+            msg = masked.ifft2_centered()  # UA (scalar precision)
+
+            # Align precision mode with the output wave (ARRAY or SCALAR)
+            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
+                msg = msg.as_array_precision()
+
+            self.output.receive_message(self, msg)
+            return
+
+        # --- Case B: steady-state EP update (both present) ---
+        if out_msg is not None and yb is not None:
+            msg = yb / out_msg
+            self.output.receive_message(self, msg)
+            return
+
+        # --- Case C: inconsistent state ---
+        raise RuntimeError(
+            "PhaseMaskFFTPropagator.forward(): inconsistent state. "
+            "Expected both y_belief and output_message to be None (initial) or both present (update)."
+        )
+
 
     def backward(self):
         x_wave = self.inputs["input"]

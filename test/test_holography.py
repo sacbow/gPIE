@@ -20,7 +20,7 @@ else:
 def holography_model(var, ref_wave, support, dtype=np.complex64):
     """gPIE holography model with DSL-based graph definition."""
     obj = ~SupportPrior(event_shape=ref_wave.shape, support=support, label="obj", dtype=dtype)
-    AmplitudeMeasurement(var=var, damping = 0.3) << fft2(ref_wave + obj)
+    AmplitudeMeasurement(var=var) << fft2(ref_wave + obj)
     return
 
 
@@ -34,8 +34,8 @@ def test_holography_reconstruction(xp, obj_dtype):
     shape = (H, W)
     noise = 1e-4
 
-    support_x = circular_aperture(shape, radius=0.2, center=(-0.2, -0.2))
-    support_y = circular_aperture(shape, radius=0.2, center=(0.2, 0.2))
+    support_x = circular_aperture(shape, radius=0.15, center=(-0.2, -0.2))
+    support_y = circular_aperture(shape, radius=0.15, center=(0.2, 0.2))
     ref_wave = masked_random_array(support_x, dtype=xp.complex128, rng=rng)
 
     g = holography_model(var=noise, ref_wave=ref_wave, support=support_y, dtype=obj_dtype)

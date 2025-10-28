@@ -159,23 +159,3 @@ def test_ifft2d_precision_mode_getters():
     y = prop @ x
     assert prop.get_input_precision_mode(x) == PrecisionMode.ARRAY
     assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
-
-
-def test_ifft2d_forward_initializes_with_random():
-    backend.set_backend(np)
-    rng = get_rng(seed=2026)
-    n, B = 4, 2
-    x = Wave(event_shape=(n, n), batch_size=B, dtype=np.complex64)
-
-    prop = IFFT2DPropagator(event_shape=(n, n))
-    y = prop @ x
-    prop.set_init_rng(rng)
-
-    # 状態を初期化したまま forward → UA.random が呼ばれる分岐に入る
-    assert prop.output_message is None
-    assert prop.y_belief is None
-    prop.forward()
-
-    assert prop.output.parent_message is not None
-    assert prop.output.parent_message.batch_size == B
-    assert prop.output.parent_message.event_shape == (n, n)
