@@ -276,3 +276,21 @@ class Measurement(Factor, ABC):
         Determine the dtype of the observed data given the input dtype.
         """
         pass
+
+    def compute_fitness(self):
+        """
+        Compute and return a scalar data-fit measure for this measurement node.
+
+        Returns
+        -------
+        float
+            The fitness value (smaller is better).
+
+        Raises
+        ------
+        NotImplementedError
+            If the subclass does not implement this method.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.compute_fitness() is not implemented."
+        )
