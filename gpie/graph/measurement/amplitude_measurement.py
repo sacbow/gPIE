@@ -2,6 +2,7 @@ from typing import Optional, Union, Any
 
 from .base import Measurement
 from ...core.backend import np
+from ...core.adaptive_damping import AdaptiveDamping, DampingScheduleConfig
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode, get_real_dtype
 from ...core.rng_utils import normal
@@ -20,15 +21,25 @@ class AmplitudeMeasurement(Measurement):
     def __init__(
         self,
         var: float = 1e-4,
-        damping: float = 0.0,
+        damping: Union[float, str] = "auto",
         precision_mode: Optional[Union[str, PrecisionMode]] = None,
         with_mask: bool = False,
-        label: str = None
+        label: str = None,
+        adaptive_cfg: Optional[DampingScheduleConfig] = None,
     ) -> None:
         self._var = var
         self.damping = damping
         self.old_msg: Optional[UA] = None
         self.belief = None
+
+        # --- Adaptive damping setup ---
+        if damping == "auto":
+            self._adaptive = True
+            self._scheduler = AdaptiveDamping(adaptive_cfg or DampingScheduleConfig())
+            self.damping = 1.0 - self._scheduler.beta
+        else:
+            self._adaptive = False
+            self.damping = float(damping)
 
         if isinstance(precision_mode, str):
             precision_mode = PrecisionMode(precision_mode)
@@ -120,6 +131,20 @@ class AmplitudeMeasurement(Measurement):
 
         self.old_msg = msg
         return msg
+    
+    def backward(self) -> None:
+        """Backward message passing with optional adaptive damping."""
+        self._check_observed()
+        incoming = self.input_messages[self.input]
+        msg = self._compute_message(incoming)
+        self.input.receive_message(self, msg)
+
+        # --- Adaptive damping control ---
+        if self._adaptive:
+            J = self.compute_fitness()
+            new_damp, repeat = self._scheduler.step(J)
+            self.damping = new_damp
+
     
     def compute_fitness(self) -> float:
         """

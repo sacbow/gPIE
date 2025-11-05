@@ -53,10 +53,11 @@ class DampingScheduleConfig:
         against the maximum of the past T_beta iterations.
     """
 
-    G_pass: float = 1.1
-    G_fail: float = 0.5
-    beta_min: float = 0.01
-    beta_max: float = 1.0
+    # Empirically tuned parameters (recommended defaults for gPIE benchmarks):
+    G_pass: float = 1.7
+    G_fail: float = 0.95
+    beta_min: float = 0.05
+    beta_max: float = 0.99
     T_beta: int = 3
 
 
