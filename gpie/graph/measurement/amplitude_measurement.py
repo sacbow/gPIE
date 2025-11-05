@@ -93,11 +93,11 @@ class AmplitudeMeasurement(Measurement):
         v_hat = np().maximum(v_hat, eps)
 
         posterior = UA(z_hat, dtype=self.input_dtype, precision= np().reciprocal(v_hat))
+        self.belief = posterior
 
         if self.precision_mode_enum == PrecisionMode.SCALAR:
             return posterior.as_scalar_precision()
-        
-        self.belief = posterior
+
         return posterior
 
     def _compute_message(self, incoming: UA) -> UA:
