@@ -28,6 +28,7 @@ class AmplitudeMeasurement(Measurement):
         self._var = var
         self.damping = damping
         self.old_msg: Optional[UA] = None
+        self.belief = None
 
         if isinstance(precision_mode, str):
             precision_mode = PrecisionMode(precision_mode)
@@ -49,7 +50,7 @@ class AmplitudeMeasurement(Measurement):
         self._sample = (abs_x + noise).astype(self.observed_dtype)
 
 
-    def approximate_posterior(self, incoming: UA) -> UA:
+    def compute_belief(self, incoming: UA) -> UA:
         """
         Compute approximate posterior using Laplace approximation.
 
@@ -79,8 +80,9 @@ class AmplitudeMeasurement(Measurement):
         tau = incoming.precision(raw=True)
         v0 = np().reciprocal(tau)
         y = self.observed.data
-        v = np().reciprocal(self.observed.precision(raw=True))
         eps = np().array(1e-12, dtype=v0.dtype)
+        v = np().reciprocal(self.observed.precision(raw=True) + eps)
+
 
         abs_z0 = np().abs(z0)
         abs_z0_safe = np().maximum(abs_z0, eps)
@@ -94,11 +96,13 @@ class AmplitudeMeasurement(Measurement):
 
         if self.precision_mode_enum == PrecisionMode.SCALAR:
             return posterior.as_scalar_precision()
+        
+        self.belief = posterior
         return posterior
 
     def _compute_message(self, incoming: UA) -> UA:
         self._check_observed()
-        belief = self.approximate_posterior(incoming)
+        belief = self.compute_belief(incoming)
         full_msg = belief / incoming
 
         if self._mask is not None:
@@ -116,6 +120,28 @@ class AmplitudeMeasurement(Measurement):
 
         self.old_msg = msg
         return msg
+    
+    def compute_fitness(self) -> float:
+        """
+        Compute precision-weighted mean squared error between
+        the magnitude of the belief mean and the observed amplitude.
+
+        fitness = mean_i [ γ_i * (|μ_belief_i| - y_i)^2 ]
+        """
+        xp = np()
+        if self.belief is None:
+            if self.input is None or self.input not in self.input_messages:
+                raise RuntimeError("Cannot compute belief: missing input message.")
+            self.compute_belief(self.input_messages[self.input])
+
+        mu_belief = xp.abs(self.belief.data)
+        y = self.observed.data
+        gamma = self.observed.precision(raw=True)
+
+        diff2 = (mu_belief - y) ** 2
+        weighted = gamma * diff2
+        fitness = xp.mean(weighted)
+        return float(fitness)
 
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"

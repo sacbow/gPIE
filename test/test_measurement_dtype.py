@@ -21,6 +21,12 @@ class SameDtypeMeasurement(Measurement):
     def _generate_sample(self, rng):
         pass
 
+    def compute_belief(self):
+        pass
+
+    def compute_fitness(self):
+        pass
+
 
 class RealObservedMeasurement(Measurement):
     expected_input_dtype = np().complexfloating
@@ -35,6 +41,12 @@ class RealObservedMeasurement(Measurement):
     def _generate_sample(self, rng):
         pass
 
+    def compute_belief(self):
+        pass
+
+    def compute_fitness(self):
+        pass
+
 
 class InvalidObservedMeasurement(Measurement):
     expected_input_dtype = np().floating
@@ -47,6 +59,12 @@ class InvalidObservedMeasurement(Measurement):
         return incoming
 
     def _generate_sample(self, rng):
+        pass
+
+    def compute_belief(self):
+        pass
+
+    def compute_fitness(self):
         pass
 
 
@@ -89,6 +107,12 @@ def test_invalid_input_dtype():
             return incoming
 
         def _generate_sample(self, rng):
+            pass
+        
+        def compute_belief(self):
+            pass
+
+        def compute_fitness(self):
             pass
 
     wave = Wave(event_shape=(3,), dtype=np().int32)

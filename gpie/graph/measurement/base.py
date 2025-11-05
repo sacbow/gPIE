@@ -37,6 +37,7 @@ class Measurement(Factor, ABC):
         self._with_mask = with_mask
         self.input_dtype: Optional[np().dtype] = None
         self.observed_dtype: Optional[np().dtype] = None
+        self.input: Optional[Wave] = None
 
         if self._with_mask:
             self._precision_mode: Optional[PrecisionMode] = PrecisionMode.ARRAY
@@ -258,6 +259,17 @@ class Measurement(Factor, ABC):
     @property
     def precision_mode(self) -> Optional[str]:
         return self._precision_mode.value if self._precision_mode else None
+    
+    @abstractmethod
+    def compute_belief(self) -> UncertainArray:
+        """
+        Return the current belief (posterior approximation) over the latent variable z.
+
+        Each subclass defines how to compute this belief — e.g.,
+        by multiplying messages (GaussianMeasurement) or by performing
+        a nonlinear Laplace approximation (AmplitudeMeasurement).
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
