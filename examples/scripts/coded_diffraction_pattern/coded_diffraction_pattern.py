@@ -34,7 +34,7 @@ def coded_diffraction_pattern(shape, n_measurements, phase_masks, noise):
     y = fft2(phase_masks * x_batch)
 
     # Amplitude measurement (batched)
-    AmplitudeMeasurement(var=noise, damping=0.3) << y
+    AmplitudeMeasurement(var=noise) << y
 
 
 def build_cdp_graph(H=256, W=256, noise=1e-4, n_measurements=4):
@@ -102,7 +102,7 @@ def run_cdp(n_iter=100, size=256, n_measurements=4, save_graph=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Coded Diffraction Pattern demo with gPIE")
-    parser.add_argument("--n-iter", type=int, default=100, help="Number of EP iterations")
+    parser.add_argument("--n-iter", type=int, default=200, help="Number of EP iterations")
     parser.add_argument("--size", type=int, default=256, help="Image size (H=W)")
     parser.add_argument("--measurements", type=int, default=4, help="Number of phase masks")
     parser.add_argument("--save-graph", action="store_true", help="Save factor graph visualization")

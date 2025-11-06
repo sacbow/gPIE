@@ -113,22 +113,42 @@ class IFFT2DPropagator(Propagator):
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
 
     def forward(self):
-        if self.output_message is None or self.y_belief is None:
-            if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured.")
+        # Retrieve input wave and message
+        x_wave = self.inputs["input"]
+        msg_x = self.input_messages.get(x_wave)
+        out_msg = self.output_message
+        yb = self.y_belief
 
-            scalar = self.output.precision_mode_enum == PrecisionMode.SCALAR
-            msg = UA.random(
-                event_shape=self.event_shape,
-                batch_size=self.output.batch_size,
-                dtype=self.dtype,
-                scalar_precision=scalar,
-                rng=self._init_rng,
-            )
-        else:
-            msg = self.y_belief / self.output_message
+        # --- Case A: initial iteration ---
+        if out_msg is None and yb is None:
+            if msg_x is None:
+                raise RuntimeError(
+                    "IFFT2DPropagator.forward(): missing input message on the initial iteration. "
+                    "Upstream prior (or FFT node) must emit an initial message before IFFT."
+                )
 
-        self.output.receive_message(self, msg)
+            # Apply inverse FFT transform
+            msg = msg_x.ifft2_centered()
+
+            # Match precision mode with output wave
+            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
+                msg = msg.as_array_precision()
+
+            self.output.receive_message(self, msg)
+            return
+
+        # --- Case B: steady-state EP update ---
+        if out_msg is not None and yb is not None:
+            msg = yb / out_msg
+            self.output.receive_message(self, msg)
+            return
+
+        # --- Case C: inconsistent state ---
+        raise RuntimeError(
+            "IFFT2DPropagator.forward(): inconsistent state. "
+            "Expected both y_belief and output_message to be None (initial) or both present (update)."
+        )
+
 
     def backward(self):
         x_wave = self.inputs["input"]

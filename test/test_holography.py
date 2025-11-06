@@ -30,12 +30,12 @@ def test_holography_reconstruction(xp, obj_dtype):
     backend.set_backend(xp)
     rng = get_rng(seed=42)
 
-    H, W = 64, 64
+    H, W = 128, 128
     shape = (H, W)
     noise = 1e-4
 
-    support_x = circular_aperture(shape, radius=0.2, center=(-0.2, -0.2))
-    support_y = circular_aperture(shape, radius=0.2, center=(0.2, 0.2))
+    support_x = circular_aperture(shape, radius=0.15, center=(-0.2, -0.2))
+    support_y = circular_aperture(shape, radius=0.15, center=(0.2, 0.2))
     ref_wave = masked_random_array(support_x, dtype=xp.complex128, rng=rng)
 
     g = holography_model(var=noise, ref_wave=ref_wave, support=support_y, dtype=obj_dtype)

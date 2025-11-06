@@ -98,3 +98,64 @@ def test_set_observed_batched_false(xp):
 
     assert meas.observed.batch_shape == (1,)
     assert meas.observed.event_shape == (2,)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_belief_and_compute_fitness(xp):
+    """Check GaussianMeasurement.compute_belief() and compute_fitness()."""
+    backend.set_backend(xp)
+
+    # Create Wave and connect Measurement
+    wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    meas = GaussianMeasurement(var=0.1) << wave
+
+    # Create deterministic message and observation with batch dimension
+    msg_mean = xp.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=xp.float32)  # shape (1,2,2)
+    msg_prec = xp.ones_like(msg_mean) * 2.0
+    obs_data = xp.array([[[1.1, 2.1], [2.9, 4.1]]], dtype=xp.float32)
+    obs_prec = xp.ones_like(obs_data) * 10.0
+
+    # Assign message and observation
+    from gpie.core.uncertain_array import UncertainArray as UA
+    ua_msg = UA(msg_mean, dtype=xp.float32, precision=msg_prec, batched=True)
+    meas.input_messages[wave] = ua_msg
+    meas.set_observed(obs_data, precision=obs_prec)
+
+    # --- test compute_belief ---
+    belief = meas.compute_belief()
+    assert isinstance(belief, UA)
+    gamma_expected = msg_prec + obs_prec
+    mu_expected = (msg_prec * msg_mean + obs_prec * obs_data) / gamma_expected
+    assert xp.allclose(belief.data, mu_expected)
+    assert xp.allclose(belief.precision(raw=True), gamma_expected)
+
+    # --- test compute_fitness ---
+    f = meas.compute_fitness()
+    diff2 = xp.abs(mu_expected - obs_data) ** 2
+    weighted = xp.mean(obs_prec * diff2)
+    assert np.allclose(f, float(weighted), atol=1e-7)
+
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_fitness_with_mask(xp):
+    """Check that masked elements (precision=0) do not contribute to fitness."""
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(2, 2), dtype=xp.float32)
+    meas = GaussianMeasurement(var=1.0, precision_mode="array", with_mask = True) << wave
+
+    msg_mean = xp.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=xp.float32)
+    msg_prec = xp.ones_like(msg_mean)
+    obs_data = xp.array([[[1.0, 2.0], [5.0, 0.0]]], dtype=xp.float32)
+    mask = xp.array([[[1, 0], [1, 0]]], dtype=bool)  # shape (1,2,2)
+
+    from gpie.core.uncertain_array import UncertainArray as UA
+    ua_msg = UA(msg_mean, dtype=xp.float32, precision=msg_prec, batched=True)
+    meas.input_messages[wave] = ua_msg
+    meas.set_observed(obs_data, mask=mask)
+
+    f = meas.compute_fitness()
+
+    gamma = meas.observed.precision(raw=True)
+    assert xp.all(gamma[~mask] == 0.0)
+

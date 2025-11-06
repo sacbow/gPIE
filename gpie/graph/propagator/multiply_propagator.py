@@ -139,37 +139,73 @@ class MultiplyPropagator(BinaryPropagator):
 
 
 
-
-
     def forward(self) -> None:
         """
-        Send message to output wave based on current output_belief.
-        If output_belief is not ready, send a random initialization message.
+        Deterministic forward message passing for MultiplyPropagator.
+
+        Logic:
+        - On the first iteration (no output_belief / output_message):
+            → Initialize input_beliefs from input_messages if missing.
+            → Use those beliefs (qa, qb) to moment-match Z = X * Y.
+            → Construct deterministic UA for output message.
+            → Align precision with output wave.
+        - On subsequent iterations:
+            → Perform EP-style message update using existing beliefs/messages.
         """
         z_wave = self.output
+        a_wave = self.inputs["a"]
+        b_wave = self.inputs["b"]
 
-        # Initialize input beliefs from current input messages if missing
-        for name, wave in self.inputs.items():
-            if self.input_beliefs[name] is None:
-                self.input_beliefs[name] = self.input_messages[wave]
+        # --- Ensure input_beliefs are initialized from input_messages ---
+        if self.input_beliefs["a"] is None:
+            self.input_beliefs["a"] = self.input_messages.get(a_wave)
+        if self.input_beliefs["b"] is None:
+            self.input_beliefs["b"] = self.input_messages.get(b_wave)
 
-        # If no prior belief, random init message
-        if self.output_belief is None or self.output_message is None:
-            msg = UA.random(
-                event_shape=z_wave.event_shape,
-                batch_size=z_wave.batch_size,
-                dtype=self.dtype,
-                scalar_precision=(z_wave.precision_mode_enum == PrecisionMode.SCALAR),
-                rng=self._init_rng,
+        qa = self.input_beliefs["a"]
+        qb = self.input_beliefs["b"]
+        out_msg = self.output_message
+        out_belief = self.output_belief
+
+        # --- Case A: initial iteration (no output belief/message yet) ---
+        if out_msg is None and out_belief is None:
+            # Moment-matching approximation for Z = X * Y
+            mu_z = qa.data * qb.data
+            var_z = (
+                (np().abs(qa.data) ** 2 + 1.0 / qa.precision(raw=False))
+                * (np().abs(qb.data) ** 2 + 1.0 / qb.precision(raw=False))
+                - np().abs(mu_z) ** 2
             )
-        else:
+            eps = np().array(1e-8, dtype=get_real_dtype(self.dtype))
+            prec_z = 1.0 / np().maximum(var_z, eps)
+
+            msg = UA(mu_z, dtype=self.dtype, precision=prec_z)
+
+            # Align precision mode with output wave
             if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
-                msg = self.output_belief.as_scalar_precision() / self.output_message
+                msg = msg.as_scalar_precision()
             else:
-                msg = self.output_belief / self.output_message
+                msg = msg.as_array_precision()
 
-        z_wave.receive_message(self, msg)
+            # Save as output_belief and emit to output wave
+            self.output_belief = msg
+            z_wave.receive_message(self, msg)
+            return
 
+        # --- Case B: subsequent EP-style iteration ---
+        if out_msg is not None and out_belief is not None:
+            if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
+                msg = out_belief.as_scalar_precision() / out_msg
+            else:
+                msg = out_belief / out_msg
+            z_wave.receive_message(self, msg)
+            return
+
+        # --- Case C: inconsistent message state ---
+        raise RuntimeError(
+            "MultiplyPropagator.forward(): inconsistent state — "
+            "expected both output_belief/output_message to be None (init) or both present (EP update)."
+        )
 
 
     def backward(self) -> None:

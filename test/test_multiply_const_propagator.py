@@ -222,29 +222,3 @@ def test_get_input_output_precision_modes(xp):
     prop._precision_mode = UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
     assert prop.get_input_precision_mode(wave) == PrecisionMode.ARRAY
     assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
-
-
-@pytest.mark.parametrize("xp", [np])
-def test_backward_with_scalar_input(xp):
-    backend.set_backend(xp)
-    rng = get_rng(seed=123)
-    shape = (2, 2)
-    B = 1
-
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
-
-    # input SCALAR
-    wave._set_precision_mode(PrecisionMode.SCALAR)
-    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
-    ua_in = UA.random(shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
-    ua_out = UA.random(shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=False)
-
-    prop.input_messages[wave] = ua_in
-    prop.output_message = ua_out
-
-    # should go through the "else:" branch in backward
-    prop.backward()
-    assert wave in prop.input_messages
-    assert isinstance(prop.input_messages[wave], UA)

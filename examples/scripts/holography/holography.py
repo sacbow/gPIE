@@ -23,7 +23,7 @@ def holography(support, var, ref_wave):
     A model for inline holography using EP.
     """
     obj = ~SupportPrior(support=support, label="obj", dtype=np.complex64)
-    AmplitudeMeasurement(var=var, damping = 0.05) << (fft2(ref_wave + obj))
+    AmplitudeMeasurement(var=var) << (fft2(ref_wave + obj))
 
 
 def build_holography_graph(H=512, W=512, noise=1e-4,

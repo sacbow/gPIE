@@ -24,7 +24,7 @@ def random_structured_cdi(support, n_layers, phase_masks, var):
     x = ~SupportPrior(support=support, label="sample", dtype=np.complex64)
     for i in range(n_layers):
         x = fft2(phase_masks[i] * x)
-    AmplitudeMeasurement(var=var, damping=0.4) << x
+    AmplitudeMeasurement(var=var) << x
 
 
 def build_random_cdi_graph(H=256, W=256, var=1e-4, support_radius=0.3, n_layers=2):
@@ -89,7 +89,7 @@ def run_random_cdi(n_iter=100, size=256, n_layers=2, support_radius=0.3, save_gr
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Random Structured CDI demo with gPIE")
-    parser.add_argument("--n-iter", type=int, default=100, help="Number of EP iterations")
+    parser.add_argument("--n-iter", type=int, default=200, help="Number of EP iterations")
     parser.add_argument("--size", type=int, default=256, help="Image size (H=W)")
     parser.add_argument("--layers", type=int, default=2, help="Number of random modulation layers")
     parser.add_argument("--support-radius", type=float, default=0.3, help="Radius of support mask")

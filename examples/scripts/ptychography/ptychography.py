@@ -30,13 +30,12 @@ def ptychography_graph_known_probe(
     indices,
     noise: float,
     dtype=np.complex64,
-    damping: float = 0.3,
 ):
     """Ptychography factor graph with known probe."""
     obj = ~GaussianPrior(event_shape=obj_shape, label="object", dtype=dtype)
     patches = obj.extract_patches(indices)
     exit_waves = prb * patches
-    AmplitudeMeasurement(var=noise, label="meas", damping=damping) << fft2(exit_waves)
+    AmplitudeMeasurement(var=noise, label="meas") << fft2(exit_waves)
     return
 
 

@@ -129,7 +129,7 @@ def run_blind_ptychography(n_iter=100, size=256, noise=1e-3, save_graph=False):
     save_img("object_precision.png", np.log10(obj_prec + 1e-12), cmap="inferno")
 
     # Probe
-    save_img("probe_amplitude.png", np.abs(prb_est), cmap="gray")
+    save_img("probe_amplitude.png", np.abs(prb_est), cmap="jet")
     save_img("probe_phase.png", np.angle(prb_est), cmap="twilight", vmin=-np.pi, vmax=np.pi)
     save_img("probe_precision.png", np.log10(prb_prec + 1e-12), cmap="inferno")
 
@@ -140,7 +140,7 @@ def run_blind_ptychography(n_iter=100, size=256, noise=1e-3, save_graph=False):
     imgs = [
         axes[0].imshow(np.abs(obj_est), cmap="gray"),
         axes[1].imshow(np.log10(obj_prec + 1e-12), cmap="inferno"),
-        axes[2].imshow(np.abs(prb_est), cmap="gray"),
+        axes[2].imshow(np.abs(prb_est), cmap="viridis"),
         axes[3].imshow(np.log10(prb_prec + 1e-12), cmap="inferno"),
     ]
     titles = [

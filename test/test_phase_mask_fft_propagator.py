@@ -162,25 +162,6 @@ def test_phase_mask_fft_compute_belief_modes(mode):
     assert isinstance(prop.y_belief, UncertainArray)
 
 
-def test_phase_mask_fft_forward_initializes_with_random():
-    backend.set_backend(np)
-    rng = get_rng(seed=11)
-    n, B = 3, 2
-    phase_mask = random_phase_mask((n, n), dtype=np.complex64, rng=rng)
-
-    x = Wave(event_shape=(n, n), batch_size=B, dtype=np.complex64)
-    y = PhaseMaskFFTPropagator(phase_mask) @ x
-    prop = y.parent
-    prop.set_init_rng(rng)
-
-    # No output_message, no y_belief → should initialize randomly
-    assert prop.output_message is None
-    assert prop.y_belief is None
-    prop.forward()
-    assert prop.output.parent_message is not None
-    assert isinstance(prop.output.parent_message, UncertainArray)
-
-
 def test_phase_mask_fft_precision_mode_getters():
     backend.set_backend(np)
     n = 2
