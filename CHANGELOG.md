@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.2.2] — 2025-11-06
+
+### Added 
+- Adaptive Damping Mechanism (`gpie/core/adaptive_damping.py`)
+Introduced an AD-GAMP–like adaptive damping controller for Expectation Propagation (EP).
+  - `AmplitudeMeasurement`: fitness-based auto-tuning (`damping="auto"`)
+  - `SparsePrior`: log-evidence (logZ)–based auto-tuning (`damping="auto"`)
+The damping parameter now self-adjusts during inference, removing the need for manual tuning.
+
+- Multiple Initialization Strategies
+Priors now support multiple message initialization schemes, from non-informative random initialization to use-specified initial value.
+
+### Changed
+- All benchmark scripts and notebooks in `examples/` now use adaptive damping as the default configuration instead of manually specified damping values.
+
+### Notes
+- The default adaptive damping configuration has been hand-tuned by the developer to ensure stable convergence across all benchmark tasks,
+including ptychography, holography, coded diffraction pattern, layered optics, and compressive sensing.
+
+
 ## [v0.2.1] — 2025-10-26
 
 ### Added

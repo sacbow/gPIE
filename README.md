@@ -15,6 +15,7 @@ gpie/
 │  ├── core/                         # Core data structures and utils
 │  │  ├── uncertain_array/           # UA base + ops
 │  │  ├── accumulative_uncertain_array.py
+│  │  ├── adaptive_damping.py        # AD-GAMP-like damping scheduler (float32 internal)
 │  │  ├── backend.py
 │  │  ├── linalg_utils.py
 │  │  ├── rng_utils.py
@@ -25,15 +26,21 @@ gpie/
 │  │  ├── wave.py
 │  │  ├── factor.py
 │  │  ├── shortcuts.py
-│  │  ├── prior/                     # Gaussian, sparse, support priors
-│  │  ├── propagator/                # Unary/Binary propagators
+│  │  ├── prior/
+│  │  │  ├── base.py
+│  │  │  ├── gaussian_prior.py
+│  │  │  └── sparse_prior.py         # logZ-based adaptive damping (optional)
+│  │  ├── propagator/
 │  │  │  ├── fft_2d_propagator.py
 │  │  │  ├── ifft_2d_propagator.py
 │  │  │  ├── phase_mask_fft_propagator.py
 │  │  │  ├── fork_propagator.py
 │  │  │  ├── slice_propagator.py
 │  │  │  └── zero_pad_propagator.py
-│  │  ├── measurement/               # Amplitude, Gaussian, ...
+│  │  ├── measurement/
+│  │  │  ├── base.py
+│  │  │  ├── gaussian_measurement.py
+│  │  │  └── amplitude_measurement.py # fitness-based adaptive damping (optional)
 │  │  └── structure/                 # Graph + model DSL + visualization
 │  │     ├── graph.py
 │  │     ├── model.py
@@ -45,7 +52,7 @@ gpie/
 │        │  ├── dataset.py           # PtychographyDataset
 │        │  └── diffraction_data.py
 │        ├── simulator/
-│        │  ├── forward.py           # ptychography_graph (sim)
+│        │  ├── forward.py           # ptychography_graph (sim/bench)
 │        │  ├── probe.py             # generate_probe
 │        │  └── scan.py              # generate_fermat_spiral_positions
 │        └── utils/
@@ -76,6 +83,7 @@ gpie/
 ├── README.md
 └── LICENSE
 
+
 ```
 
 ## Features
@@ -91,17 +99,36 @@ gpie/
   - Priors (e.g., Gaussian, sparse, support-based)
   - Unary and binary propagators (e.g., FFT2D, phase modulation, multiplication)
   - Measurement models (e.g., Gaussian, amplitude-based)
-
+- Adaptive Damping
+  - `AmplitudeMeasurement`: fitness-based auto-tuning (`damping="auto"`)
+  - `SparsePrior`: log-evidence-based auto-tuning (`damping="auto"`)
 - Built-in **sampling** and **expectation propagation** based on topological sort
 - Visual graph inspection via `graph.visualize()`
 
 ## What's New
 See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
-**v1.2.0**: Added **ptychography** support — dataset container, scan simulation, patch-based forward model (SlicePropagator + AUA), and a complete reconstruction demo script/notebook.
+**v2.2.0**: Adaptive Damping (auto-tuning) and multiple initialization strategies.
 
+## Quick Start (Ptychography Example)
 
+```python
+  # All comments are in English by request.
+  from gpie import model, fft2, GaussianPrior, AmplitudeMeasurement
+  from gpie.core.rng_utils import get_rng
 
+  @model
+  def ptychography_graph_known_probe(obj_shape, prb, indices, noise, dtype):
+      obj = ~GaussianPrior(event_shape=obj_shape, label="object", dtype=dtype)
+      patches = obj.extract_patches(indices)
+      exit_waves = prb * patches
+      # Auto-tuned damping (no manual parameter needed)
+      AmplitudeMeasurement(var=noise, label="meas", damping="auto") << fft2(exit_waves)
+      return
+
+  # During run, you can callback fitness:
+  # fitness = graph.get_factor("meas").compute_fitness()
+```
 ## Tutorials & Notebooks
 A set of demonstration notebooks is available under:
 ``
@@ -114,6 +141,7 @@ Each notebook corresponds to a different inverse problem or imaging model:
 - `coded_diffraction_pattern_demo.ipynb`
 - `random_structured_cdi_demo.ipynb`
 - `compressed_sensing_demo.ipynb`
+- `ptychography_demo.ipynb`
 
 These illustrate the use of gPIE for EP-based inference on realistic synthetic data.
 
