@@ -38,7 +38,7 @@ def build_compressed_sensing_graph(shape, rho=0.1, var=1e-4, subsample_ratio=0.3
     # Define graph
     @model
     def compressed_sensing(rho, shape, var, mask):
-        x = ~SparsePrior(rho=rho, event_shape=shape, damping=0.03, label="x", dtype=np.complex64)
+        x = ~SparsePrior(rho=rho, event_shape=shape, label="x", dtype=np.complex64)
         GaussianMeasurement(var=var, with_mask = True) << fft2(x)
 
     g = compressed_sensing(rho = rho, shape = shape, var = var, mask = mask)

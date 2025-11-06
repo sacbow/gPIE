@@ -38,7 +38,7 @@ def test_compressive_sensing_mse_decreases(xp):
     # --- 3. モデル定義 ---
     @model
     def compressive_sensing():
-        x = ~SparsePrior(rho=rho, event_shape=(n,), damping=0.03, label="x", dtype=xp.complex64)
+        x = ~SparsePrior(rho=rho, event_shape=(n,), label="x", dtype=xp.complex64)
         GaussianMeasurement(var=var, with_mask = True) << (UnitaryPropagator(U) @ x)
 
     g = compressive_sensing()

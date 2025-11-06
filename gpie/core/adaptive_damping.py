@@ -25,7 +25,7 @@ to "fully damped" (frozen) updates.
 Typical default parameters:
     G_pass = 1.1, G_fail = 0.5, β_min = 0.01, β_max = 1.0, T_β = 3
 """
-
+import numpy as np
 from collections import deque
 from dataclasses import dataclass
 from typing import Tuple
@@ -35,26 +35,8 @@ from typing import Tuple
 class DampingScheduleConfig:
     """
     Configuration parameters for the adaptive damping scheduler.
-
-    Attributes
-    ----------
-    G_pass : float
-        Multiplicative factor applied to β when the iteration is successful ("pass").
-        Must be > 1. Typical value: 1.05–1.2.
-    G_fail : float
-        Multiplicative factor applied to β when the iteration fails ("fail").
-        Must be in (0,1). Typical value: 0.3–0.7.
-    beta_min : float
-        Lower bound of β (corresponds to maximum damping in gPIE convention).
-    beta_max : float
-        Upper bound of β (corresponds to no damping in gPIE convention).
-    T_beta : int
-        Size of the sliding window to compare the current objective value
-        against the maximum of the past T_beta iterations.
     """
-
-    # Empirically tuned parameters (recommended defaults for gPIE benchmarks):
-    G_pass: float = 1.7
+    G_pass: float = 1.5
     G_fail: float = 0.95
     beta_min: float = 0.05
     beta_max: float = 0.99
@@ -63,78 +45,47 @@ class DampingScheduleConfig:
 
 class AdaptiveDamping:
     """
-    Adaptive damping controller for a single node or factor.
-
-    This class implements the iterative rule described in Table I of
-    Vila et al. (ICASSP 2015), with a flexible objective function J_t.
-
-    The internal variable β ∈ (0,1] is updated according to:
-        if (J_t <= max{J_{t-1}, ..., J_{t-T_β}}) or (β <= β_min):
-            β ← min(β_max, G_pass * β)
-            pass = True
-        else:
-            β ← max(β_min, G_fail * β)
-            pass = False
-
-    In gPIE, damping = 1 - β, so increasing β reduces damping and vice versa.
-
-    Example
-    -------
-    >>> sched = AdaptiveDamping(DampingScheduleConfig())
-    >>> damping, repeat = sched.step(J=1.23)
-    >>> print(damping, repeat)
-    0.0 False
+    Adaptive damping controller (float32 internal precision).
     """
 
     def __init__(self, cfg: DampingScheduleConfig):
         self.cfg = cfg
-        self.beta: float = cfg.beta_max  # Start with minimal damping (β=β_max)
-        self.hist: deque[float] = deque(maxlen=max(1, cfg.T_beta))
+        self.beta = np.float32(cfg.beta_max)  # enforce single precision
+        self.hist: deque[np.float32] = deque(maxlen=max(1, cfg.T_beta))
 
-    def step(self, J: float) -> Tuple[float, bool]:
+    def step(self, J: float) -> Tuple[np.float32, bool]:
         """
-        Update the internal damping state based on the new objective value.
-
-        Parameters
-        ----------
-        J : float
-            The current objective value to evaluate (e.g., negative log-likelihood or local KL).
-
-        Returns
-        -------
-        damping : float
-            The new gPIE damping value in [0, 1], mapped as damping = 1 - β.
-        repeat_same_iter : bool
-            Whether to repeat the same outer iteration (True if fail condition is triggered).
+        Update internal β and compute corresponding damping (single precision).
         """
-        # Get the worst (maximum) objective in recent history
-        worst_recent = max(self.hist) if self.hist else float("inf")
+        J = np.float32(J)  # cast incoming scalar to float32
 
-        # Determine pass/fail condition
-        passed = (J <= worst_recent) or (self.beta <= self.cfg.beta_min)
+        worst_recent = np.max(self.hist) if self.hist else np.float32(np.inf)
+        passed = (J <= worst_recent) or (self.beta <= np.float32(self.cfg.beta_min))
 
         if passed:
-            # Successful iteration: relax damping (increase β)
-            self.beta = min(self.cfg.beta_max, self.cfg.G_pass * self.beta)
+            self.beta = np.minimum(
+                np.float32(self.cfg.beta_max),
+                np.float32(self.cfg.G_pass) * self.beta,
+            )
             self.hist.append(J)
             repeat = False
         else:
-            # Failed iteration: tighten damping (decrease β)
-            self.beta = max(self.cfg.beta_min, self.cfg.G_fail * self.beta)
+            self.beta = np.maximum(
+                np.float32(self.cfg.beta_min),
+                np.float32(self.cfg.G_fail) * self.beta,
+            )
             repeat = True
 
-        # Convert to gPIE's convention
-        damping = 1.0 - self.beta
-
+        # Compute damping = 1 - β (in float32)
+        damping = np.float32(1.0) - self.beta
         return damping, repeat
 
     def reset(self):
-        """Reset the internal β and history to their initial states."""
-        self.beta = self.cfg.beta_max
+        self.beta = np.float32(self.cfg.beta_max)
         self.hist.clear()
 
     def __repr__(self) -> str:
         return (
-            f"AdaptiveDamping(beta={self.beta:.4f}, "
+            f"AdaptiveDamping(beta={float(self.beta):.4f}, "
             f"hist_len={len(self.hist)}, cfg={self.cfg})"
         )

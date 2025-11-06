@@ -1,8 +1,9 @@
 from ...core.backend import np
 from ...core.rng_utils import get_rng
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from .base import Prior
+from ...core.adaptive_damping import AdaptiveDamping, DampingScheduleConfig 
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import reduce_precision_to_scalar, random_normal_array
 from ...core.types import PrecisionMode, get_real_dtype
@@ -52,13 +53,13 @@ class SparsePrior(Prior):
         *,
         batch_size: int = 1,
         dtype: np().dtype = np().complex64,
-        damping: float = 0.0,
+        damping: Union[float, str] = "auto",
         precision_mode: Optional[PrecisionMode] = None,
-        label: Optional[str] = None
+        label: Optional[str] = None,
+        adaptive_cfg: Optional[DampingScheduleConfig] = None
     ) -> None:
         real_dtype = get_real_dtype(dtype)
         self.rho = real_dtype(rho)
-        self.damping = real_dtype(damping)
         self.old_msg: Optional[UA] = None
 
         super().__init__(
@@ -68,6 +69,14 @@ class SparsePrior(Prior):
             precision_mode=precision_mode,
             label=label,
         )
+
+        if damping == "auto":
+            self._adaptive = True
+            self._scheduler = AdaptiveDamping(adaptive_cfg or DampingScheduleConfig())
+            self.damping = 1.0 - self._scheduler.beta
+        else:
+            self._adaptive = False
+            self.damping = real_dtype(damping)
 
     def _compute_message(self, incoming: UA) -> UA:
         posterior = self.approximate_posterior(incoming)
@@ -97,6 +106,9 @@ class SparsePrior(Prior):
 
         Z = slab + spike + eps  # prevent division by zero
 
+        # --- Store scalar log-likelihood proxy ---
+        self.logZ = float(np().sum(np().log(Z + eps)))
+
         mu = (slab / Z) * m_post
         e_x2 = (slab / Z) * (np().abs(m_post)**2 + v_post)
         var = np().maximum(e_x2 - np().abs(mu)**2, eps)
@@ -106,6 +118,30 @@ class SparsePrior(Prior):
             precision = reduce_precision_to_scalar(precision)
 
         return UA(mu, dtype=self.dtype, precision=precision)
+
+    def forward(self) -> None:
+        """
+        Send the forward message to the output wave, with optional adaptive damping.
+        """
+        # --- Standard Prior forward behavior ---
+        if self.output_message is None:
+            if self._init_rng is None:
+                raise RuntimeError("Initial RNG not configured for Prior. "
+                                "Call graph.set_init_rng(...) before run().")
+            msg = self._get_initial_message(self._init_rng)
+        else:
+            msg = self._compute_message(self.output_message)
+
+        self.output.receive_message(self, msg)
+
+        # --- Adaptive damping control ---
+        if self._adaptive is True:
+            try:
+                J = -self.logZ   # smaller logZ → worse consistency
+                new_damp, repeat = self._scheduler.step(J)
+                self.damping = new_damp
+            except Exception:
+                pass
 
 
 
