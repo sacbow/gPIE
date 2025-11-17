@@ -332,7 +332,7 @@ class Wave:
         return combined
 
 
-    def forward(self) -> None:
+    def forward(self, block = None) -> None:
         """
         Send messages to all child factors using EP-style division.
         forward(): sends (belief / child_message) to each child
@@ -349,7 +349,7 @@ class Wave:
                 msg = belief / self.child_messages[factor]
                 factor.receive_message(self, msg)
 
-    def backward(self) -> None:
+    def backward(self, block = None) -> None:
         """
         Send message to parent by combining all child messages.
         backward(): sends combined(child_messages) to parent

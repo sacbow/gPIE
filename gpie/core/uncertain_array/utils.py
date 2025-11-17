@@ -171,6 +171,97 @@ def ifft2_centered(self: UncertainArray) -> UncertainArray:
 
     return UncertainArray(transformed_data, dtype=self.dtype, precision=new_precision)
 
+
+def extract_block(self: UncertainArray, block: slice) -> UncertainArray:
+    """
+    Extract a contiguous slice along the batch dimension and return it
+    as a new UncertainArray.
+
+    Args:
+        block (slice):
+            Slice along the batch dimension, e.g., slice(i, j).
+
+    Returns:
+        UncertainArray:
+            A new UA with batch_size = (block.stop - block.start)
+            and the same event_shape, dtype, and precision_mode.
+    """
+
+    if not isinstance(block, slice):
+        raise TypeError("block must be a slice object.")
+
+    start, stop = block.start, block.stop
+    if start < 0 or stop > self.batch_size or start >= stop:
+        raise ValueError(
+            f"Invalid block slice {block} for batch_size={self.batch_size}."
+        )
+
+    # Extract mean data
+    data_sub = self.data[start:stop].copy()
+
+    # Extract precision (broadcasted form)
+    prec_sub = self.precision(raw=True)[start:stop].copy()
+
+    return UncertainArray(
+        array=data_sub,
+        dtype=self.dtype,
+        precision=prec_sub,
+        batched=True,
+    )
+
+
+
+def insert_block(self: UncertainArray, block: slice, sub: UncertainArray) -> None:
+    """
+    Insert (overwrite) a contiguous batch slice with another UncertainArray.
+
+    Args:
+        block (slice):
+            Batch slice to overwrite, e.g., slice(i, j).
+        sub (UncertainArray):
+            Must have batch_size == (block.stop - block.start),
+            same event_shape, dtype, and precision_mode.
+
+    Returns:
+        None (in-place update)
+    """
+
+    # --- Validate slice ---
+    if not isinstance(block, slice):
+        raise TypeError("block must be a slice object.")
+
+    start, stop = block.start, block.stop
+    if start < 0 or stop > self.batch_size or start >= stop:
+        raise ValueError(
+            f"Invalid block slice {block} for batch_size={self.batch_size}."
+        )
+
+    # --- Validate UA compatibility except batch_size ---
+    if (stop - start) != sub.batch_size:
+        raise ValueError(
+            f"sub.batch_size={sub.batch_size} does not match block size {stop - start}."
+        )
+
+    if self.event_shape != sub.event_shape:
+        raise ValueError("Event shape mismatch in insert_block().")
+
+    if self.dtype != sub.dtype:
+        raise TypeError("dtype mismatch in insert_block().")
+
+    if self.precision_mode != sub.precision_mode:
+        raise ValueError("precision_mode mismatch in insert_block().")
+
+    # --- Overwrite mean ---
+    self.data[start:stop] = sub.data
+
+    # --- Overwrite precision (raw representation) ---
+    raw_self = self.precision(raw=True)
+    raw_sub = sub.precision(raw=True)
+    raw_self[start:stop] = raw_sub
+
+    # No return (in-place)
+
+
 # --- monkey patch ---
 UncertainArray.extract_patches = extract_patches
 UncertainArray.zero_pad = zero_pad
@@ -179,3 +270,5 @@ UncertainArray.fft2_centered = fft2_centered
 UncertainArray.ifft2_centered = ifft2_centered
 UncertainArray.as_scalar_precision = as_scalar_precision
 UncertainArray.as_array_precision = as_array_precision
+UncertainArray.extract_block = extract_block
+UncertainArray.insert_block = insert_block

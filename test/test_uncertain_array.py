@@ -291,3 +291,94 @@ def test_extract_patches_basic_and_error(xp):
     ua_multi = UncertainArray.random(event_shape=(8, 8), batch_size=2)
     with pytest.raises(ValueError):
         _ = ua_multi.extract_patches([(slice(0, 4), slice(0, 4))])
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_block_basic(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(3, 3), batch_size=5, precision=2.0)
+
+    block = slice(1, 4)  # size=3
+    sub = ua.extract_block(block)
+
+    assert sub.batch_size == 3
+    assert sub.event_shape == ua.event_shape
+    assert sub.dtype == ua.dtype
+    assert sub.precision_mode == ua.precision_mode
+
+    # Check data and precision consistency
+    assert xp.allclose(sub.data, ua.data[1:4])
+    assert xp.allclose(sub.precision(raw=True), ua.precision(raw=True)[1:4])
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_block_invalid(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(2, 2), batch_size=4, precision=1.0)
+
+    with pytest.raises(ValueError):
+        ua.extract_block(slice(-1, 2))
+
+    with pytest.raises(ValueError):
+        ua.extract_block(slice(2, 10))
+
+    with pytest.raises(ValueError):
+        ua.extract_block(slice(3, 2))  # empty or reversed slice
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_insert_block_basic(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(3, 3), batch_size=5, precision=2.0)
+
+    # extract block
+    block = slice(1, 4)  # size=3
+    sub = ua.extract_block(block)
+
+    # modify sub to ensure actual change
+    sub.data = sub.data + 10.0
+
+    # insert into a fresh UA
+    ua2 = ua  # in-place update of original
+    ua2.insert_block(block, sub)
+
+    # correctness check
+    assert xp.allclose(ua2.data[1:4], sub.data)
+    assert xp.allclose(
+        ua2.precision(raw=True)[1:4],
+        sub.precision(raw=True)
+    )
+
+    # unchanged regions
+    assert xp.allclose(ua2.data[0], ua.data[0])
+    assert xp.allclose(ua2.data[4], ua.data[4])
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_insert_block_mismatch_errors(xp):
+    backend.set_backend(xp)
+    ua = UncertainArray.random(event_shape=(3, 3), batch_size=5, precision=2.0)
+    sub = UncertainArray.random(event_shape=(3, 3), batch_size=2, precision=2.0)
+
+    # block size mismatch
+    with pytest.raises(ValueError):
+        ua.insert_block(slice(1, 4), sub)  # block size=3, sub.batch=2
+
+    # event shape mismatch
+    sub_wrong_shape = UncertainArray.random(event_shape=(2, 3), batch_size=3)
+    with pytest.raises(ValueError):
+        ua.insert_block(slice(1, 4), sub_wrong_shape)
+
+    # dtype mismatch
+    sub_wrong_dtype = UncertainArray.random(
+        event_shape=(3, 3), batch_size=3, dtype=xp.float32
+    )
+    with pytest.raises(TypeError):
+        ua.insert_block(slice(1, 4), sub_wrong_dtype)
+
+    # precision mode mismatch
+    sub_wrong_prec = UncertainArray.random(
+        event_shape=(3, 3), batch_size=3, precision=1.0, scalar_precision=False
+    )
+    with pytest.raises(ValueError):
+        ua.insert_block(slice(1, 4), sub_wrong_prec)

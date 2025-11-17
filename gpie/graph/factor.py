@@ -62,6 +62,9 @@ class Factor(ABC):
         self._generation: Optional[int] = None
         self._precision_mode: Optional[PrecisionMode] = None
 
+        # Batch size metadata
+        self.batch_size: int = 1  # default, updated when connecting Waves
+
     def _set_generation(self, gen: int):
         """Set scheduling index (used during graph compilation)."""
         self._generation = gen
@@ -176,6 +179,7 @@ class Factor(ABC):
         self._set_generation(max_gen + 1)
         wave._set_generation(self._generation + 1)
         wave.set_parent(self)
+        self.batch_size = wave.batch_size
 
     def receive_message(self, wave: Wave, message: UncertainArray):
         """
