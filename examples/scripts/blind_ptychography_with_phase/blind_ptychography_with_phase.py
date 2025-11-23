@@ -58,8 +58,8 @@ def build_dataset(size=256, noise=1e-3, n_scans=50):
     obj_shape = (size, size)
 
     # --- Ground truth object ---
-    amp = load_sample_image("camera", shape=obj_shape)
-    phase = load_sample_image("coins", shape=obj_shape)
+    amp = load_sample_image("coins", shape=obj_shape)
+    phase = load_sample_image("moon", shape=obj_shape)
     obj = amp * np.exp(1j * phase)
 
     # --- Probe generation ---

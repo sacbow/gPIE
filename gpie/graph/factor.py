@@ -54,9 +54,13 @@ class Factor(ABC):
         self.inputs: dict[str, Wave] = {}
         self.output: Optional[Wave] = None
 
-        # Messages
+        # Messages coming inward
         self.input_messages: dict[Wave, Optional[UncertainArray]] = {}
         self.output_message: Optional[UncertainArray] = None
+
+        # Messages goint outward
+        self.last_forward_message: Optional[UncertainArray] = None
+        self.last_backward_messages: dict[Wave, UncertainArray] = {}
 
         # Scheduling & precision
         self._generation: Optional[int] = None
@@ -198,6 +202,13 @@ class Factor(ABC):
             self.output_message = message
         else:
             raise ValueError("Received message from unconnected Wave.")
+
+    def _store_forward_message(self, msg: UncertainArray):
+        self.last_forward_message = msg
+
+    def _store_backward_message(self, wave: Wave, msg: UncertainArray):
+        self.last_backward_messages[wave] = msg
+
 
     def get_sample_for_output(self, rng) -> np().ndarray:
         """

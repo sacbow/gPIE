@@ -108,7 +108,7 @@ gpie/
 ## What's New
 See [CHANGELOG.md](./CHANGELOG.md) for full release notes.
 
-**v2.2.0**: Adaptive Damping (auto-tuning) and multiple initialization strategies.
+**v0.2.0**: Adaptive Damping (auto-tuning) and multiple initialization strategies.
 
 ## Quick Start (Ptychography Example)
 
