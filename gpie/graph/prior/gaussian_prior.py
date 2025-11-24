@@ -26,7 +26,7 @@ class GaussianPrior(Prior):
         var: float = 1.0,
         event_shape: Tuple[int, ...] = (1,),
         *,
-        batch_size: int = 1,
+        batch_size: int = 1.0,
         dtype: np().dtype = np().complex64,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None,
