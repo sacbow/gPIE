@@ -141,24 +141,71 @@ class Prior(Factor, ABC):
 
     # ---------- Core message passing ----------
 
-    def forward(self) -> None:
+    def forward(self, block: slice | None = None) -> None:
         """
         Send the forward message to the output wave.
 
-        First iteration:
-            Use unified initializer based on the selected strategy.
-        Later iterations:
-            Use `_compute_message` based on incoming belief.
+        Behavior:
+            - First iteration:
+                If `self.output_message is None`, create a full-batch initial message
+                using the selected initialization strategy. Block information is ignored.
+                Store the full message via `_store_forward_message()`.
+
+            - Later iterations:
+                * If `block is None`, fall back to the legacy full-batch EP update.
+                That is, compute `_compute_message(self.output_message)` for the entire
+                batch, store it, and send it to the output.
+
+                * If `block` is a slice, perform block-wise update:
+                    (1) Extract the corresponding block from `self.output_message`
+                    (2) Apply `_compute_message()` to the block
+                    (3) Insert the updated block into `self.last_forward_message`
+                    (4) Store and send the updated full message
+
+        Notes:
+            - `self.last_forward_message` always holds the most recent full outgoing
+            forward message and acts as the accumulation buffer for block updates.
+            - Prior has no backward message, so backward() remains a no-op.
         """
+
+        # --- First iteration: no incoming belief from the output yet ---
         if self.output_message is None:
             if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured for Prior. "
-                                   "Call graph.set_init_rng(...) before run().")
+                raise RuntimeError(
+                    "Initial RNG not configured for Prior. "
+                    "Call graph.set_init_rng(...) before run()."
+                )
+            # Produce full-batch initial message
             msg = self._get_initial_message(self._init_rng)
-        else:
-            msg = self._compute_message(self.output_message)
+            # Cache the outgoing message
+            self._store_forward_message(msg)
+            # Send to output wave
+            self.output.receive_message(self, msg)
+            return
 
-        self.output.receive_message(self, msg)
+        # --- Later iterations, no block specified (full update) ---
+        if block is None or self.last_forward_message is None:
+            # Compute full-batch updated message
+            msg = self._compute_message(self.output_message)
+            # Cache full outgoing message
+            self._store_forward_message(msg)
+            # Send to output wave
+            self.output.receive_message(self, msg)
+            return
+
+        # --- Block-wise update ---
+        # 1) Extract incoming belief restricted to this block
+        incoming_block = self.output_message.extract_block(block)
+        # 2) Apply update rule to the block
+        updated_block = self._compute_message(incoming_block)
+        # 3) Insert updated block into the full cached message
+        full_msg = self.last_forward_message
+        full_msg.insert_block(block, updated_block)
+        # 4) Cache updated full message
+        self._store_forward_message(full_msg)
+        # 5) Send updated full message to the output wave
+        self.output.receive_message(self, full_msg)
+
 
     def backward(self) -> None:
         """No backward message from Prior."""

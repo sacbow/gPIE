@@ -1,47 +1,37 @@
-from ...core.backend import np, move_array_to_current_backend
 from typing import Optional, Tuple, Any, Union
 
-from .base import Prior
+from ...core.backend import np, move_array_to_current_backend
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode, get_real_dtype
 from ...core.linalg_utils import random_normal_array
 from ...core.rng_utils import get_rng
 
+from .base import Prior
+
 
 class GaussianPrior(Prior):
     """
-    A Gaussian prior for latent variables with optional non-zero mean.
+    Gaussian prior:
+        x ~ N(mean, var)  (real case)
+        x ~ CN(mean, var) (complex case)
 
-    This class defines a prior distribution of the form:
-        - For real dtype:     x ~ N(mean, var)
-        - For complex dtype:  x ~ CN(mean, var)
-
-    Behavior:
-        - On the first forward pass, it samples from N(mean, var)
-        - On later passes, it returns an UncertainArray with the specified precision
-        - `mean` may be a scalar or an array matching `event_shape`
-
-    Args:
-        mean (float | np.ndarray | None): Mean of the Gaussian prior (default: 0).
-        var (float): Variance of the Gaussian (must be positive).
-        event_shape (tuple[int, ...]): Shape of the latent variable.
-        batch_size (int): Number of independent samples.
-        dtype (np().dtype): Data type (e.g., np().float32 or np().complex64).
-        precision_mode (PrecisionMode | None): Scalar or array mode.
-        label (str | None): Optional name for the associated Wave.
+    This prior produces a constant EP message after initialization.
+    The message does not depend on incoming beliefs, so block-aware
+    operations are unnecessary and skipped entirely.
     """
 
     def __init__(
         self,
         mean: Optional[Union[float, np().ndarray]] = 0.0,
         var: float = 1.0,
-        event_shape: tuple[int, ...] = (1,),
+        event_shape: Tuple[int, ...] = (1,),
         *,
         batch_size: int = 1,
         dtype: np().dtype = np().complex64,
         precision_mode: Optional[PrecisionMode] = None,
         label: Optional[str] = None,
     ) -> None:
+
         if var <= 0:
             raise ValueError("Variance must be positive.")
 
@@ -49,19 +39,28 @@ class GaussianPrior(Prior):
         self.var: float = real_dtype(var)
         self.precision: float = np().asarray(1.0 / var)
 
-        # --- mean handling ---
+        # -----------------------------------------------------------
+        # Mean handling: create full shape (batch_size, *event_shape)
+        # -----------------------------------------------------------
         if mean is None:
-            self.mean = np().zeros(event_shape, dtype=dtype)
+            base = np().zeros(event_shape, dtype=dtype)
         elif np().isscalar(mean):
-            self.mean = np().full(event_shape, mean, dtype=dtype)
+            base = np().full(event_shape, mean, dtype=dtype)
         else:
             arr = np().asarray(mean, dtype=dtype)
             if arr.shape != event_shape:
                 raise ValueError(
                     f"Mean shape mismatch: expected {event_shape}, got {arr.shape}"
                 )
-            self.mean = arr
+            base = arr
 
+        # Expand to full batch shape
+        self.mean = np().broadcast_to(base, (batch_size,) + event_shape).copy()
+
+        # Cached constant message (constructed lazily)
+        self.const_msg: Optional[UA] = None
+
+        # Now construct the wave and link via Prior.__init__
         super().__init__(
             event_shape=event_shape,
             batch_size=batch_size,
@@ -70,30 +69,92 @@ class GaussianPrior(Prior):
             label=label,
         )
 
-    def to_backend(self):
-        """Move internal arrays to current backend."""
+    # -----------------------------------------------------------
+    # Backend migration
+    # -----------------------------------------------------------
+    def to_backend(self) -> None:
+        """Move internal arrays to the current backend."""
         self.mean = move_array_to_current_backend(self.mean, dtype=self.dtype)
         self.precision = move_array_to_current_backend(self.precision)
 
-    def _compute_message(self, incoming: UA) -> UA:
+        if self.const_msg is not None:
+            self.const_msg.to_backend()
+
+    # -----------------------------------------------------------
+    # Constant message construction
+    # -----------------------------------------------------------
+    def _ensure_const_msg(self) -> None:
+        """
+        Construct a constant UncertainArray message for all later iterations.
+        Error if precision mode is not available (should be set by graph).
+        """
+        if self.const_msg is not None:
+            return
+
         mode = self.output.precision_mode_enum
-        scalar_precision = mode == PrecisionMode.SCALAR
+        if mode is None:
+            raise RuntimeError(
+                "GaussianPrior: precision_mode must be resolved before constructing const_msg."
+            )
 
-        shape = (self.batch_size,) + self.event_shape
+        scalar_precision = (mode == PrecisionMode.SCALAR)
 
+        # UA handles precision broadcasting internally
         if scalar_precision:
-            precision = self.precision
+            prec = self.precision  # scalar
         else:
-            precision = np().full(shape, self.precision, dtype=get_real_dtype(self.dtype))
+            # array precision → shape (batch_size, *event_shape)
+            prec = np().full(
+                (self.batch_size,) + self.event_shape,
+                self.precision,
+                dtype=get_real_dtype(self.dtype),
+            )
 
-        mean = np().broadcast_to(self.mean, shape)
-        return UA(mean, dtype=self.dtype, precision=precision, batched=True)
+        msg = UA(self.mean, dtype=self.dtype, precision=prec, batched=True)
+        self.const_msg = msg
 
+    # -----------------------------------------------------------
+    # Forward EP message passing
+    # -----------------------------------------------------------
+    def forward(self, block: slice | None = None) -> None:
+        """
+        Forward pass:
+            - First iteration: use Prior base-class initialization.
+            - Later iterations: ignore block and incoming beliefs; send const_msg.
+        """
+        if self.output_message is None:
+            if self._init_rng is None:
+                raise RuntimeError(
+                    "Initial RNG not configured for Prior. "
+                    "Call graph.set_init_rng(...) before run()."
+                )
+            # Base Prior logic (samples / uninformative / manual)
+            msg = self._get_initial_message(self._init_rng)
+            self._store_forward_message(msg)
+            self.output.receive_message(self, msg)
+            return
 
+        # Later iterations: always constant
+        self._ensure_const_msg()
+        msg = self.const_msg
+
+        # Send & store
+        self._store_forward_message(msg)
+        self.output.receive_message(self, msg)
+
+    # -----------------------------------------------------------
+    # _compute_message required by abstract base class
+    # -----------------------------------------------------------
+    def _compute_message(self, incoming: UA) -> UA:
+        """Return the constant EP message."""
+        self._ensure_const_msg()
+        return self.const_msg
+
+    # -----------------------------------------------------------
+    # Sampling for "sample" initialization mode
+    # -----------------------------------------------------------
     def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
-        """
-        Return a sample from the Gaussian prior: mean + sqrt(var) * ε.
-        """
+        """Return mean + sqrt(var) * ε."""
         if rng is None:
             rng = get_rng()
 
@@ -101,12 +162,13 @@ class GaussianPrior(Prior):
         noise = random_normal_array(shape, dtype=self.dtype, rng=rng)
         return self.mean + np().sqrt(self.var) * noise
 
+    # -----------------------------------------------------------
+    # Debug representation
+    # -----------------------------------------------------------
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"
         mode = self.precision_mode or "None"
-        mean_desc = (
-            "scalar" if np().isscalar(self.mean) else f"array(shape={self.mean.shape})"
-        )
         return (
-            f"GaussianPrior(gen={gen}, mode={mode}, mean={mean_desc}, var={self.var})"
+            f"GaussianPrior(gen={gen}, mode={mode}, "
+            f"mean_shape={self.mean.shape}, var={self.var})"
         )

@@ -18,16 +18,19 @@ def test_gaussian_prior_initialization_default_mean():
 
 def test_gaussian_prior_initialization_with_scalar_mean():
     gp = GaussianPrior(mean=2.0, var=1.0, event_shape=(2, 2))
+    assert gp.mean.shape == (1, 2, 2)   # 修正
     assert np.allclose(gp.mean, 2.0)
-    assert gp.mean.shape == (2, 2)
     assert np.allclose(gp.var, 1.0)
     assert np.allclose(gp.precision, 1.0)
+
 
 
 def test_gaussian_prior_initialization_with_array_mean():
     mean_arr = np.ones((2, 2)) * 5.0
     gp = GaussianPrior(mean=mean_arr, var=1.0, event_shape=(2, 2))
-    assert np.allclose(gp.mean, mean_arr)
+    assert gp.mean.shape == (1, 2, 2)     
+    assert np.allclose(gp.mean[0], mean_arr)  
+
 
 
 def test_gaussian_prior_initialization_mean_shape_mismatch():
@@ -83,6 +86,8 @@ def test_gaussian_prior_repr_contains_mean_and_var():
     r = repr(gp)
     assert "GaussianPrior" in r
     assert "var=1.0" in r
-    assert "mean=" in r
+    # updated: repr now contains "mean_shape=" instead of "mean="
+    assert "mean_shape=" in r
+
 
 
