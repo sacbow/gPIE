@@ -1,11 +1,11 @@
-from ...core.backend import np, move_array_to_current_backend
 from typing import Optional, Any
+from ...core.backend import np, move_array_to_current_backend
+from ...core.rng_utils import get_rng
 
 from .base import Prior
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.linalg_utils import random_normal_array
 from ...core.types import PrecisionMode, get_real_dtype
-from ...core.rng_utils import get_rng
 
 
 class SupportPrior(Prior):
@@ -16,104 +16,119 @@ class SupportPrior(Prior):
         - Gaussian CN(0, 1) or N(0, 1) on the support region
         - Deterministically zero (delta function) elsewhere
 
-    Internally, this is implemented via an UncertainArray with a very large precision
-    (e.g., 1e10) outside the support, effectively clamping those values to zero.
+    Internally, this is implemented via an UncertainArray with:
+        - mean = 0 everywhere
+        - precision = 1 on support=True
+        - precision = large_value on support=False
 
-    Args:
-        support (np().ndarray[bool]):
-            Boolean mask of shape `event_shape` or `(batch_size, *event_shape)`.
-        dtype (np().dtype):
-            Data type (e.g., np().float32 or np().complex64).
-        precision_mode (PrecisionMode | None):
-            Precision mode to use; defaults to 'array'.
-        label (str | None):
-            Optional label for the output wave.
+    Notes:
+        - Precision mode is always ARRAY (scalar mode is not supported).
+        - Behavior is block-agnostic: the same message is sent every iteration.
     """
 
     def __init__(
         self,
-        support: Any,  # backend ndarray (bool)
+        support: Any,          # ndarray(bool)
         event_shape: tuple[int, ...] = None,
         *,
         batch_size: int = 1,
         dtype: np().dtype = np().complex64,
-        precision_mode: Optional[PrecisionMode] = PrecisionMode.ARRAY,
-        label: Optional[str] = None
+        label: Optional[str] = None,
     ) -> None:
-        """
-        Initialize SupportPrior.
 
-        Args:
-            support (ndarray[bool]): Boolean mask of shape `event_shape` or `(batch_size, *event_shape)`.
-            event_shape (tuple): Shape of each instance (excluding batch dimension).
-            batch_size (int): Number of independent instances. Defaults to 1.
-            dtype (np().dtype): Data type (e.g., np().complex64).
-            precision_mode (PrecisionMode): Defaults to ARRAY.
-            label (str): Optional label for the output wave.
-
-        Raises:
-            ValueError: If support has invalid shape or dtype.
-        """
+        # ----------------------------
+        # Input validation
+        # ----------------------------
         if support.dtype != bool:
             raise ValueError("Support mask must be a boolean array.")
-        
-        #infer event_shape from support if none
+
+        # Infer event_shape
         if event_shape is None:
             event_shape = support.shape
+
         expected_shape = (batch_size,) + event_shape
 
-        # Accept (event_shape,) and broadcast if needed
+        # Broadcast or validate
         if support.shape == event_shape:
             support = np().broadcast_to(support, expected_shape)
         elif support.shape != expected_shape:
             raise ValueError(
-                f"Support shape {support.shape} is invalid. Must be {event_shape} or {expected_shape}."
+                f"Support shape {support.shape} is invalid. "
+                f"Must be {event_shape} or {expected_shape}."
             )
 
-        self.support: np().ndarray = support
-        self.large_value: float = get_real_dtype(dtype)(1e10)
+        self.support = support
+        self.large_value = get_real_dtype(dtype)(1e10)
 
+        # ----------------------------
+        # Force precision mode = ARRAY
+        # ----------------------------
         super().__init__(
             event_shape=event_shape,
             batch_size=batch_size,
             dtype=dtype,
-            precision_mode=precision_mode,
-            label=label
+            precision_mode=PrecisionMode.ARRAY,
+            label=label,
         )
 
-        self._fixed_msg_array: UA = self._create_fixed_array(dtype)
+        # Constant message cached
+        self.const_msg: UA = self._create_fixed_array(dtype)
 
-
+    # ----------------------------------------------------------
+    # Create constant array used every iteration
+    # ----------------------------------------------------------
     def _create_fixed_array(self, dtype: np().dtype) -> UA:
-        """
-        Create a fixed UncertainArray with precision = 1 inside support,
-        and large_value outside support.
-        """
         real_dtype = get_real_dtype(dtype)
+
         mean = np().zeros_like(self.support, dtype=dtype)
-        precision = np().where(self.support, real_dtype(1.0), self.large_value)
+        precision = np().where(self.support, real_dtype(1), self.large_value)
+
         return UA(mean, dtype=dtype, precision=precision)
 
+    # ----------------------------------------------------------
+    # Compute message (not used during block-wise scheduling)
+    # ----------------------------------------------------------
     def _compute_message(self, incoming: UA) -> UA:
         """
-        Return the prior message according to precision_mode.
+        For API compatibility. SupportPrior ignores incoming messages and
+        always returns the constant prior message in ARRAY precision mode.
         """
-        mode = self.output.precision_mode_enum
-        if mode == PrecisionMode.ARRAY:
-            return self._fixed_msg_array
-        elif mode == PrecisionMode.SCALAR:
-            combined = self._fixed_msg_array * incoming.as_array_precision()
-            reduced = combined.as_scalar_precision()
-            return reduced / incoming
-        else:
-            raise RuntimeError("Precision mode not determined for SupportPrior output.")
+        return self.const_msg
 
+    # ----------------------------------------------------------
+    # Block-agnostic forward
+    # ----------------------------------------------------------
+    def forward(self, block: slice | None = None) -> None:
+        """
+        Forward pass:
+            - First iteration uses Prior base initialization.
+            - Later iterations always send the constant message.
+        Block parameter is ignored (support is deterministic).
+        """
+
+        # First iteration: base Prior initialization
+        if self.output_message is None:
+            if self._init_rng is None:
+                raise RuntimeError(
+                    "Initial RNG not configured for Prior. "
+                    "Call graph.set_init_rng(...) before run()."
+                )
+            msg = self._get_initial_message(self._init_rng)
+            self._store_forward_message(msg)
+            self.output.receive_message(self, msg)
+            return
+
+        # Later iterations: constant message
+        msg = self.const_msg
+        self._store_forward_message(msg)
+        self.output.receive_message(self, msg)
+
+    # ----------------------------------------------------------
+    # Sampling (for initialization)
+    # ----------------------------------------------------------
     def get_sample_for_output(self, rng: Optional[Any] = None) -> np().ndarray:
         """
-        Return a sample with N(0,1) or CN(0,1) on support=True, and 0 elsewhere.
-
-        Returns:
-            ndarray: sample of shape (batch_size, *event_shape), dtype = self.dtype
+        Return a sample with N(0,1)/CN(0,1) on support=True and 0 elsewhere.
         """
         if rng is None:
             rng = get_rng()
@@ -123,20 +138,20 @@ class SupportPrior(Prior):
         sample[self.support] = values[self.support]
         return sample
 
-
-
+    # ----------------------------------------------------------
+    # Backend conversion
+    # ----------------------------------------------------------
     def to_backend(self) -> None:
         """
-        Convert internal support mask and cached message to current backend.
-        Ensures compatibility with backend-agnostic computation (e.g., NumPy or CuPy).
+        Convert internal arrays to the active backend.
         """
         self.support = move_array_to_current_backend(self.support, dtype=bool)
-        self._fixed_msg_array = self._create_fixed_array(self.dtype)
-        self.dtype = self._fixed_msg_array.dtype
+        self.const_msg = self._create_fixed_array(self.dtype)
+        self.dtype = self.const_msg.dtype
 
-
-
+    # ----------------------------------------------------------
+    # Representation
+    # ----------------------------------------------------------
     def __repr__(self) -> str:
         gen = self._generation if self._generation is not None else "-"
-        mode = self.precision_mode or "None"
-        return f"SupportPrior(gen={gen}, mode={mode})"
+        return f"SupportPrior(gen={gen}, mode=ARRAY)"
