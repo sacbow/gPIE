@@ -178,9 +178,6 @@ class SparsePrior(Prior):
                     self.damping = new_damp
                 except Exception:
                     pass
-
-            # Prepare for the next iteration
-            self.logZ = 0
             return
 
         # -------------------------
@@ -188,8 +185,6 @@ class SparsePrior(Prior):
         # -------------------------
         is_last_block = (block.stop == self.batch_size)
 
-        # We assume block-wise scheduling is only used after the first iteration,
-        # so last_forward_message must exist here.
         if self.last_forward_message is None:
             raise RuntimeError(
                 "SparsePrior.forward(): last_forward_message is None during block-wise update."

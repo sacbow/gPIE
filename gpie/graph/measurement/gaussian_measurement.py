@@ -41,7 +41,7 @@ class GaussianMeasurement(Measurement):
         # Use the same dtype for observed data as for latent variable
         return input_dtype
 
-    def _compute_message(self, incoming: UA) -> UA:
+    def _compute_message(self, incoming: UA, block=None) -> UA:
         self._check_observed()
         if self.precision_mode_enum == PrecisionMode.SCALAR:
             return self.observed.as_scalar_precision()

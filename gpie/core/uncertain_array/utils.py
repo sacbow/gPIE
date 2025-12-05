@@ -186,7 +186,8 @@ def extract_block(self: UncertainArray, block: slice) -> UncertainArray:
             A new UA with batch_size = (block.stop - block.start)
             and the same event_shape, dtype, and precision_mode.
     """
-
+    if block is None:
+        return self
     if not isinstance(block, slice):
         raise TypeError("block must be a slice object.")
 

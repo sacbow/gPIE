@@ -53,7 +53,7 @@ class Measurement(Factor, ABC):
         """
 
         self.input_dtype = wave.dtype
-
+        self.batch_size = wave.batch_size
         if self.expected_input_dtype is not None:
             if not np().issubdtype(self.input_dtype, self.expected_input_dtype):
                 raise TypeError(
@@ -226,11 +226,36 @@ class Measurement(Factor, ABC):
     def forward(self) -> None:
         pass
 
-    def backward(self) -> None:
+    def backward(self, block=None) -> None:
         self._check_observed()
+
         incoming = self.input_messages[self.input]
-        msg = self._compute_message(incoming)
-        self.input.receive_message(self, msg)
+
+        # block-aware compute
+        msg_blk = self._compute_message(incoming, block=block)
+
+        # block=None: standard EP behavior
+        if block is None:
+            self.input.receive_message(self, msg_blk)
+            return
+
+        if self.input not in self.last_backward_messages:
+            # poputate last_backward_message (initialization method here have no consequence in inference.)
+            self.last_backward_messages[self.input] = UncertainArray.zeros(
+                event_shape=self.input.event_shape,
+                batch_size=self.batch_size,
+                dtype=self.input.dtype,
+                precision=1.0,
+                scalar_precision=(self.precision_mode_enum == PrecisionMode.SCALAR),
+            )
+
+        # update cache
+        full_msg = self.last_backward_messages[self.input]
+        full_msg.insert_block(block, msg_blk)
+
+        self.input.receive_message(self, full_msg)
+
+
 
     def _check_observed(self) -> None:
         if self.observed is None:
@@ -272,7 +297,7 @@ class Measurement(Factor, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _compute_message(self, incoming: UncertainArray) -> UncertainArray:
+    def _compute_message(self, incoming: UncertainArray, block=None) -> UncertainArray:
         """
         Compute the backward message from the observed data to the latent variable.
         """
