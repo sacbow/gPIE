@@ -263,3 +263,119 @@ def test_set_observed_and_set_sample_shape_mismatch_raise(xp):
         m.set_sample(sample)
 
 
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_message_block_equivalence(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(4,4), dtype=xp.complex64)
+    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar") << wave
+
+    # observed
+    y = xp.abs(xp.arange(16, dtype=xp.float32).reshape(1,4,4) + 1)
+    m.set_observed(y)
+
+    # incoming
+    z = xp.ones((1,4,4), dtype=xp.complex64)
+    incoming = UncertainArray(z, dtype=xp.complex64, precision=1.0, batched=True)
+
+    # full message
+    full_msg = m._compute_message(incoming, block=None)
+
+    # block messages
+    B = incoming.batch_size
+    block = slice(0,1)  # only first element
+    msg_blk = m._compute_message(incoming, block)
+
+    # Compare block part
+    assert np.allclose(msg_blk.data, full_msg.data[block], atol=1e-6)
+    assert np.allclose(msg_blk.precision(raw=True),
+                       full_msg.precision(raw=True)[block], atol=1e-6)
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_backward_block_consistency(xp):
+    backend.set_backend(xp)
+
+    # batch_size = 2 (Required for multi-block test)
+    batch_size = 2
+    wave = Wave(event_shape=(4,4), batch_size=batch_size, dtype=xp.complex64)
+
+    # Incoming sample (unused but prevents compute_belief error)
+    wave.set_sample(xp.ones((batch_size,4,4), dtype=xp.complex64))
+
+    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar", damping=0.0) << wave
+
+    # Observed amplitude for 2 batches
+    y = xp.abs(
+        xp.arange(batch_size*16, dtype=xp.float32).reshape(batch_size,4,4) + 1
+    ).astype(xp.float32)
+    m.set_observed(y)
+
+    # Incoming message (explicitly register into input_messages)
+    incoming = UncertainArray.zeros(event_shape=(4,4), batch_size=batch_size,
+                        dtype=xp.complex64, precision=1.0)
+    m.input_messages[wave] = incoming
+
+    # ============================================================
+    # Full backward
+    # ============================================================
+    m.backward(block=None)
+    full_msg = m.last_backward_messages[wave]
+
+    # ============================================================
+    # Block-wise backward
+    # ============================================================
+    m.last_backward_messages = {}
+
+    block0 = slice(0,1)
+    block1 = slice(1,2)
+
+    m.backward(block=block0)
+    m.backward(block=block1)
+
+    full_blkwise = m.last_backward_messages[wave]
+
+    # ============================================================
+    # Compare
+    # ============================================================
+    assert np.allclose(full_blkwise.data, full_msg.data, atol=1e-6)
+    assert np.allclose(full_blkwise.precision(raw=True),
+                       full_msg.precision(raw=True), atol=1e-6)
+
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_block_damping_applied(xp):
+    backend.set_backend(xp)
+    wave = Wave(event_shape=(2,2), dtype=xp.complex64)
+    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar", damping=0.5) << wave
+
+    # Observed
+    y = xp.ones((1,2,2), dtype=xp.float32)
+    m.set_observed(y)
+
+    # incoming must match wave.event_shape!
+    incoming = UncertainArray.zeros(
+        event_shape=(2,2), batch_size=1,
+        dtype=xp.complex64, precision=1.0
+    )
+    m.input_messages[wave] = incoming
+
+    # First call creates last_backward_messages
+    m.backward(block=None)
+    prev_msg = m.last_backward_messages[wave]
+
+    # Modify incoming slightly to force different message
+    incoming2 = UncertainArray(
+        2 * xp.ones((1,2,2), dtype=xp.complex64),
+        dtype=xp.complex64, precision=1.0, batched=True,
+    )
+    m.input_messages[wave] = incoming2  # replace incoming
+
+    # block damping call
+    msg_blk = m._compute_message(incoming2, block=None)
+
+    # Expected (damping applied)
+    raw_msg = m.compute_belief(incoming2) / incoming2
+    expected = 0.5 * prev_msg.data + 0.5 * raw_msg.data
+
+    assert np.allclose(msg_blk.data, expected, atol=1e-6)
+

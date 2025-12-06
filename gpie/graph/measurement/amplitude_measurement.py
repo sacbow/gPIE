@@ -29,7 +29,6 @@ class AmplitudeMeasurement(Measurement):
     ) -> None:
         self._var = var
         self.damping = damping
-        self.old_msg: Optional[UA] = None
         self.belief = None
 
         # --- Adaptive damping setup ---
@@ -61,39 +60,23 @@ class AmplitudeMeasurement(Measurement):
         self._sample = (abs_x + noise).astype(self.observed_dtype)
 
 
-    def compute_belief(self, incoming: UA) -> UA:
+    def compute_belief(self, incoming: UA, observed: Optional[UA] = None) -> UA:
         """
         Compute approximate posterior using Laplace approximation.
-
-        This method implements a nonlinear belief update for amplitude measurements
-        of the form `y = |z| + ε`, where `z` is a complex latent variable and
-        `ε ~ N(0, var)` is additive Gaussian noise.
-
-        The update is based on a Laplace approximation to the posterior distribution,
-        computed elementwise using a closed-form expression derived from second-order
-        expansion of the likelihood.
-
-        Reference:
-            S. K. Shastri, R. Ahmad, and P. Schniter,
-            "Deep Expectation-Consistent Approximation for Phase Retrieval,"
-            Proc. Asilomar Conf. on Signals, Systems, and Computers, 2023.
-            DOI: 10.1109/IEEECONF59524.2023.10476950
-
-        Args:
-            incoming (UncertainArray):
-                Current belief (mean and precision) on the latent complex variable `z`.
-
-        Returns:
-            UncertainArray:
-                Posterior approximation as a complex Gaussian belief, in batch form.
+        If `observed` is provided, the computation is done using
+        the given UncertainArray (block-aware).
         """
+
+        if observed is None:
+            observed = self.observed
+
         z0 = incoming.data
         tau = incoming.precision(raw=True)
         v0 = np().reciprocal(tau)
-        y = self.observed.data
-        eps = np().array(1e-12, dtype=v0.dtype)
-        v = np().reciprocal(self.observed.precision(raw=True) + eps)
 
+        y = observed.data
+        eps = np().array(1e-12, dtype=v0.dtype)
+        v = np().reciprocal(observed.precision(raw=True) + eps)
 
         abs_z0 = np().abs(z0)
         abs_z0_safe = np().maximum(abs_z0, eps)
@@ -103,7 +86,7 @@ class AmplitudeMeasurement(Measurement):
         v_hat = (v0 * (v0 * y + 4 * v * abs_z0_safe)) / (2 * abs_z0_safe * (v0 + 2 * v))
         v_hat = np().maximum(v_hat, eps)
 
-        posterior = UA(z_hat, dtype=self.input_dtype, precision= np().reciprocal(v_hat))
+        posterior = UA(z_hat, dtype=self.input_dtype, precision=np().reciprocal(v_hat))
         self.belief = posterior
 
         if self.precision_mode_enum == PrecisionMode.SCALAR:
@@ -111,39 +94,99 @@ class AmplitudeMeasurement(Measurement):
 
         return posterior
 
-    def _compute_message(self, incoming: UA) -> UA:
+
+    def _compute_message(self, incoming: UA, block=None) -> UA:
         self._check_observed()
-        belief = self.compute_belief(incoming)
-        full_msg = belief / incoming
 
+        incoming_blk = incoming.extract_block(block)
+        observed_blk = self.observed.extract_block(block)
+
+        # --- compute block belief ---
+        belief_blk = self.compute_belief(incoming_blk, observed=observed_blk)
+
+        # --- raw message ---
+        full_msg_blk = belief_blk / incoming_blk
+
+        # --- apply mask (block-wise) ---
         if self._mask is not None:
-            m = self._mask
-            msg_data = np().zeros_like(full_msg.data)
-            msg_prec = np().zeros_like(full_msg.precision(raw=True))
-            msg_data[m] = full_msg.data[m]
-            msg_prec[m] = full_msg.precision(raw=True)[m]
-            msg = UA(msg_data, dtype=self.input_dtype, precision=msg_prec)
+            mask_blk = self._mask if block is None else self._mask[block]
+            data = np().zeros_like(full_msg_blk.data)
+            prec = np().zeros_like(full_msg_blk.precision(raw=True))
+            data[mask_blk] = full_msg_blk.data[mask_blk]
+            prec[mask_blk] = full_msg_blk.precision(raw=True)[mask_blk]
+            msg_blk = UA(data, dtype=self.input_dtype, precision=prec)
         else:
-            msg = full_msg
+            msg_blk = full_msg_blk
 
-        if self.old_msg is not None and self.damping > 0:
-            msg = msg.damp_with(self.old_msg, alpha=self.damping)
+        # --- damping using previous full backward message ---
+        if self.damping > 0 and self.input in self.last_backward_messages:
+            prev_full = self.last_backward_messages[self.input]
+            prev_blk = prev_full.extract_block(block)
+            msg_blk = msg_blk.damp_with(prev_blk, alpha=self.damping)
 
-        self.old_msg = msg
-        return msg
+        return msg_blk
+
     
-    def backward(self) -> None:
-        """Backward message passing with optional adaptive damping."""
+    def backward(self, block=None) -> None:
+        """
+        Block-aware backward pass.
+        Damping is fully handled inside _compute_message(),
+        which receives the previous full backward message
+        through self.last_backward_messages[self.input].
+        """
+
         self._check_observed()
         incoming = self.input_messages[self.input]
-        msg = self._compute_message(incoming)
-        self.input.receive_message(self, msg)
 
-        # --- Adaptive damping control ---
-        if self._adaptive:
+        # --- Block-aware message computation (includes damping internally) ---
+        msg_blk = self._compute_message(incoming, block=block)
+
+        # -----------------------------------------------------------
+        # Non-sequential mode (block=None)
+        # -----------------------------------------------------------
+        if block is None:
+            # Cache full backward message
+            self.last_backward_messages[self.input] = msg_blk
+
+            # Send to wave
+            self.input.receive_message(self, msg_blk)
+
+            # Update adaptive damping parameter once per iteration
+            if self._adaptive:
+                J = self.compute_fitness()
+                new_damp, repeat = self._scheduler.step(J)
+                self.damping = new_damp
+            return
+
+        # -----------------------------------------------------------
+        # Sequential (block-wise) mode
+        # -----------------------------------------------------------
+        # Initialize the full backward message cache if needed
+        if self.input not in self.last_backward_messages:
+            self.last_backward_messages[self.input] = UA.zeros(
+                event_shape=self.input.event_shape,
+                batch_size=self.batch_size,
+                dtype=self.input.dtype,
+                precision=1.0,
+                scalar_precision=(self.precision_mode_enum == PrecisionMode.SCALAR),
+            )
+
+        full_msg = self.last_backward_messages[self.input]
+
+        # Insert block update into full cached message
+        full_msg.insert_block(block, msg_blk)
+
+        # Send the updated full message
+        self.input.receive_message(self, full_msg)
+
+        # -----------------------------------------------------------
+        # Adaptive damping update only at the final block
+        # -----------------------------------------------------------
+        if self._adaptive and block.stop == self.batch_size:
             J = self.compute_fitness()
             new_damp, repeat = self._scheduler.step(J)
             self.damping = new_damp
+
 
     
     def compute_fitness(self) -> float:
