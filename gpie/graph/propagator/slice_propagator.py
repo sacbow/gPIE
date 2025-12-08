@@ -153,7 +153,7 @@ class SlicePropagator(Propagator):
     def get_output_precision_mode(self) -> PrecisionMode:
         return PrecisionMode.ARRAY
     
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
         """
         Compute forward message: input → patches.
 
@@ -186,7 +186,7 @@ class SlicePropagator(Propagator):
         # Return extracted patches
         return msg_to_send
 
-    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
         """
         Compute backward message: patches → input.
 

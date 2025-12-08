@@ -142,69 +142,44 @@ class FFT2DPropagator(Propagator):
         else:
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
 
-    def forward(self):
-        """
-        EP-style forward pass: propagate a message from x to y.
-
-        Initial iteration:
-            - If there is no output message and no cached belief yet,
-              send y-message as FFT of the x-message.
-
-        Steady-state:
-            - Use cached y_belief to compute the new message to y via
-              m_y = y_belief / (current outgoing message).
-        """
-        x_wave = self.inputs["input"]
-        msg_x = self.input_messages.get(x_wave)
+    def _compute_forward(self, inputs, block=None):
+        msg_x = inputs["input"]
         out_msg = self.output_message
         yb = self.y_belief
 
-        # Initial iteration: no outgoing message and no belief yet
+        # Case A: initial
         if out_msg is None and yb is None:
-            if msg_x is None:
-                raise RuntimeError(
-                    "FFT2DPropagator.forward(): missing input message on the initial iteration. "
-                    "Upstream prior must emit an initial message before FFT."
-                )
-
-            # Apply FFT to propagate from x-domain to y-domain
             msg = msg_x.fft2_centered()
-
-            # Align precision mode with the output wave
             if self.output.precision_mode_enum == PrecisionMode.ARRAY:
                 msg = msg.as_array_precision()
+            return msg
 
-            self.output.receive_message(self, msg)
-            return
-
-        # Steady-state EP update using cached belief
+        # Case B: steady-state
         if out_msg is not None and yb is not None:
-            msg = yb / out_msg
-            self.output.receive_message(self, msg)
-            return
+            return yb / out_msg
 
-        # Inconsistent internal state
+        # Case C: inconsistent (changing this changes numerical behavior!)
         raise RuntimeError(
-            "FFT2DPropagator.forward(): inconsistent state. "
-            "Expected both y_belief and output_message to be None (initial) or both present (update)."
+            "FFT2DPropagator._compute_forward(): inconsistent state: "
+            "expected both output_message and y_belief to be None (initial) or both present (update)."
         )
 
-    def backward(self):
+    def _compute_backward(self, output_msg, exclude, block=None):
         """
-        EP-style backward pass: propagate a message from y back to x.
+        EP backward update for FFT2:
 
-        Uses the current output message and cached beliefs to compute:
-            m_x = x_belief / (incoming message from other factors).
+            m_x = x_belief / old_m_x
         """
-        x_wave = self.inputs["input"]
-        if self.output_message is None:
-            raise RuntimeError("Output message missing.")
+        if exclude != "input":
+            raise RuntimeError("FFT2DPropagator has only one input: 'input'.")
 
-        # Update beliefs based on current messages
         self.compute_belief()
-        incoming = self.input_messages[x_wave]
-        msg = self.x_belief / incoming
-        x_wave.receive_message(self, msg)
+
+        wave = self.inputs["input"]
+        msg_x_old = self.input_messages[wave]
+
+        msg = self.x_belief / msg_x_old
+        return msg
 
     def set_init_rng(self, rng):
         """Set RNG for possible future initialization needs."""

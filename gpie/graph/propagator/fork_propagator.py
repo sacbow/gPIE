@@ -93,7 +93,7 @@ class ForkPropagator(Propagator):
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
 
     # -------- Message passing --------
-    def _compute_forward(self, inputs: Dict[str, UA]) -> UA:
+    def _compute_forward(self, inputs: Dict[str, UA], block = None) -> UA:
         """
         Compute forward message to the output.
         Returns:
@@ -110,7 +110,7 @@ class ForkPropagator(Propagator):
         msg = belief.fork(batch_size=self.batch_size) / self.output_message
         return msg
 
-    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
         """
         Compute backward message to the (only) input.
 

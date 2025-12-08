@@ -47,7 +47,7 @@ class AddConstPropagator(Propagator):
         if mode is not None:
             self._set_precision_mode(mode)
 
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
         x = inputs["input"]
         target_dtype = np().result_type(x.dtype, self.const_dtype)
         if x.dtype != target_dtype:
@@ -56,7 +56,7 @@ class AddConstPropagator(Propagator):
         const = self.const.astype(target_dtype) if self.const_dtype != target_dtype else self.const
         return UA(x.data + const, dtype=target_dtype, precision=x.precision(raw=True))
 
-    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
         const = self.const.astype(output_msg.dtype) if output_msg.dtype != self.const_dtype else self.const
         return UA(output_msg.data - const, dtype=output_msg.dtype, precision=output_msg.precision(raw=True))
 

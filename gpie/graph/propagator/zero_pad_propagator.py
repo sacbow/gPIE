@@ -55,11 +55,11 @@ class ZeroPadPropagator(Propagator):
     def set_precision_mode_backward(self):
         return
 
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
         x_msg = inputs["input"]
         return x_msg.zero_pad(self.pad_width)
 
-    def _compute_backward(self, output_msg: UA, exclude: str) -> UA:
+    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
         """
         Crop the padded UncertainArray back to the input shape.
         """
