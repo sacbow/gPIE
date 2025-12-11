@@ -214,35 +214,23 @@ def extract_block(self: UncertainArray, block: slice) -> UncertainArray:
 
 def insert_block(self: UncertainArray, block: slice, sub: UncertainArray) -> None:
     """
-    Insert (overwrite) a contiguous batch slice with another UncertainArray.
+    Insert (overwrite) a batch slice with another UncertainArray.
 
-    Args:
-        block (slice):
-            Batch slice to overwrite, e.g., slice(i, j).
-        sub (UncertainArray):
-            Must have batch_size == (block.stop - block.start),
-            same event_shape, dtype, and precision_mode.
+    If block is None:
+        → full-batch overwrite (sub must have identical batch_size and metadata)
 
-    Returns:
-        None (in-place update)
+    If block is a slice:
+        → overwrite self.data[start:stop] with sub.data
+
+    Common constraints (checked first):
+        - event_shape must match
+        - dtype must match
+        - precision_mode must match
     """
 
-    # --- Validate slice ---
-    if not isinstance(block, slice):
-        raise TypeError("block must be a slice object.")
-
-    start, stop = block.start, block.stop
-    if start < 0 or stop > self.batch_size or start >= stop:
-        raise ValueError(
-            f"Invalid block slice {block} for batch_size={self.batch_size}."
-        )
-
-    # --- Validate UA compatibility except batch_size ---
-    if (stop - start) != sub.batch_size:
-        raise ValueError(
-            f"sub.batch_size={sub.batch_size} does not match block size {stop - start}."
-        )
-
+    # ------------------------------------------------------------
+    # 1. Metadata compatibility checks (common to full/slice updates)
+    # ------------------------------------------------------------
     if self.event_shape != sub.event_shape:
         raise ValueError("Event shape mismatch in insert_block().")
 
@@ -252,15 +240,51 @@ def insert_block(self: UncertainArray, block: slice, sub: UncertainArray) -> Non
     if self.precision_mode != sub.precision_mode:
         raise ValueError("precision_mode mismatch in insert_block().")
 
-    # --- Overwrite mean ---
+    # ------------------------------------------------------------
+    # 2. Full-batch overwrite (block=None)
+    # ------------------------------------------------------------
+    if block is None:
+        if self.batch_size != sub.batch_size:
+            raise ValueError(
+                f"Full overwrite requested but batch_size mismatch: "
+                f"{self.batch_size} vs {sub.batch_size}"
+            )
+
+        # overwrite mean
+        self.data[...] = sub.data
+
+        # overwrite precision (raw)
+        raw_self = self.precision(raw=True)
+        raw_sub = sub.precision(raw=True)
+        raw_self[...] = raw_sub
+        return
+
+    # ------------------------------------------------------------
+    # 3. Slice overwrite
+    # ------------------------------------------------------------
+    if not isinstance(block, slice):
+        raise TypeError("block must be a slice or None.")
+
+    start, stop = block.start, block.stop
+    if start < 0 or stop > self.batch_size or start >= stop:
+        raise ValueError(
+            f"Invalid block slice {block} for batch_size={self.batch_size}."
+        )
+
+    block_size = stop - start
+    if block_size != sub.batch_size:
+        raise ValueError(
+            f"sub.batch_size={sub.batch_size} does not match block size {block_size}."
+        )
+
+    # overwrite mean
     self.data[start:stop] = sub.data
 
-    # --- Overwrite precision (raw representation) ---
+    # overwrite precision (raw)
     raw_self = self.precision(raw=True)
     raw_sub = sub.precision(raw=True)
     raw_self[start:stop] = raw_sub
 
-    # No return (in-place)
 
 
 # --- monkey patch ---

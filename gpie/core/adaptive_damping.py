@@ -39,7 +39,7 @@ class DampingScheduleConfig:
     G_pass: float = 1.5
     G_fail: float = 0.95
     beta_min: float = 0.05
-    beta_max: float = 0.99
+    beta_max: float = 1.0
     T_beta: int = 3
 
 

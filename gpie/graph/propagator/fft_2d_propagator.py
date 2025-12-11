@@ -98,88 +98,175 @@ class FFT2DPropagator(Propagator):
         if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
-    def compute_belief(self):
+    def compute_belief(self, block=None):
         """
-        Compute joint belief over (x, y) under the unitary mapping y = F x.
+        Compute the joint belief over (x, y) under the unitary transform y = F x.
 
-        This uses the current messages:
-            - msg_x: message on input wave x
-            - msg_y: message on output wave y
-
-        and updates:
+        This method updates the internal variables:
             - self.x_belief
             - self.y_belief
+
+        Block semantics:
+            - If block is None:
+                  Compute the full-batch belief (legacy behavior).
+            - If block is a slice:
+                  Only compute the belief for that batch slice,
+                  and merge the results into the existing full-batch beliefs
+                  via UA.insert_block().
         """
         x_wave = self.inputs["input"]
-        msg_x = self.input_messages.get(x_wave)
+        msg_x = self.input_messages[x_wave]
         msg_y = self.output_message
 
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
+        # Extract block (full batch if block=None)
+        msg_x_block = msg_x.extract_block(block)
+        msg_y_block = msg_y.extract_block(block)
+
         # Ensure complex dtype compatibility
-        if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
-            msg_x = msg_x.astype(self.dtype)
+        if not np().issubdtype(msg_x_block.data.dtype, np().complexfloating):
+            msg_x_block = msg_x_block.astype(self.dtype)
 
         mode = self._precision_mode
 
+        # Compute belief on block
         if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            # All scalar precision: belief_x is product in x-domain,
-            # then transform to y-domain using FFT.
-            self.x_belief = msg_x * msg_y.ifft2_centered()
-            self.y_belief = self.x_belief.fft2_centered()
+            x_block = msg_x_block * msg_y_block.ifft2_centered()
+            y_block = x_block.fft2_centered()
 
         elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            # Input scalar precision, output array precision.
-            self.y_belief = msg_x.fft2_centered().as_array_precision() * msg_y
-            self.x_belief = self.y_belief.ifft2_centered()
+            y_block = msg_x_block.fft2_centered().as_array_precision() * msg_y_block
+            x_block = y_block.ifft2_centered()
 
         elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            # Input array precision, output scalar precision.
-            self.x_belief = msg_x * msg_y.ifft2_centered().as_array_precision()
-            self.y_belief = self.x_belief.fft2_centered()
+            x_block = msg_x_block * msg_y_block.ifft2_centered().as_array_precision()
+            y_block = x_block.fft2_centered()
 
         else:
             raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
 
+        # ------------------------------------------------------------
+        # Lazy init of full-batch beliefs: precision mode from propagator
+        # ------------------------------------------------------------
+        if self.x_belief is None or self.y_belief is None:
+            if mode == UnaryPropagatorPrecisionMode.SCALAR:
+                scalar_x = True
+                scalar_y = True
+            elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+                scalar_x = True
+                scalar_y = False
+            elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+                scalar_x = False
+                scalar_y = True
+            else:
+                raise ValueError(f"Unknown precision_mode: {mode}")
+
+            if self.x_belief is None:
+                self.x_belief = UA.zeros(
+                    event_shape=self.event_shape,
+                    batch_size=x_wave.batch_size,
+                    dtype=self.dtype,
+                    precision=1.0,
+                    scalar_precision=scalar_x,
+                )
+            if self.y_belief is None:
+                self.y_belief = UA.zeros(
+                    event_shape=self.event_shape,
+                    batch_size=self.output.batch_size,
+                    dtype=self.dtype,
+                    precision=1.0,
+                    scalar_precision=scalar_y,
+                )
+
+        # Merge block into full beliefs
+        self.x_belief.insert_block(block, x_block)
+        self.y_belief.insert_block(block, y_block)
+
+        # Return block belief (needed for backward)
+        return x_block, y_block
+
     def _compute_forward(self, inputs, block=None):
+        """
+        Compute the outgoing EP message in the forward direction (x → y).
+
+        This method implements:
+            - Initial forward pass:
+                  m_y = FFT2_centered(m_x)
+            - Steady-state EP update:
+                  m_y = y_belief / m_y_old
+
+        Block semantics:
+            - If block is None:
+                  Operate over full batch (legacy).
+            - If block is a slice:
+                  Extract only the block of the inputs and apply the
+                  same EP update rule to that block.
+
+        Returns:
+            msg_block (UA):
+                The outgoing message restricted to the given block,
+                which will be merged by Propagator.forward().
+        """
         msg_x = inputs["input"]
         out_msg = self.output_message
         yb = self.y_belief
 
-        # Case A: initial
+        # Extract block (no-op if block=None)
+        msg_x_block = msg_x.extract_block(block)
+
+        # Case A: initial forward message
         if out_msg is None and yb is None:
-            msg = msg_x.fft2_centered()
+            msg = msg_x_block.fft2_centered()
             if self.output.precision_mode_enum == PrecisionMode.ARRAY:
                 msg = msg.as_array_precision()
             return msg
 
-        # Case B: steady-state
-        if out_msg is not None and yb is not None:
-            return yb / out_msg
+        # Case B: steady-state EP update
+        out_msg_block = out_msg.extract_block(block)
+        yb_block = yb.extract_block(block)
+        return yb_block / out_msg_block
 
-        # Case C: inconsistent (changing this changes numerical behavior!)
-        raise RuntimeError(
-            "FFT2DPropagator._compute_forward(): inconsistent state: "
-            "expected both output_message and y_belief to be None (initial) or both present (update)."
-        )
 
     def _compute_backward(self, output_msg, exclude, block=None):
         """
-        EP backward update for FFT2:
+        Compute the EP backward message (y → x).
 
-            m_x = x_belief / old_m_x
+        Implements:
+            m_x = x_belief / m_x_old
+
+        Block semantics:
+            - compute_belief(block) updates only the relevant batch slice,
+              and returns (x_belief_block, y_belief_block).
+            - We use only x_belief_block here.
+            - m_x_old is sliced consistently by extract_block(block).
+
+        Args:
+            output_msg (UA):
+                The current outgoing message from y.
+            exclude (str):
+                Must be "input" for FFT2DPropagator.
+            block (slice or None):
+                Block of the batch dimension to update.
+
+        Returns:
+            msg_block (UA):
+                Backward message restricted to the given block.
         """
         if exclude != "input":
             raise RuntimeError("FFT2DPropagator has only one input: 'input'.")
 
-        self.compute_belief()
+        # Compute only the relevant block of beliefs
+        x_block, _ = self.compute_belief(block=block)
 
         wave = self.inputs["input"]
         msg_x_old = self.input_messages[wave]
+        msg_x_old_block = msg_x_old.extract_block(block)
 
-        msg = self.x_belief / msg_x_old
-        return msg
+        return x_block / msg_x_old_block
+
+
 
     def set_init_rng(self, rng):
         """Set RNG for possible future initialization needs."""
