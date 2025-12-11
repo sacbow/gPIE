@@ -141,3 +141,80 @@ def test_fft2d_invalid_cases(xp):
     prop = out.parent
     with pytest.raises(RuntimeError):
         prop.get_sample_for_output(rng)
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_fft2d_blockwise_matches_full(xp):
+    """
+    Verify that block-wise forward/backward updates produce the same result
+    as full-batch updates for FFT2DPropagator.
+    """
+
+    backend.set_backend(xp)
+    rng = get_rng(seed=123)
+
+    n = 8
+    B = 4
+    block1 = slice(0, 2)
+    block2 = slice(2, 4)
+
+    # ----------------------
+    # Setup wave + messages
+    # ----------------------
+    x = Wave(event_shape=(n, n), batch_size=B, dtype=xp.complex64)
+    y = FFT2DPropagator() @ x
+    prop = y.parent
+    x._set_precision_mode("scalar")
+    y._set_precision_mode("scalar")
+
+    # 必ず precision mode を明示的に設定
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
+
+    ua_x = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng)
+    ua_y = UncertainArray.random((n, n), batch_size=B, dtype=xp.complex64, rng=rng)
+
+    # ----------------------
+    # Full batch
+    # ----------------------
+    x_full = Wave(event_shape=(n, n), batch_size=B, dtype=xp.complex64)
+    y_full = FFT2DPropagator() @ x_full
+    prop_full = y_full.parent
+
+    prop_full._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
+    x_full._set_precision_mode("scalar")
+    y_full._set_precision_mode("scalar")
+
+    prop_full.receive_message(x_full, ua_x)
+    prop_full.receive_message(y_full, ua_y)
+    prop_full.backward()
+    prop_full.forward()
+
+    full_in_msg = prop_full.input_messages[x_full]
+    full_out_msg = prop_full.output_message
+
+    # ----------------------
+    # Block-wise
+    # ----------------------
+    prop.receive_message(x, ua_x)
+    prop.receive_message(y, ua_y)
+
+    prop.backward(block=block1)
+    prop.backward(block=block2)
+
+    prop.forward(block=block1)
+    prop.forward(block=block2)
+
+    blk_in_msg = prop.input_messages[x]
+    blk_out_msg = prop.output_message
+
+    # ----------------------
+    # Compare messages
+    # ----------------------
+    assert xp.allclose(blk_in_msg.data, full_in_msg.data, atol=1e-6)
+    assert xp.allclose(blk_out_msg.data, full_out_msg.data, atol=1e-6)
+
+    # Compare beliefs
+    prop_full.compute_belief()
+    prop.compute_belief()
+
+    assert xp.allclose(prop.x_belief.data, prop_full.x_belief.data, atol=1e-6)
+    assert xp.allclose(prop.y_belief.data, prop_full.y_belief.data, atol=1e-6)

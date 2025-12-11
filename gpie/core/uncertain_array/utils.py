@@ -238,7 +238,11 @@ def insert_block(self: UncertainArray, block: slice, sub: UncertainArray) -> Non
         raise TypeError("dtype mismatch in insert_block().")
 
     if self.precision_mode != sub.precision_mode:
-        raise ValueError("precision_mode mismatch in insert_block().")
+        raise ValueError(
+            f"precision_mode mismatch in insert_block(): "
+            f"self={self.precision_mode}, sub={sub.precision_mode}"
+        )
+
 
     # ------------------------------------------------------------
     # 2. Full-batch overwrite (block=None)
