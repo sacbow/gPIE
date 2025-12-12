@@ -299,7 +299,7 @@ class FFT2DPropagator(Propagator):
         self._set_generation(wave.generation + 1)
         self.dtype = get_complex_dtype(wave.dtype)
         self.event_shape = wave.event_shape
-
+        self.batch_size = wave.batch_size
         out_wave = Wave(event_shape=self.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)

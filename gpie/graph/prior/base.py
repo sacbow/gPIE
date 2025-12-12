@@ -207,7 +207,7 @@ class Prior(Factor, ABC):
         self.output.receive_message(self, full_msg)
 
 
-    def backward(self) -> None:
+    def backward(self, block = None) -> None:
         """No backward message from Prior."""
         pass
 

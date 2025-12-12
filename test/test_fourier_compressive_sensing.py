@@ -3,9 +3,9 @@ import pytest
 import numpy as np
 
 import gpie
-from gpie import model, observe, mse, fft2, Graph
+from gpie import model, fft2, mse, Graph
 from gpie import SparsePrior, GaussianMeasurement
-from gpie.core.linalg_utils import random_binary_mask, random_phase_mask
+from gpie.core.linalg_utils import random_binary_mask
 from gpie.core.rng_utils import get_rng
 
 # Optional CuPy support
@@ -19,46 +19,155 @@ if has_cupy:
     backend_libs.append(cp)
 
 
+def build_fft_cs_graph(
+    *,
+    xp,
+    event_shape,
+    batch_size,
+    rho,
+    var,
+    mask,
+    seed_init=11,
+    seed_sample=123,
+):
+    """
+    Build and initialize an FFT-based compressive sensing graph
+    using the @model decorator.
+    """
+
+    @model
+    def fft_cs_model(rho, shape, var, batch_size):
+        x = ~SparsePrior(
+            rho=rho,
+            event_shape=shape,
+            batch_size=batch_size,
+            label="x",
+            dtype=xp.complex64,
+        )
+        GaussianMeasurement(var=var, with_mask=True) << fft2(x)
+
+    g = fft_cs_model(
+        rho=rho,
+        shape=event_shape,
+        var=var,
+        batch_size=batch_size,
+    )
+
+    # Initialization & sampling
+    g.set_init_rng(get_rng(seed=seed_init))
+    g.generate_sample(
+        rng=get_rng(seed=seed_sample),
+        update_observed=True,
+        mask=mask,
+    )
+
+    return g
+
+
 @pytest.mark.parametrize("xp", backend_libs)
-def test_fft_compressive_sensing_reconstruction(xp):
-    """Test compressive sensing using fft-based propagator."""
+def test_fft_compressive_sensing_batch2_parallel_vs_sequential(xp):
+    """
+    FFT-based compressive sensing with batch_size=2 should yield
+    identical results for parallel and sequential schedules.
+    """
     gpie.set_backend(xp)
 
-    # --- Parameters ---
-    event_shape = (128,128)
+    # ----------------------
+    # Parameters
+    # ----------------------
+    event_shape = (128, 128)
+    batch_size = 2
     rho = 0.1
     var = 1e-4
-    mask_ratio = 0.3
+    subsample_ratio = 0.3
+    n_iter = 50
 
     rng = get_rng(seed=42)
-    mask = random_binary_mask(event_shape, subsampling_rate=mask_ratio, rng=rng)
-
-    # --- Model Definition ---
-    class FFTCSGraph(Graph):
-        def __init__(self, var, rho, event_shape, dtype):
-            super().__init__()
-            x = ~SparsePrior(rho=rho, event_shape=event_shape, damping=0.03, label="x", dtype=dtype)
-            with self.observe():
-                GaussianMeasurement(var=var, with_mask=True) << fft2(x)
-            self.compile()
-
-    g = FFTCSGraph(var=var, rho=rho, event_shape=event_shape, dtype=xp.complex64)
+    mask = random_binary_mask(
+        (batch_size, *event_shape),
+        subsampling_rate=subsample_ratio,
+        rng=rng,
+    )
 
 
-    # --- Initialization and Sampling ---
-    g.set_init_rng(get_rng(seed=11))
-    g.generate_sample(rng=get_rng(seed=123), mask=None)
+    # ----------------------
+    # Build reference graph
+    # ----------------------
+    g_parallel = build_fft_cs_graph(
+        xp=xp,
+        event_shape=event_shape,
+        batch_size=batch_size,
+        rho=rho,
+        var=var,
+        mask=mask,
+    )
 
-    true_x = g.get_wave("x").get_sample()
+    true_x = g_parallel.get_wave("x").get_sample()
 
-    # --- Inference ---
-    mse_list = []
+    # ----------------------
+    # Parallel run
+    # ----------------------
+    mse_parallel = []
 
-    def monitor(graph, t):
+    def monitor_parallel(graph, t):
         est = graph.get_wave("x").compute_belief().data
-        mse_list.append(mse(est, true_x))
+        mse_parallel.append(mse(est, true_x))
 
-    g.run(n_iter=50, callback=monitor, verbose=False)
+    g_parallel.run(
+        n_iter=n_iter,
+        schedule="parallel",
+        callback=monitor_parallel,
+        verbose=False,
+    )
 
-    # --- Assertions ---
-    assert mse_list[-1] < 1e-4, f"Final MSE too high: {mse_list[-1]:.2e}"
+    est_parallel = g_parallel.get_wave("x").compute_belief().data.copy()
+
+    # ----------------------
+    # Sequential run
+    # ----------------------
+    g_sequential = build_fft_cs_graph(
+        xp=xp,
+        event_shape=event_shape,
+        batch_size=batch_size,
+        rho=rho,
+        var=var,
+        mask=mask,
+    )
+
+    mse_sequential = []
+
+    def monitor_sequential(graph, t):
+        est = graph.get_wave("x").compute_belief().data
+        mse_sequential.append(mse(est, true_x))
+
+    g_sequential.run(
+        n_iter=n_iter,
+        schedule="sequential",
+        block_size=1,
+        callback=monitor_sequential,
+        verbose=False,
+    )
+
+    est_sequential = g_sequential.get_wave("x").compute_belief().data
+
+    # ----------------------
+    # Assertions
+    # ----------------------
+    assert mse_parallel[-1] < 1e-4, (
+        f"Parallel schedule failed to converge: "
+        f"MSE={mse_parallel[-1]:.2e}"
+    )
+
+    assert mse_sequential[-1] < 1e-4, (
+        f"Sequential schedule failed to converge: "
+        f"MSE={mse_sequential[-1]:.2e}"
+    )
+
+    assert xp.allclose(
+        est_parallel,
+        est_sequential,
+        atol=1e-4,
+    ), "Parallel and sequential estimates differ"
+
+    assert len(mse_parallel) == n_iter
+    assert len(mse_sequential) == n_iter

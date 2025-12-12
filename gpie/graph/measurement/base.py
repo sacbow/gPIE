@@ -223,7 +223,7 @@ class Measurement(Factor, ABC):
     def get_input_precision_mode(self, wave : Wave) -> Optional[str]:
         return self.precision_mode
 
-    def forward(self) -> None:
+    def forward(self, block = None) -> None:
         pass
 
     def backward(self, block=None) -> None:

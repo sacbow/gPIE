@@ -338,7 +338,7 @@ class Graph:
         self,
         n_iter: int = 10,
         schedule: Literal["parallel", "sequential"] = "parallel",
-        block_size: Optional[int] = None,
+        block_size: int = 1,
         callback=None,
         verbose: bool = False,
     ):

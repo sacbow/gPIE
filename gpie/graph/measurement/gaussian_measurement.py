@@ -42,10 +42,25 @@ class GaussianMeasurement(Measurement):
         return input_dtype
 
     def _compute_message(self, incoming: UA, block=None) -> UA:
+        """
+        Compute backward EP message for GaussianMeasurement.
+
+        Block semantics:
+            - block=None:
+                return full-batch observed message
+            - block=slice:
+                return only the corresponding batch slice
+        """
         self._check_observed()
+
+        # Extract block from observed
+        obs_blk = self.observed.extract_block(block)
+
         if self.precision_mode_enum == PrecisionMode.SCALAR:
-            return self.observed.as_scalar_precision()
-        return self.observed
+            return obs_blk.as_scalar_precision()
+
+        return obs_blk
+
 
     def _generate_sample(self, rng: Any) -> None:
         """
