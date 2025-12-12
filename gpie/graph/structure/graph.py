@@ -53,6 +53,9 @@ class Graph:
         self._nodes_sorted = None
         self._nodes_sorted_reverse = None
         self._rng = get_rng()  # default RNG for sampling
+
+        # Scheduling related
+        self._full_batch_size: Optional[int] = None
     
     @contextlib.contextmanager
     def observe(self):
@@ -87,8 +90,11 @@ class Graph:
             5. Assigns default precision mode where unresolved.
             6. Finalizes wave structure (e.g., shape/dtype assertions).
 
-        Raises:
-            ValueError: If graph contains invalid or disconnected components.
+        Scheduling semantics:
+            - full_batch_size is defined as the maximum batch_size
+              among all Wave nodes.
+            - Nodes whose batch_size < full_batch_size are always
+              executed in parallel (block=None).
         """
 
         self._nodes.clear()
@@ -152,6 +158,15 @@ class Graph:
                     precision=1.0,
                     scalar_precision=(wave.precision_mode_enum == PrecisionMode.SCALAR),
                 )
+        # ------------------------------------------------------------
+        # Determine full batch size for block scheduling
+        # ------------------------------------------------------------
+        batch_sizes = [wave.batch_size for wave in self._waves]
+
+        if not batch_sizes:
+            raise RuntimeError("No Wave nodes found during compilation.")
+
+        self._full_batch_size = max(batch_sizes)
 
     
     def to_backend(self) -> None:
@@ -285,40 +300,91 @@ class Graph:
 
 
 
-    def forward(self):
-        """Execute forward message passing in cached generation order."""
-        for node in self._nodes_sorted:
-            node.forward()
-
-    def backward(self):
-        """Execute backward message passing in reverse cached order."""
-        for node in self._nodes_sorted_reverse:
-            node.backward()
-
-    def run(self, n_iter=10, callback=None, verbose=False):
+    def forward(self, block=None):
         """
-        Run multiple rounds of belief propagation with optional progress bar.
+        Execute forward message passing.
+
+        If `block` is provided, it is passed only to nodes whose
+        batch_size matches the graph's full batch size.
+        Other nodes are called with `block=None`.
+        """
+        B = self._full_batch_size
+
+        for node in self._nodes_sorted:
+            if block is not None and node.batch_size == B:
+                node.forward(block=block)
+            else:
+                node.forward()
+
+
+    def backward(self, block=None):
+        """
+        Execute backward message passing.
+
+        If `block` is provided, it is passed only to nodes whose
+        batch_size matches the graph's full batch size.
+        Other nodes are called with `block=None`.
+        """
+        B = self._full_batch_size
+
+        for node in self._nodes_sorted_reverse:
+            if block is not None and node.batch_size == B:
+                node.backward(block=block)
+            else:
+                node.backward()
+
+
+    def run(
+        self,
+        n_iter: int = 10,
+        schedule: Literal["parallel", "sequential"] = "parallel",
+        block_size: Optional[int] = None,
+        callback=None,
+        verbose: bool = False,
+    ):
+        """
+        Run belief propagation with optional block-wise scheduling.
 
         Args:
-            n_iter (int): Number of forward-backward iterations.
-            callback (callable or None): Function called as callback(graph, t).
-            rng (np.random.Generator or None): Optional RNG.
-            verbose (bool): Whether to show progress bar (requires tqdm).
+            n_iter:
+                Number of forward-backward iterations.
+            schedule:
+                - "parallel": full-batch updates (legacy behavior)
+                - "sequential": block-wise updates over batch dimension
+            block_size:
+                Block size used when schedule="sequential".
+                If None or >= full batch size, treated as full-batch.
+            callback:
+                Optional callback(graph, iteration).
+            verbose:
+                Whether to show a progress bar.
         """
+        if self._full_batch_size is None:
+            raise RuntimeError("Graph must be compiled before run().")
+
+        B = self._full_batch_size
+
+        # Determine blocks for this run
+        if schedule == "parallel" or block_size is None or block_size >= B:
+            blocks = [None]
+        else:
+            from ...core.blocks import BlockGenerator
+            blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
 
         if verbose:
             try:
                 from tqdm import tqdm
                 iterator = tqdm(range(n_iter), desc="BP Iteration")
             except ImportError:
-                print("[Graph.run] tqdm not found. Running without progress bar.")
                 iterator = range(n_iter)
         else:
             iterator = range(n_iter)
 
         for t in iterator:
-            self.forward()
-            self.backward()
+            for blk in blocks:
+                self.forward(block=blk)
+                self.backward(block=blk)
+
             if callback is not None:
                 callback(self, t)
 
