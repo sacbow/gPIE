@@ -1,30 +1,35 @@
+from __future__ import annotations
+
 from typing import Optional
-from .base import Propagator
+
+from .unitary_propagator import UnitaryPropagator
 from ..wave import Wave
 from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.fft import get_fft_backend
-from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
+from ...core.types import UnaryPropagatorPrecisionMode
 
 
-class IFFT2DPropagator(Propagator):
+class IFFT2DPropagator(UnitaryPropagator):
     """
-    A centered 2D inverse FFT-based propagator for EP message passing.
+    Centered 2D inverse-FFT-based unitary propagator for EP message passing.
 
-    It defines a unitary mapping:
+    This propagator represents the unitary mapping:
         y = IFFT2_centered(x)
         x = FFT2_centered(y)
 
-    Supports:
-        - SCALAR <-> SCALAR
-        - SCALAR <-> ARRAY
-        - ARRAY -> SCALAR
+    All EP logic (precision-mode handling, block-wise scheduling,
+    belief computation, forward/backward EP updates) is implemented
+    in the parent class `UnitaryPropagator`.
 
-    Precision handling follows `UnaryPropagatorPrecisionMode`.
+    Supported precision modes (inherited):
+        - SCALAR
+        - SCALAR_TO_ARRAY
+        - ARRAY_TO_SCALAR
 
     Notes:
-        - Assumes event_shape is 2D (e.g., (H, W))
-        - Internally uses fftshifted IFFT/FFT
+        - Assumes event_shape is 2D: (H, W)
+        - Uses fftshifted (centered) FFTs via gPIE FFT backend.
     """
 
     def __init__(
@@ -33,158 +38,82 @@ class IFFT2DPropagator(Propagator):
         precision_mode: Optional[UnaryPropagatorPrecisionMode] = None,
         dtype=np().complex64,
     ):
-        super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
-        self.event_shape = event_shape
-        self._init_rng = None
-        self.x_belief = None
-        self.y_belief = None
-
-    def to_backend(self):
-        self.dtype = np().dtype(self.dtype)
-
-    def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
-        if isinstance(mode, str):
-            mode = UnaryPropagatorPrecisionMode(mode)
-        allowed = {
-            UnaryPropagatorPrecisionMode.SCALAR,
-            UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
-        }
-        if mode not in allowed:
-            raise ValueError(f"Invalid precision_mode for IFFT2DPropagator: {mode}")
-        if hasattr(self, "_precision_mode") and self._precision_mode is not None and self._precision_mode != mode:
-            raise ValueError(
-                f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
-            )
-        self._precision_mode = mode
-
-    def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
-        if self._precision_mode is not None:
-            if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-                return PrecisionMode.ARRAY
-            else:
-                return PrecisionMode.SCALAR
-        return None
-
-    def get_output_precision_mode(self) -> Optional[PrecisionMode]:
-        if self._precision_mode is not None:
-            if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-                return PrecisionMode.ARRAY
-            else:
-                return PrecisionMode.SCALAR
-        return None
-
-    def set_precision_mode_forward(self):
-        x_wave = self.inputs["input"]
-        if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
-            self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
-
-    def set_precision_mode_backward(self):
-        y_wave = self.output
-        if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
-            self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
-
-    def compute_belief(self):
-        x_wave = self.inputs["input"]
-        msg_x = self.input_messages.get(x_wave)
-        msg_y = self.output_message
-
-        if msg_x is None or msg_y is None:
-            raise RuntimeError("Both input and output messages are required to compute belief.")
-
-        if not np().issubdtype(msg_x.data.dtype, np().complexfloating):
-            msg_x = msg_x.astype(self.dtype)
-
-        mode = self._precision_mode
-
-        if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            self.x_belief = msg_x * msg_y.fft2_centered()
-            self.y_belief = self.x_belief.ifft2_centered()
-
-        elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            self.y_belief = msg_x.ifft2_centered().as_array_precision() * msg_y
-            self.x_belief = self.y_belief.fft2_centered()
-
-        elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            self.x_belief = msg_x * msg_y.fft2_centered().as_array_precision()
-            self.y_belief = self.x_belief.ifft2_centered()
-
-        else:
-            raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
-
-    def forward(self):
-        # Retrieve input wave and message
-        x_wave = self.inputs["input"]
-        msg_x = self.input_messages.get(x_wave)
-        out_msg = self.output_message
-        yb = self.y_belief
-
-        # --- Case A: initial iteration ---
-        if out_msg is None and yb is None:
-            if msg_x is None:
-                raise RuntimeError(
-                    "IFFT2DPropagator.forward(): missing input message on the initial iteration. "
-                    "Upstream prior (or FFT node) must emit an initial message before IFFT."
-                )
-
-            # Apply inverse FFT transform
-            msg = msg_x.ifft2_centered()
-
-            # Match precision mode with output wave
-            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
-                msg = msg.as_array_precision()
-
-            self.output.receive_message(self, msg)
-            return
-
-        # --- Case B: steady-state EP update ---
-        if out_msg is not None and yb is not None:
-            msg = yb / out_msg
-            self.output.receive_message(self, msg)
-            return
-
-        # --- Case C: inconsistent state ---
-        raise RuntimeError(
-            "IFFT2DPropagator.forward(): inconsistent state. "
-            "Expected both y_belief and output_message to be None (initial) or both present (update)."
+        """
+        Args:
+            event_shape:
+                Optional 2D event shape. If None, inferred on first __matmul__.
+            precision_mode:
+                Optional UnaryPropagatorPrecisionMode.
+                Typically inferred by Graph.compile().
+            dtype:
+                Complex dtype for internal representation.
+        """
+        super().__init__(
+            event_shape=event_shape,
+            precision_mode=precision_mode,
+            dtype=dtype,
         )
 
+    def to_backend(self):
+        """
+        Synchronize dtype with the current backend (NumPy/CuPy).
+        """
+        self.dtype = np().dtype(self.dtype)
 
-    def backward(self):
-        x_wave = self.inputs["input"]
-        if self.output_message is None:
-            raise RuntimeError("Output message missing.")
+    # ------------------------------------------------------------------
+    # UnitaryPropagator hooks
+    # ------------------------------------------------------------------
 
-        self.compute_belief()
-        incoming = self.input_messages[x_wave]
-        msg = self.x_belief / incoming
-        x_wave.receive_message(self, msg)
+    def _validate_input_wave(self, wave: Wave) -> None:
+        """
+        Enforce that the input wave is 2D.
 
-    def set_init_rng(self, rng):
-        self._init_rng = rng
+        Raises:
+            ValueError: if wave.event_shape is not 2D.
+        """
+        if len(wave.event_shape) != 2:
+            raise ValueError(
+                f"IFFT2DPropagator only supports 2D input. Got {wave.event_shape}"
+            )
 
-    def get_sample_for_output(self, rng):
-        x_wave = self.inputs["input"]
-        x = x_wave.get_sample()
-        if x is None:
-            raise RuntimeError("Input sample not set.")
+    def _forward_array(self, x):
+        """
+        Apply centered 2D inverse FFT:
+            y = IFFT2_centered(x)
+        """
         fft = get_fft_backend()
         return fft.ifft2_centered(x)
 
-    def __matmul__(self, wave: Wave) -> Wave:
-        if len(wave.event_shape) != 2:
-            raise ValueError(f"IFFT2DPropagator only supports 2D input. Got {wave.event_shape}")
+    def _backward_array(self, y):
+        """
+        Apply centered 2D FFT:
+            x = FFT2_centered(y)
+        """
+        fft = get_fft_backend()
+        return fft.fft2_centered(y)
 
-        self.add_input("input", wave)
-        self._set_generation(wave.generation + 1)
-        self.dtype = get_complex_dtype(wave.dtype)
-        self.event_shape = wave.event_shape
+    # ------------------------------------------------------------------
+    # Optional UA fast-path overrides
+    # ------------------------------------------------------------------
 
-        out_wave = Wave(event_shape=self.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
-        out_wave._set_generation(self._generation + 1)
-        out_wave.set_parent(self)
-        self.output = out_wave
-        return self.output
+    def _forward_UA(self, msg_x: UA) -> UA:
+        """
+        UA-level forward transform (x -> y).
+
+        Uses UA-native implementation `ifft2_centered()`, which:
+            - applies centered IFFT on data
+            - returns scalar-precision UA
+              (harmonic reduction if input precision is array)
+        """
+        return msg_x.ifft2_centered()
+
+    def _backward_UA(self, msg_y: UA) -> UA:
+        """
+        UA-level backward transform (y -> x).
+
+        Uses UA-native implementation `fft2_centered()`.
+        """
+        return msg_y.fft2_centered()
 
     def __repr__(self):
         gen = self._generation if self._generation is not None else "-"

@@ -196,5 +196,5 @@ def test_unitary_propagator_repr():
     U = random_unitary_matrix(2, rng=get_rng(seed=104))
     prop = UnitaryMatrixPropagator(U, precision_mode=UnaryPropagatorPrecisionMode.SCALAR)
     rep = repr(prop)
-    assert "UProp(" in rep
+    assert "UnitaryMatrixProp" in rep
     assert "mode=" in rep

@@ -148,18 +148,37 @@ def test_phase_mask_fft_compute_belief_modes(mode):
     y = PhaseMaskFFTPropagator(phase_mask, precision_mode=mode) @ x
     prop = y.parent
 
-    # Input/output messages
-    ua_in = UncertainArray.random((n, n), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=True)
-    ua_out = UncertainArray.random((n, n), batch_size=B, dtype=np.complex64, rng=rng, scalar_precision=True)
+    # --- precision-consistent messages ---
+    if mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+        ua_in = UncertainArray.random(
+            (n, n), batch_size=B, dtype=np.complex64,
+            rng=rng, scalar_precision=True
+        )
+        ua_out = UncertainArray.random(
+            (n, n), batch_size=B, dtype=np.complex64,
+            rng=rng, scalar_precision=False
+        )
+
+    elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+        ua_in = UncertainArray.random(
+            (n, n), batch_size=B, dtype=np.complex64,
+            rng=rng, scalar_precision=False
+        )
+        ua_out = UncertainArray.random(
+            (n, n), batch_size=B, dtype=np.complex64,
+            rng=rng, scalar_precision=True
+        )
+
     prop.receive_message(x, ua_in)
     prop.receive_message(y, ua_out)
 
-    # Compute belief for this mode
     prop.compute_belief()
+
     assert prop.x_belief is not None
     assert prop.y_belief is not None
     assert isinstance(prop.x_belief, UncertainArray)
     assert isinstance(prop.y_belief, UncertainArray)
+
 
 
 def test_phase_mask_fft_precision_mode_getters():
