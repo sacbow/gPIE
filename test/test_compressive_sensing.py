@@ -5,7 +5,7 @@ import numpy as np
 from numpy.random import default_rng
 import gpie
 from gpie import model, observe, mse
-from gpie import SparsePrior, GaussianMeasurement, UnitaryPropagator
+from gpie import SparsePrior, GaussianMeasurement, UnitaryMatrixPropagator
 from gpie.core.linalg_utils import random_unitary_matrix, random_binary_mask
 from gpie.core.rng_utils import get_rng
 
@@ -39,7 +39,7 @@ def test_compressive_sensing_mse_decreases(xp):
     @model
     def compressive_sensing():
         x = ~SparsePrior(rho=rho, event_shape=(n,), label="x", dtype=xp.complex64)
-        GaussianMeasurement(var=var, with_mask = True) << (UnitaryPropagator(U) @ x)
+        GaussianMeasurement(var=var, with_mask = True) << (UnitaryMatrixPropagator(U) @ x)
 
     g = compressive_sensing()
 

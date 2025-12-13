@@ -6,7 +6,7 @@ from gpie.core import backend
 from gpie.graph.structure.graph import Graph
 from gpie.graph.wave import Wave
 from gpie.graph.prior.gaussian_prior import GaussianPrior
-from gpie.graph.propagator.unitary_propagator import UnitaryPropagator
+from gpie.graph.propagator.unitary_matrix_propagator import UnitaryMatrixPropagator
 from gpie.graph.measurement.gaussian_measurement import GaussianMeasurement
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import random_unitary_matrix
@@ -30,7 +30,7 @@ def test_graph_generate_sample_updates_waves_and_measurements(xp):
         def __init__(self):
             super().__init__()
             x = ~GaussianPrior(event_shape = (4,))
-            y = UnitaryPropagator(random_unitary_matrix(4, rng=rng)) @ x
+            y = UnitaryMatrixPropagator(random_unitary_matrix(4, rng=rng)) @ x
             with self.observe():
                 meas = GaussianMeasurement(var=0.1) << y
             self.compile()

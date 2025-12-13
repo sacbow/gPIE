@@ -1,4 +1,4 @@
-from .unitary_propagator import UnitaryPropagator
+from .unitary_matrix_propagator import UnitaryMatrixPropagator
 from .fft_2d_propagator import FFT2DPropagator
 from .ifft_2d_propagator import IFFT2DPropagator
 from .phase_mask_fft_propagator import PhaseMaskFFTPropagator

@@ -5,7 +5,7 @@ import numpy as np
 import os
 
 from gpie import model, observe
-from gpie import SparsePrior, GaussianMeasurement, UnitaryPropagator
+from gpie import SparsePrior, GaussianMeasurement, UnitaryMatrixPropagator
 from gpie.graph.structure.visualization import visualize_graph
 from gpie.core.linalg_utils import random_unitary_matrix
 
@@ -27,7 +27,7 @@ def test_graph():
         x = ~SparsePrior(rho=0.1, event_shape=(32,), damping=0.03, label="x", dtype=np.complex64)
         U = random_unitary_matrix(32, dtype=np.complex64)
         with observe():
-            GaussianMeasurement(var=1e-3) << (UnitaryPropagator(U) @ x)
+            GaussianMeasurement(var=1e-3) << (UnitaryMatrixPropagator(U) @ x)
     return cs_model()
 
 

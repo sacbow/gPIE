@@ -1,242 +1,360 @@
+from __future__ import annotations
+from abc import ABC, abstractmethod
 from typing import Optional
+
 from .base import Propagator
 from ..wave import Wave
-from ...core.backend import np, move_array_to_current_backend
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
-from ...core.linalg_utils import reduce_precision_to_scalar
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode, get_complex_dtype
+from ...core.uncertain_array.utils import reduce_precision_to_scalar
 
 
-class UnitaryPropagator(Propagator):
+class UnitaryPropagator(Propagator, ABC):
     """
-    A linear propagator that applies a fixed unitary transformation.
+    Abstract base class for unary unitary propagators in EP message passing.
 
-    This propagator models:
-        y = U @ x   with U ∈ C^{N * N}, where U is unitary (U.h U = I)
+    This propagator represents a unitary mapping:
+        y = U(x)
+        x = U^H(y)
 
-    It supports precision mode conversion between input and output waves:
-        - SCALAR → SCALAR
-        - SCALAR → ARRAY
-        - ARRAY → SCALAR
+    Subclasses must implement:
+        - _forward_array(x_nd): ndarray -> ndarray
+        - _backward_array(y_nd): ndarray -> ndarray
 
-    Message Passing:
-        - Forward: uses output_message and belief to compute message to output
-        - Backward: computes x_belief from y and sends message to input
+    Optionally subclasses may override:
+        - _forward_UA(msg_x): UA -> UA (scalar precision)
+        - _backward_UA(msg_y): UA -> UA (scalar precision)
+      to reuse UA-native implementations (e.g., msg.fft2_centered()).
 
-    Belief Fusion:
-        In the SCALAR mode, Belief fusion is done using the formula:
-            posterior = (tau * U @ x + gamma * r) / (τ + gamma)
-        where:
-            - r, gamma: input message (mean, precision)
-            - p, tau: output message (mean, precision)
-        Scalar/array precision is handled accordingly, and can be harmonized.
-
-    Precision Modes:
-        - SCALAR: assumes both input and output share scalar precision
-        - SCALAR_TO_ARRAY: maps scalar precision input → array output
-        - ARRAY_TO_SCALAR: maps array precision input → scalar output
-
-    Args:
-        U (np().ndarray): Unitary matrix of shape (N, N).
-        precision_mode (UnaryPropagatorPrecisionMode | None): Optional precision mode.
-        dtype (np().dtype): Data type (real or complex), default: np().complex128.
-
-    Raises:
-        ValueError: If U is not a square 2D unitary matrix.
+    This base class provides:
+        - precision_mode handling (UnaryPropagatorPrecisionMode)
+        - block-aware compute_belief
+        - EP message updates (_compute_forward/_compute_backward)
+        - sample generation for output
+        - common __matmul__ wiring logic (with overridable validation)
     """
 
-    def __init__(self, U, precision_mode: Optional[UnaryPropagatorPrecisionMode] = None, dtype=np().complex64):
-        super().__init__(input_names=("input",), dtype=dtype, precision_mode=precision_mode)
+    def __init__(
+        self,
+        *,
+        event_shape: Optional[tuple[int, ...]] = None,
+        precision_mode: Optional[UnaryPropagatorPrecisionMode] = None,
+        dtype=np().complex64,
+        input_name: str = "input",
+    ):
+        super().__init__(input_names=(input_name,), dtype=dtype, precision_mode=precision_mode)
+        self.event_shape = event_shape
+        self.x_belief: Optional[UA] = None
+        self.y_belief: Optional[UA] = None
 
-        if U is None:
-            raise ValueError("Unitary matrix U must be explicitly provided.")
-        self.U = np().asarray(U, dtype = self.dtype)
-        if self.U.ndim == 2:
-            self.U_needs_batch = True
-            self.U = self.U[None, ...]  # shape: (1, N, N)
-        elif self.U.ndim == 3:
-            self.U_needs_batch = False
-        else:
-            raise ValueError("U must be 2D or 3D array.")
-        self.Uh = self.U.conj().transpose(0, 2, 1)
-
-        if self.U.shape[1] != self.U.shape[2]:
-            raise ValueError("U must be a square 2D unitary matrix.")
-
-        self._init_rng = None
-        self.x_belief = None
-        self.y_belief = None
-    
-    def to_backend(self) -> None:
-        """
-        Transfer internal arrays (U, Uh) to the current backend (NumPy or CuPy),
-        and synchronize dtype.
-        """
-        self.U = move_array_to_current_backend(self.U, dtype=self.dtype)
-        self.Uh = move_array_to_current_backend(self.Uh, dtype=self.dtype)
-        self.dtype = np().dtype(self.dtype)
-
+    # ============================================================
+    # Precision-mode restriction (common to unitary family)
+    # ============================================================
 
     def _set_precision_mode(self, mode: str | UnaryPropagatorPrecisionMode):
+        """
+        Restrict precision modes to unitary-unary EP modes.
+
+        Allowed:
+            - SCALAR
+            - SCALAR_TO_ARRAY
+            - ARRAY_TO_SCALAR
+
+        Enforces consistency if already set.
+        """
         if isinstance(mode, str):
             mode = UnaryPropagatorPrecisionMode(mode)
+
         allowed = {
             UnaryPropagatorPrecisionMode.SCALAR,
             UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY,
-            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
+            UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR,
         }
         if mode not in allowed:
             raise ValueError(f"Invalid precision_mode for UnitaryPropagator: {mode}")
+
         if hasattr(self, "_precision_mode") and self._precision_mode is not None and self._precision_mode != mode:
             raise ValueError(
                 f"Precision mode conflict: existing='{self._precision_mode}', new='{mode}'"
             )
+
         self._precision_mode = mode
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+        """
+        Expected input precision mode given UnaryPropagatorPrecisionMode.
+        """
+        if self._precision_mode is None:
+            return None
+        if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
             return PrecisionMode.ARRAY
-        return None
+        return PrecisionMode.SCALAR
 
     def get_output_precision_mode(self) -> Optional[PrecisionMode]:
-        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            return PrecisionMode.SCALAR
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+        """
+        Expected output precision mode given UnaryPropagatorPrecisionMode.
+        """
+        if self._precision_mode is None:
+            return None
+        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
             return PrecisionMode.ARRAY
-        return None
+        return PrecisionMode.SCALAR
 
     def set_precision_mode_forward(self):
+        """
+        Infer propagator precision mode from input wave (forward pass).
+        """
         x_wave = self.inputs["input"]
         if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
 
     def set_precision_mode_backward(self):
+        """
+        Infer propagator precision mode from output wave (backward pass).
+        """
         y_wave = self.output
         if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
-    def compute_belief(self):
+    # ============================================================
+    # ndarray-level unitary operators (MUST implement)
+    # ============================================================
+
+    @abstractmethod
+    def _forward_array(self, x):
+        """Apply y = U(x) to ndarray-like array."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _backward_array(self, y):
+        """Apply x = U^H(y) to ndarray-like array."""
+        raise NotImplementedError
+
+    # ============================================================
+    # UA-level unitary operators (default: scalar-precision)
+    # ============================================================
+
+    def _forward_UA(self, msg_x: UA) -> UA:
+        """
+        Apply U to UA.data, returning a scalar-precision UA.
+
+        Precision rule:
+            - scalar -> keep scalar precision
+            - array  -> reduce to scalar by harmonic mean
+        """
+        data = self._forward_array(msg_x.data)
+
+        # NOTE: adjust depending on UA implementation
+        scalar = getattr(msg_x, "_scalar_precision", None)
+        if scalar is None:
+            scalar = msg_x.is_scalar_precision  # if available
+
+        if scalar:
+            prec = msg_x.precision(raw=True)
+        else:
+            prec = reduce_precision_to_scalar(msg_x.precision(raw=True))
+
+        return UA(array=data, dtype=msg_x.dtype, precision=prec, batched=True)
+
+    def _backward_UA(self, msg_y: UA) -> UA:
+        """
+        Apply U^H to UA.data, returning a scalar-precision UA.
+
+        Precision rule matches _forward_UA.
+        """
+        data = self._backward_array(msg_y.data)
+
+        scalar = getattr(msg_y, "_scalar_precision", None)
+        if scalar is None:
+            scalar = msg_y.is_scalar_precision
+
+        if scalar:
+            prec = msg_y.precision(raw=True)
+        else:
+            prec = reduce_precision_to_scalar(msg_y.precision(raw=True))
+
+        return UA(array=data, dtype=msg_y.dtype, precision=prec, batched=True)
+
+    # ============================================================
+    # Belief computation (shared)
+    # ============================================================
+
+    def compute_belief(self, block=None):
+        """
+        Compute the joint belief over (x, y) under y = U x.
+
+        Updates:
+            - self.x_belief
+            - self.y_belief
+
+        Block semantics:
+            - block=None: full batch
+            - block=slice: compute only the slice and merge with insert_block()
+        """
         x_wave = self.inputs["input"]
-        msg_x = self.input_messages.get(x_wave)
+        msg_x = self.input_messages[x_wave]
         msg_y = self.output_message
 
         if msg_x is None or msg_y is None:
             raise RuntimeError("Both input and output messages are required to compute belief.")
 
-        if np().issubdtype(msg_x.dtype, np().floating):
-            msg_x = msg_x.astype(self.dtype)
-
-        r = msg_x.data         # shape: (B, N)
-        p = msg_y.data         # shape: (B, N)
-        gamma = msg_x._precision  # scalar or array
-        tau = msg_y._precision    # scalar or array
+        msg_x_blk = msg_x.extract_block(block)
+        msg_y_blk = msg_y.extract_block(block)
 
         mode = self._precision_mode
+
         if mode == UnaryPropagatorPrecisionMode.SCALAR:
-            # Uh @ p: (B, N, N) @ (B, N, 1) → (B, N)
-            Uh_p = (self.Uh @ p[..., None])[..., 0]
-            denom = gamma + tau
-            x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
-            self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            self.y_belief = UA((self.U @ x_mean[..., None])[..., 0], dtype=self.dtype, precision=denom)
+            x_blk = msg_x_blk * self._backward_UA(msg_y_blk)
+            y_blk = self._forward_UA(x_blk)
 
         elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-            Ur = (self.U @ r[..., None])[..., 0]
-            denom = gamma + tau
-            y_mean = (gamma / denom) * Ur + (tau / denom) * p
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=denom)
-            scalar_prec = reduce_precision_to_scalar(denom)
-            x_mean = (self.Uh @ y_mean[..., None])[..., 0]
-            self.x_belief = UA(x_mean, dtype=self.dtype, precision=scalar_prec)
+            y_blk = self._forward_UA(msg_x_blk).as_array_precision() * msg_y_blk
+            x_blk = self._backward_UA(y_blk)
 
         elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-            Uh_p = (self.Uh @ p[..., None])[..., 0]
-            denom = gamma + tau
-            x_mean = (gamma / denom) * r + (tau / denom) * Uh_p
-            self.x_belief = UA(x_mean, dtype=self.dtype, precision=denom)
-            scalar_prec = reduce_precision_to_scalar(denom)
-            y_mean = (self.U @ x_mean[..., None])[..., 0]
-            self.y_belief = UA(y_mean, dtype=self.dtype, precision=scalar_prec)
+            x_blk = msg_x_blk * self._backward_UA(msg_y_blk).as_array_precision()
+            y_blk = self._forward_UA(x_blk)
 
         else:
-            raise ValueError(f"Unknown precision_mode: {self._precision_mode}")
+            raise ValueError(f"Unknown precision_mode: {mode}")
 
+        # Lazy init: belief buffers must match the mode-defined precision forms
+        if self.x_belief is None or self.y_belief is None:
+            if mode == UnaryPropagatorPrecisionMode.SCALAR:
+                scalar_x, scalar_y = True, True
+            elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+                scalar_x, scalar_y = True, False
+            elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+                scalar_x, scalar_y = False, True
+            else:
+                raise ValueError(f"Unknown precision_mode: {mode}")
 
-    def forward(self):
-        if self.output_message is None or self.y_belief is None:
-            if self._init_rng is None:
-                raise RuntimeError("Initial RNG not configured.")
-            
-            msg = UA.random(
-                event_shape=self.output.event_shape,
-                batch_size=self.output.batch_size,
-                dtype=self.dtype,
-                scalar_precision=(self.output.precision_mode == "scalar"),
-                rng=self._init_rng,
-            )
-        else:
-            msg = self.y_belief / self.output_message
+            if self.x_belief is None:
+                self.x_belief = UA.zeros(
+                    event_shape=x_wave.event_shape,
+                    batch_size=x_wave.batch_size,
+                    dtype=self.dtype,
+                    precision=1.0,
+                    scalar_precision=scalar_x,
+                )
+            if self.y_belief is None:
+                self.y_belief = UA.zeros(
+                    event_shape=self.output.event_shape,
+                    batch_size=self.output.batch_size,
+                    dtype=self.dtype,
+                    precision=1.0,
+                    scalar_precision=scalar_y,
+                )
 
-        self.output.receive_message(self, msg)
+        self.x_belief.insert_block(block, x_blk)
+        self.y_belief.insert_block(block, y_blk)
 
+        return x_blk, y_blk
 
-    def backward(self):
-        x_wave = self.inputs["input"]
-        if self.output_message is None:
-            raise RuntimeError("Output message missing.")
-        self.compute_belief()
-        incoming = self.input_messages[x_wave]
-        msg_in = self.x_belief / incoming
-        x_wave.receive_message(self, msg_in)
+    # ============================================================
+    # EP message updates (shared)
+    # ============================================================
 
-    def set_init_rng(self, rng):
-        self._init_rng = rng
-    
-    def get_sample_for_output(self, rng):
+    def _compute_forward(self, inputs, block=None):
         """
-        Return the propagated sample for the output wave.
-        This replaces generate_sample and delegates sample setting to Graph.
+        EP forward update (x -> y).
+
+        Initial:
+            m_y = U(m_x)  (and cast to array precision if output requires it)
+        Steady-state:
+            m_y = y_belief / m_y_old
+
+        Returns:
+            msg_block (UA): message restricted to the given block
+        """
+        msg_x = inputs["input"]
+        out_msg = self.output_message
+        yb = self.y_belief
+
+        msg_x_blk = msg_x.extract_block(block)
+
+        # Initial forward
+        if out_msg is None and yb is None:
+            msg = self._forward_UA(msg_x_blk)
+            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
+                msg = msg.as_array_precision()
+            return msg
+
+        # Steady-state EP update
+        out_msg_blk = out_msg.extract_block(block)
+        yb_blk = yb.extract_block(block)
+        return yb_blk / out_msg_blk
+
+    def _compute_backward(self, output_msg, exclude, block=None):
+        """
+        EP backward update (y -> x).
+
+        Implements:
+            m_x = x_belief / m_x_old
+
+        Returns:
+            msg_block (UA): message restricted to the given block
+        """
+        if exclude != "input":
+            raise RuntimeError("UnitaryPropagator has only one input: 'input'.")
+
+        x_blk, _ = self.compute_belief(block=block)
+
+        x_wave = self.inputs["input"]
+        msg_x_old = self.input_messages[x_wave]
+        msg_x_old_blk = msg_x_old.extract_block(block)
+
+        return x_blk / msg_x_old_blk
+
+    # ============================================================
+    # Sample generation (shared)
+    # ============================================================
+
+    def get_sample_for_output(self, rng=None):
+        """
+        Generate a sample for the output wave from the input sample via y = U(x).
+
+        rng is accepted for interface compatibility but is not required.
         """
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
             raise RuntimeError("Input sample not set.")
+        return self._forward_array(x)
 
-        # Batched matrix multiplication: (B, N, N) @ (B, N, 1) → (B, N)
-        return (self.U @ x[..., None])[..., 0]
+    # ============================================================
+    # Wiring / graph DSL (shared with overridable validation)
+    # ============================================================
 
+    def _validate_input_wave(self, wave: Wave) -> None:
+        """
+        Hook for subclasses to enforce input constraints (e.g., ndim).
+        Default: no-op.
+        """
+        return
 
     def __matmul__(self, wave: Wave) -> Wave:
-        if len(wave.event_shape) != 1:
-            raise ValueError(f"UnitaryPropagator only supports 1D wave input. Got: {wave.event_shape}")
+        """
+        Connect propagator to an input Wave and create an output Wave.
+
+        Subclasses may override _validate_input_wave() to enforce constraints.
+        """
+        self._validate_input_wave(wave)
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
+
         self.dtype = get_complex_dtype(wave.dtype)
+        self.event_shape = wave.event_shape
+        self.batch_size = wave.batch_size
 
-        # Apply batch_size-aware expansion
-        if self.U_needs_batch:
-            B = wave.batch_size
-            self.U = np().broadcast_to(self.U, (B, *self.U.shape[1:]))
-            self.Uh = self.U.conj().transpose(0, 2, 1)
-            self.U_needs_batch = False
-
-        if self.U.shape[1] != wave.event_shape[0]:
-            raise ValueError(f"U shape {self.U.shape} is incompatible with input wave shape {wave.event_shape}")
-
-        out_wave = Wave(event_shape=wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
+        out_wave = Wave(
+            event_shape=self.event_shape,
+            batch_size=wave.batch_size,
+            dtype=self.dtype,
+        )
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
-
-
-    def __repr__(self):
-        gen = self._generation if self._generation is not None else "-"
-        return f"UProp(gen={gen}, mode={self.precision_mode})"

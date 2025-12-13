@@ -38,7 +38,7 @@ from .graph.prior import (
 
 # Propagators
 from .graph.propagator import (
-    UnitaryPropagator,
+    UnitaryMatrixPropagator,
     FFT2DPropagator,
     IFFT2DPropagator,
     PhaseMaskFFTPropagator,
