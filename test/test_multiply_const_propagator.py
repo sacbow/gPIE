@@ -20,92 +20,280 @@ if has_cupy:
     backend_libs.append(cp)
 
 
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+def _make_wave(xp, shape=(2, 2), B=1, dtype=None):
+    dtype = dtype or xp.complex64
+    return Wave(event_shape=shape, batch_size=B, dtype=dtype)
+
+
+def _make_prop_and_connect(xp, wave, const):
+    prop = MultiplyConstPropagator(const=const)
+    out = prop @ wave
+    return prop, out
+
+
+def _slice_batched(arr, block):
+    if block is None:
+        return arr
+    return arr[block]
+
+
+# ---------------------------------------------------------------------
+# Core deterministic mapping tests (no EP correction)
+# ---------------------------------------------------------------------
 @pytest.mark.parametrize("xp", backend_libs)
 @pytest.mark.parametrize("const_val", [
     2.0,
     np.array([[2.0, 2.0], [2.0, 2.0]]),
-    np.array([[[2.0, 2.0], [2.0, 2.0]]])
+    np.array([[[2.0, 2.0], [2.0, 2.0]]]),
 ])
-def test_forward_backward_scalar_and_uniform(xp, const_val):
+def test_compute_forward_deterministic_array_precision(xp, const_val):
+    """
+    _compute_forward returns an ARRAY-precision UA by construction,
+    except when precision_mode == ARRAY_TO_SCALAR (handled elsewhere).
+    This test verifies the base deterministic transform:
+        mu_out = mu_in * const
+        prec_out = prec_in / (|const|^2 + eps)
+    """
     backend.set_backend(xp)
     rng = get_rng(seed=0)
+
     shape = (2, 2)
     B = 1
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    ua_in = UA.random(event_shape=shape, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    wave = _make_wave(xp, shape=shape, B=B)
 
-    prop = MultiplyConstPropagator(const=const_val)
-    output = prop @ wave
+    prop, out = _make_prop_and_connect(xp, wave, const_val)
 
+    ua_in = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
     prop.input_messages[wave] = ua_in
+
+    # choose a mode that does NOT trigger ARRAY_TO_SCALAR special path
     prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
-    msg_out = prop._compute_forward(ua_in)
-    assert msg_out.event_shape == shape
+    msg_out = prop._compute_forward({"input": ua_in}, block=None)
 
-    abs_sq = xp.abs(prop.const) ** 2
+    const = prop.const  # already (B, *shape)
+    abs_sq = xp.abs(const) ** 2
     eps = xp.array(prop._eps, dtype=get_real_dtype(prop.const_dtype))
 
-    expected_mu_out = ua_in.data * prop.const
-    expected_prec_out = ua_in.precision(raw=True) / (abs_sq + eps)
-    assert xp.allclose(msg_out.data, expected_mu_out)
-    assert xp.allclose(msg_out.precision(raw=True), expected_prec_out)
+    expected_mu = ua_in.data * const
+    expected_prec = ua_in.precision(raw=True) / (abs_sq + eps)
 
-    msg_back = prop._compute_backward(msg_out)
-    expected_mu_in = msg_out.data * xp.conj(prop.const) / (abs_sq + eps)
-    expected_prec_in = msg_out.precision(raw=True) * abs_sq
-    assert msg_back.event_shape == shape
-    assert xp.allclose(msg_back.data, expected_mu_in)
-    assert xp.allclose(msg_back.precision(raw=True), expected_prec_in)
+    assert msg_out.event_shape == shape
+    assert msg_out.batch_size == B
+    assert msg_out.precision_mode == PrecisionMode.ARRAY
+    assert xp.allclose(msg_out.data, expected_mu)
+    assert xp.allclose(msg_out.precision(raw=True), expected_prec)
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_forward_backward_non_uniform_precision_mode(xp):
+def test_compute_backward_deterministic_array_precision(xp):
+    """
+    _compute_backward returns an ARRAY-precision UA by construction,
+    except when precision_mode == SCALAR_TO_ARRAY (handled elsewhere).
+    This test verifies the deterministic adjoint-like mapping:
+        mu_in = mu_out * conj(const) / (|const|^2 + eps)
+        prec_in = prec_out * |const|^2
+    """
     backend.set_backend(xp)
     rng = get_rng(seed=1)
+
     shape = (2, 2)
     B = 1
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    wave = _make_wave(xp, shape=shape, B=B)
+
     const = xp.array([[1.0, 2.0], [3.0, 4.0]], dtype=xp.complex64)
-    prop = MultiplyConstPropagator(const=const)
-    output = prop @ wave
+    prop, out = _make_prop_and_connect(xp, wave, const)
 
-    ua_in = UA.random(shape, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    ua_out = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+
+    # choose a mode that does NOT trigger SCALAR_TO_ARRAY special path
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
+
+    msg_in = prop._compute_backward(ua_out, exclude="input", block=None)
+
+    const_full = prop.const
+    const_conj = xp.conj(const_full)
+    abs_sq = xp.abs(const_full) ** 2
+    eps = xp.array(prop._eps, dtype=get_real_dtype(prop.const_dtype))
+
+    expected_mu = ua_out.data * const_conj / (abs_sq + eps)
+    expected_prec = ua_out.precision(raw=True) * abs_sq
+
+    assert msg_in.event_shape == shape
+    assert msg_in.batch_size == B
+    assert msg_in.precision_mode == PrecisionMode.ARRAY
+    assert xp.allclose(msg_in.data, expected_mu)
+    assert xp.allclose(msg_in.precision(raw=True), expected_prec)
+
+
+# ---------------------------------------------------------------------
+# EP correction paths
+#   - forward: ARRAY_TO_SCALAR
+#   - backward: SCALAR_TO_ARRAY
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_forward_array_to_scalar_initial_vs_steady(xp):
+    """
+    For ARRAY_TO_SCALAR, _compute_forward behaves differently:
+      - initial (output_message is None): return ua.as_scalar_precision()
+      - steady-state: q = (ua * out_msg.as_array_precision()).as_scalar_precision()
+                      return q / out_msg
+    """
+    backend.set_backend(xp)
+    rng = get_rng(seed=2)
+
+    shape = (2, 2)
+    B = 1
+    wave = _make_wave(xp, shape=shape, B=B)
+
+    const = 2.0
+    prop, out = _make_prop_and_connect(xp, wave, const)
+
+    ua_in = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
     prop.input_messages[wave] = ua_in
-    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
-    msg_out = prop._compute_forward(ua_in)
-    assert msg_out.precision(raw=True).shape == (B, *shape)
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR)
 
-    msg_back = prop._compute_backward(msg_out)
-    assert msg_back.event_shape == shape
+    # --- initial ---
+    assert prop.output_message is None
+    msg_init = prop._compute_forward({"input": ua_in}, block=None)
+    assert msg_init.precision_mode == PrecisionMode.SCALAR
+
+    # --- steady-state ---
+    # provide a scalar output message to enable EP correction
+    out_msg = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    prop.receive_message(out, out_msg)  # sets output_message
+
+    msg_steady = prop._compute_forward({"input": ua_in}, block=None)
+    assert msg_steady.precision_mode == PrecisionMode.SCALAR
+
+    # sanity: steady should not be wildly different in magnitude
+    assert msg_steady.data.shape == msg_init.data.shape
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_dtype_lowering_and_broadcast(xp):
+def test_compute_backward_scalar_to_array_initial_vs_steady(xp):
+    """
+    For SCALAR_TO_ARRAY, _compute_backward behaves differently:
+      - if input message exists: q = (ua * in_msg.as_array_precision()).as_scalar_precision()
+                                return q / in_msg
+      - if input message missing: return ua.as_scalar_precision()
+    """
     backend.set_backend(xp)
+    rng = get_rng(seed=3)
+
     shape = (2, 2)
     B = 1
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    wave = _make_wave(xp, shape=shape, B=B)
 
-    # High precision const (will be cast to lower precision)
-    const = xp.array([2.0], dtype=xp.complex128)
+    const = xp.ones(shape, dtype=xp.complex64) * 2.0
+    prop, out = _make_prop_and_connect(xp, wave, const)
+
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+
+    ua_out = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+
+    # --- initial: no input message cached ---
+    assert prop.input_messages.get(wave) is None
+    msg_init = prop._compute_backward(ua_out, exclude="input", block=None)
+    assert msg_init.precision_mode == PrecisionMode.SCALAR
+
+    # --- steady-state: provide scalar input message to enable EP correction ---
+    ua_in = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    prop.input_messages[wave] = ua_in
+
+    msg_steady = prop._compute_backward(ua_out, exclude="input", block=None)
+    assert msg_steady.precision_mode == PrecisionMode.SCALAR
+
+
+# ---------------------------------------------------------------------
+# __matmul__ responsibilities
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("xp", backend_libs)
+def test_matmul_sets_batch_and_broadcasts_const(xp):
+    """
+    __matmul__ must:
+      - set self.event_shape, self.batch_size
+      - broadcast const to (B, *event_shape)
+      - pick dtype via get_lower_precision_dtype
+    """
+    backend.set_backend(xp)
+
+    shape = (2, 2)
+    B = 3
+    wave = _make_wave(xp, shape=shape, B=B, dtype=xp.complex64)
+
+    const = xp.array([2.0], dtype=xp.complex128)  # higher precision
     prop = MultiplyConstPropagator(const=const)
-    output = prop @ wave
+    out = prop @ wave
 
-    assert output.dtype == xp.complex64
+    assert prop.batch_size == B
+    assert prop.event_shape == shape
     assert prop.const.shape == (B, *shape)
+    assert out.batch_size == B
+    assert out.event_shape == shape
+    assert out.dtype == xp.complex64  # lowered
 
-    # Broadcasting error
+    # broadcasting error
     bad_const = xp.ones((3, 3), dtype=xp.complex64)
     prop_bad = MultiplyConstPropagator(bad_const)
     with pytest.raises(ValueError):
         _ = prop_bad @ wave
 
 
+# ---------------------------------------------------------------------
+# Block-wise behavior (slice correctness)
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_forward_block_slicing(xp):
+    """
+    When block is provided, _compute_forward must:
+      - slice input message
+      - slice const fields consistently
+      - return UA with batch_size == block_size
+    """
+    backend.set_backend(xp)
+    rng = get_rng(seed=4)
+
+    shape = (2, 2)
+    B = 4
+    wave = _make_wave(xp, shape=shape, B=B)
+
+    const = xp.ones((B, *shape), dtype=xp.complex64) * 2.0
+    prop, out = _make_prop_and_connect(xp, wave, const)
+
+    ua_in = UA.random(event_shape=shape, batch_size=B, dtype=xp.complex64, rng=rng, scalar_precision=True)
+    prop.input_messages[wave] = ua_in
+    prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
+
+    blk = slice(1, 3)
+    msg_blk = prop._compute_forward({"input": ua_in}, block=blk)
+
+    assert msg_blk.batch_size == 2
+    assert msg_blk.event_shape == shape
+
+    # deterministic check on that block
+    const_blk = prop.const[blk]
+    abs_sq_blk = xp.abs(const_blk) ** 2
+    eps = xp.array(prop._eps, dtype=get_real_dtype(prop.const_dtype))
+
+    expected_mu = ua_in.data[blk] * const_blk
+    expected_prec = ua_in.precision(raw=True)[blk] / (abs_sq_blk + eps)
+
+    assert xp.allclose(msg_blk.data, expected_mu)
+    assert xp.allclose(msg_blk.precision(raw=True), expected_prec)
+
+
+# ---------------------------------------------------------------------
+# to_backend and sampling
+# ---------------------------------------------------------------------
 @pytest.mark.parametrize("xp", backend_libs)
 def test_to_backend_transfer(xp):
     backend.set_backend(xp)
+
     const = np.array([[2.0, 2.0], [2.0, 2.0]], dtype=np.complex128)
     prop = MultiplyConstPropagator(const=const)
 
@@ -122,89 +310,78 @@ def test_to_backend_transfer(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_get_sample_for_output(xp):
     backend.set_backend(xp)
+
     shape = (2, 2)
-    B = 1
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
+    B = 2
+    wave = _make_wave(xp, shape=shape, B=B, dtype=xp.complex64)
     sample = xp.ones((B, *shape), dtype=xp.complex64)
     wave.set_sample(sample)
 
-    prop = MultiplyConstPropagator(const=2.0)
-    output = prop @ wave
-    out_sample = prop.get_sample_for_output()
-    assert xp.allclose(out_sample, sample * 2.0)
+    prop, out = _make_prop_and_connect(xp, wave, const=2.0)
+    y = prop.get_sample_for_output()
+    assert xp.allclose(y, sample * 2.0)
 
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_repr(xp):
-    backend.set_backend(xp)
-    prop_scalar = MultiplyConstPropagator(2.0)
-    prop_array = MultiplyConstPropagator(xp.ones((2, 2)))
-    assert "scalar" in repr(prop_scalar)
-    assert "shape" in repr(prop_array)
-
-
-@pytest.mark.parametrize("xp", [np])
-def test_set_precision_mode_conflicts_and_invalid(xp):
-    backend.set_backend(xp)
+# ---------------------------------------------------------------------
+# precision mode / getters
+# ---------------------------------------------------------------------
+def test_set_precision_mode_conflicts_and_invalid():
+    backend.set_backend(np)
     prop = MultiplyConstPropagator(2.0)
 
-    # invalid string
     with pytest.raises(ValueError):
         prop._set_precision_mode("invalid")
 
-    # set once, then conflict
     prop._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
     with pytest.raises(ValueError):
         prop._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY)
 
 
-@pytest.mark.parametrize("xp", [np])
-def test_set_precision_mode_forward_and_backward(xp):
-    backend.set_backend(xp)
+def test_set_precision_mode_forward_and_backward():
+    backend.set_backend(np)
     shape = (2, 2)
     B = 1
 
-    # forward: input wave SCALAR → SCALAR_TO_ARRAY
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+    # forward: input SCALAR -> SCALAR_TO_ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
     wave._set_precision_mode(PrecisionMode.SCALAR)
     prop.set_precision_mode_forward()
     assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY
 
-    # backward: output SCALAR → ARRAY_TO_SCALAR
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+    # backward: output SCALAR -> ARRAY_TO_SCALAR
+    wave = Wave(event_shape=shape, batch_size=B, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
     prop.output._set_precision_mode(PrecisionMode.SCALAR)
     prop.set_precision_mode_backward()
     assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
 
-    # backward: input SCALAR → SCALAR_TO_ARRAY
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+    # backward: input SCALAR & output ARRAY -> SCALAR_TO_ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
     wave._set_precision_mode(PrecisionMode.SCALAR)
     prop.output._set_precision_mode(PrecisionMode.ARRAY)
     prop.set_precision_mode_backward()
     assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY
 
-    # backward: both ARRAY → ARRAY
-    wave = Wave(event_shape=shape, batch_size=B, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+    # backward: both ARRAY -> ARRAY
+    wave = Wave(event_shape=shape, batch_size=B, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
     wave._set_precision_mode(PrecisionMode.ARRAY)
     prop.output._set_precision_mode(PrecisionMode.ARRAY)
     prop.set_precision_mode_backward()
     assert prop.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY
 
 
-@pytest.mark.parametrize("xp", [np])
-def test_get_input_output_precision_modes(xp):
-    backend.set_backend(xp)
-    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+def test_get_input_output_precision_modes():
+    backend.set_backend(np)
+    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
 
     # none
     assert prop.get_input_precision_mode(wave) is None
@@ -216,9 +393,29 @@ def test_get_input_output_precision_modes(xp):
     assert prop.get_output_precision_mode() == PrecisionMode.ARRAY
 
     # ARRAY_TO_SCALAR
-    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=xp.complex64)
-    output = MultiplyConstPropagator(2.0) @ wave
-    prop = output.parent
+    wave = Wave(event_shape=(2, 2), batch_size=1, dtype=np.complex64)
+    out = MultiplyConstPropagator(2.0) @ wave
+    prop = out.parent
     prop._precision_mode = UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR
     assert prop.get_input_precision_mode(wave) == PrecisionMode.ARRAY
     assert prop.get_output_precision_mode() == PrecisionMode.SCALAR
+
+
+# ---------------------------------------------------------------------
+# repr (new style)
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("xp", backend_libs)
+def test_repr_contains_core_fields(xp):
+    backend.set_backend(xp)
+
+    prop = MultiplyConstPropagator(2.0)
+    # before matmul: generation/batch may be default
+    r0 = repr(prop)
+    assert "MultiplyConst" in r0 or "MultiplyConstProp" in r0
+
+    wave = Wave(event_shape=(2, 2), batch_size=3, dtype=xp.complex64)
+    _ = prop @ wave
+    r1 = repr(prop)
+
+    # should contain at least mode/batch/event_shape under the new repr style
+    assert "batch" in r1

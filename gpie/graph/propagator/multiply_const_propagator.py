@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Union, Optional, Dict
 from ..wave import Wave
 from .base import Propagator
 from ...core.uncertain_array import UncertainArray as UA
@@ -49,11 +49,9 @@ class MultiplyConstPropagator(Propagator):
         Stabilization constant stored as a scalar array on the current backend.
     const_dtype : dtype
         Data type of the constant field.
-    _init_rng : Generator | None
-        Optional RNG for initializing messages when needed.
     """
 
-    def __init__(self, const: Union[float, complex, np().ndarray], *, eps: float = 1e-12, dtype = np().complex128):
+    def __init__(self, const: Union[float, complex, np().ndarray], *, eps: float = 1e-12, dtype = np().complex64):
         """
         Initialize a propagator that multiplies the incoming message by a fixed complex field.
 
@@ -72,7 +70,6 @@ class MultiplyConstPropagator(Propagator):
         # Store the raw constant as provided (no clamping). Keep dtype for later synchronization.
         self.const = np().asarray(const, dtype = dtype)
         self.const_dtype = self.const.dtype
-        self._init_rng = None
 
         # Validate and store stabilizer epsilon in a dtype-consistent 0-D array.
         if eps < 0:
@@ -110,10 +107,6 @@ class MultiplyConstPropagator(Propagator):
 
         # Cast epsilon to the current backend and real dtype corresponding to `const`.
         self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
-
-
-    def set_init_rng(self, rng):
-        self._init_rng = rng
     
 
     def _set_precision_mode(self, mode: Union[str, UnaryPropagatorPrecisionMode]) -> None:
@@ -167,114 +160,113 @@ class MultiplyConstPropagator(Propagator):
         else:
             return PrecisionMode.ARRAY
 
-    def _compute_forward(self, input_msg: UA) -> UA:
+    def _compute_forward(self, inputs: Dict[str, UA], block=None) -> UA:
         """
-        Compute the forward message through the multiplicative constant factor.
+        Block-aware forward kernel for MultiplyConstPropagator.
 
-        Forward mapping:
-            μ_out = μ_in × const
-            prec_out = prec_in / (|const|² + ε)
+        Returns:
+            UA restricted to the given block (batch slice).
+            - If block is None: full-batch UA
+            - If block is a slice: UA with batch_size = block.stop - block.start
 
-        Notes
-        -----
-        - This operation propagates the uncertainty through elementwise multiplication.
-        - The denominator regularization (|const|² + ε) prevents precision blow-up
-        near regions where |const| ≈ 0.
+        Mode-specific behavior:
+            - ARRAY_TO_SCALAR:
+                - initial (output_message is None): return ua.as_scalar_precision()
+                - steady-state: q = (ua * out_msg.as_array_precision()).as_scalar_precision()
+                                return q / out_msg
+            - otherwise (ARRAY, SCALAR_TO_ARRAY): return ua (already array precision)
         """
-        dtype = np().result_type(input_msg.dtype, self.const_dtype)
-        input_msg = input_msg.astype(dtype)
+        x_msg = inputs["input"].extract_block(block)
 
-        const = self.const.astype(dtype)
-        abs_sq = self.const_abs_sq.astype(get_real_dtype(dtype))
-        eps = self._eps.astype(get_real_dtype(dtype))
+        # slice constant fields (const is already shaped (B, *event_shape) after __matmul__)
+        const = self.const if block is None else self.const[block]
+        abs_sq = self.const_abs_sq if block is None else self.const_abs_sq[block]
+        eps = self._eps  # 0-d real scalar array on backend
 
-        mu = input_msg.data * const
-        prec = input_msg.precision(raw=True) / (abs_sq + eps)
-        return UA(mu, dtype=dtype, precision=prec)
+        # dtype negotiation
+        dtype = np().result_type(x_msg.dtype, const.dtype)
+        x_msg = x_msg.astype(dtype)
+        const = const.astype(dtype)
+
+        real_dtype = get_real_dtype(dtype)
+        abs_sq = abs_sq.astype(real_dtype)
+        eps = eps.astype(real_dtype)
+
+        # deterministic propagation (always ARRAY precision)
+        mu = x_msg.data * const
+        prec = x_msg.precision(raw=True) / (abs_sq + eps)
+        ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
+
+        # special EP handling only for ARRAY_TO_SCALAR
+        if self.precision_mode_enum == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
+            out_msg = self.output_message
+            out_blk = None if out_msg is None else out_msg.extract_block(block)
+
+            if out_blk is None:
+                # initial iteration: no EP correction possible
+                return ua.as_scalar_precision()
+
+            q = (ua * out_blk.as_array_precision()).as_scalar_precision()
+            return q / out_blk
+
+        # ARRAY / SCALAR_TO_ARRAY: return as-is (ua already array precision)
+        return ua
 
 
-    def _compute_backward(self, output_msg: UA) -> UA:
+    def _compute_backward(self, output_msg: UA, exclude: str, block=None) -> UA:
         """
-        Compute the backward message through the multiplicative constant factor.
+        Block-aware backward kernel for MultiplyConstPropagator.
 
-        Backward mapping (adjoint of the forward transform):
-            μ_in = μ_out × conj(const) / (|const|² + ε)
-            prec_in = prec_out × |const|²
+        Backward mapping (adjoint-like):
+            mu_in  = mu_out * conj(const) / (|const|^2 + eps)
+            prec_in = prec_out * |const|^2
 
-        Notes
-        -----
-        - Uses complex conjugation to ensure correct adjoint mapping.
-        - The same regularization ε used in forward ensures numerical stability
-        while maintaining conjugate symmetry.
+        Mode-specific behavior:
+            - SCALAR_TO_ARRAY (input wave is scalar):
+                - initial (input_message is None): return ua.as_scalar_precision()
+                - steady-state: q = (ua * in_msg.as_array_precision()).as_scalar_precision()
+                                return q / in_msg
+            - otherwise (ARRAY, ARRAY_TO_SCALAR): return ua (array precision)
         """
-        dtype = np().result_type(output_msg.dtype, self.const_dtype)
-        const_conj = self.const_conj.astype(dtype)
-        abs_sq = self.const_abs_sq.astype(get_real_dtype(dtype))
-        eps = self._eps.astype(get_real_dtype(dtype))
+        if exclude != "input":
+            raise RuntimeError("MultiplyConstPropagator has only one input: 'input'.")
 
-        mu = output_msg.data * const_conj / (abs_sq + eps)
-        prec = output_msg.precision(raw=True) * abs_sq
-        return UA(mu, dtype=dtype, precision=prec)
+        out_blk = output_msg.extract_block(block)
 
+        # slice constant fields (const is already shaped (B, *event_shape) after __matmul__)
+        const_conj = self.const_conj if block is None else self.const_conj[block]
+        abs_sq = self.const_abs_sq if block is None else self.const_abs_sq[block]
+        eps = self._eps
 
-    def forward(self):
-        """
-        Forward message passing for MultiplyConstPropagator.
+        # dtype negotiation
+        dtype = np().result_type(out_blk.dtype, const_conj.dtype)
+        out_blk = out_blk.astype(dtype)
+        const_conj = const_conj.astype(dtype)
 
-        Logic:
-        - Initial iteration (no output_message or y_belief yet):
-            → Require an input message from the upstream wave.
-            → Use _compute_forward(input_msg) to deterministically propagate the message.
-            → Align precision mode (array vs scalar) with the output wave.
-            → If input_msg is missing, raise RuntimeError.
-        - Subsequent iterations:
-            → Perform EP-style update based on output_message and input_msg.
-        """
-        x_wave = self.inputs["input"]
-        input_msg = self.input_messages.get(x_wave)
-        out_msg = self.output_message
+        real_dtype = get_real_dtype(dtype)
+        abs_sq = abs_sq.astype(real_dtype)
+        eps = eps.astype(real_dtype)
 
-        # --- Case A: initial iteration ---
-        if out_msg is None:
-            if input_msg is None:
-                raise RuntimeError(
-                    "MultiplyConstPropagator.forward(): missing input message on initial iteration. "
-                    "Upstream prior must emit an initial message before multiplication."
-                )
+        # deterministic backward propagation (always ARRAY precision)
+        mu = out_blk.data * const_conj / (abs_sq + eps)
+        prec = out_blk.precision(raw=True) * abs_sq
+        ua = UA(mu, dtype=dtype, precision=prec)  # array precision by construction
 
-            # Compute deterministic forward propagation
-            msg = self._compute_forward(input_msg)
+        # special EP handling only for SCALAR_TO_ARRAY (input scalar)
+        if self.precision_mode_enum == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
+            x_wave = self.inputs["input"]
+            in_msg = self.input_messages.get(x_wave)
+            in_blk = None if in_msg is None else in_msg.extract_block(block)
 
-            # Align precision mode with the output wave
-            if self.output.precision_mode_enum == PrecisionMode.SCALAR:
-                msg = msg.as_scalar_precision()
-            else:
-                msg = msg.as_array_precision()
+            if in_blk is None:
+                # very first backward before any input cache exists (rare but consistent)
+                return ua.as_scalar_precision()
 
-            self.output.receive_message(self, msg)
-            return
+            q = (ua * in_blk.as_array_precision()).as_scalar_precision()
+            return q / in_blk
 
-        # --- Case B: subsequent iterations (EP-style update) ---
-        else:
-            msg = self._compute_forward(input_msg)
-            if self.output.precision_mode_enum == PrecisionMode.ARRAY:
-                self.output.receive_message(self, msg)
-            else:
-                qy = (msg * out_msg.as_array_precision()).as_scalar_precision()
-                msg_to_send = qy / out_msg
-                self.output.receive_message(self, msg_to_send)
-            return
-
-
-    def backward(self):
-        msg = self._compute_backward(self.output_message)
-        if self.inputs["input"].precision_mode_enum == PrecisionMode.ARRAY:
-            self.inputs["input"].receive_message(self, msg)
-        else:
-            input_msg = self.input_messages[self.inputs["input"]]
-            qx = (msg * input_msg.as_array_precision()).as_scalar_precision()
-            msg_to_send = qx / input_msg
-            self.inputs["input"].receive_message(self, msg_to_send)
+        # ARRAY / ARRAY_TO_SCALAR: return as-is
+        return ua
 
     def get_sample_for_output(self, rng=None):
         x = self.inputs["input"].get_sample()
@@ -285,46 +277,46 @@ class MultiplyConstPropagator(Propagator):
 
     def __matmul__(self, wave: Wave) -> Wave:
         """
-        Connect this propagator to a Wave via the `@` operator.
+        Connect this propagator to a Wave via `@`.
 
-        This operation determines the common dtype, broadcasts the constant
-        to match the Wave shape, and constructs the output Wave.
-
-        Parameters
-        ----------
-        wave : Wave
-            Input Wave node. Its (batch_size, event_shape, dtype) determine
-            how `const` will be broadcast and cast.
-
-        Returns
-        -------
-        Wave
-            Output Wave produced by this propagator.
+        Responsibilities:
+            - register graph connectivity
+            - synchronize dtype with wave/const
+            - broadcast const to (B, *event_shape) so that block slicing works
+            - set self.batch_size for scheduling (Factor default is 1)
+            - create output Wave
         """
-        # --- dtype negotiation ---
-        self.dtype = get_lower_precision_dtype(wave.dtype, self.const_dtype)
-        self.const = np().asarray(self.const, dtype=self.dtype)
-        self.const_dtype = self.const.dtype
-
-        # --- broadcast constant to expected shape ---
-        expected_shape = (wave.batch_size, *wave.event_shape)
-        try:
-            self.const = np().broadcast_to(self.const, expected_shape)
-        except ValueError:
-            raise ValueError(
-                f"MultiplyConstPropagator: constant shape {self.const.shape} "
-                f"is not broadcastable to wave shape {expected_shape}"
-            )
-
-        self._rebuild_cached_fields()
-
-        # Ensure epsilon lives on the same backend and dtype
-        self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
-
-        # --- connect graph structure ---
+        # --- connect ---
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
 
+        # --- metadata ---
+        self.event_shape = wave.event_shape
+        self.batch_size = wave.batch_size  # IMPORTANT: enable scheduling logic in Graph/Propagator
+
+        # --- dtype negotiation ---
+        self.dtype = get_lower_precision_dtype(wave.dtype, self.const_dtype)
+
+        self.const = np().asarray(self.const, dtype=self.dtype)
+        self.const_dtype = self.const.dtype
+
+        # --- broadcast const to full batched shape ---
+        expected_shape = (wave.batch_size, *wave.event_shape)
+        try:
+            self.const = np().broadcast_to(self.const, expected_shape)
+        except ValueError as e:
+            raise ValueError(
+                f"MultiplyConstPropagator: const shape {self.const.shape} "
+                f"is not broadcastable to expected shape {expected_shape}."
+            ) from e
+
+        # rebuild cached fields on the (possibly new) backend/dtype
+        self._rebuild_cached_fields()
+
+        # ensure eps is compatible with backend and real dtype
+        self._eps = move_array_to_current_backend(self._eps, dtype=get_real_dtype(self.const_dtype))
+
+        # --- create output wave ---
         out_wave = Wave(
             event_shape=wave.event_shape,
             batch_size=wave.batch_size,
@@ -333,14 +325,17 @@ class MultiplyConstPropagator(Propagator):
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
+
         return self.output
 
 
-
     def __repr__(self) -> str:
+        gen = self._generation if self._generation is not None else "-"
         mode = self.precision_mode or "unset"
-        shape_str = (
-            f"scalar" if np().isscalar(self.const) or self.const.shape == ()
-            else f"shape={self.const.shape}"
+        return (
+            f"MultiplyConstProp("
+            f"gen={gen}, "
+            f"mode={mode}, "
+            f"batch={self.batch_size}, "
+            f")"
         )
-        return f"MultiplyConst(mode={mode}, {shape_str})"
