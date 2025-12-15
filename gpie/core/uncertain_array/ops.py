@@ -80,8 +80,6 @@ def fork(self, batch_size: int) -> "UncertainArray":
 
     return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
 
-
-
     
 def product_reduce_over_batch(self) -> "UncertainArray":
     """

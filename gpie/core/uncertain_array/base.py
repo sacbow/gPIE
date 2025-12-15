@@ -197,7 +197,7 @@ class UncertainArray:
         real_dtype = get_real_dtype(self.dtype)
         # ----- Case 1: scalar-like value ----
         if self.is_scalar(value):
-            if value <= 0:
+            if value < 0:
                 raise ValueError("Precision must be positive.")
 
             # broadcastable scalar precision
