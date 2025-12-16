@@ -33,22 +33,27 @@ def coded_diffraction_model(var, masks, dtype=np.complex64):
     # Prior object (single sample, batch_size=1)
     obj = ~GaussianPrior(event_shape=(H, W), label="obj", dtype=dtype)
 
-    # Replicate across batch dimension
+    # Replicate across batch dimension (ForkPropagator)
     obj_batch = replicate(obj, batch_size=B)
 
-    # Apply masks (batched elementwise multiplication)
+    # Apply masks (MultiplyConstPropagator)
     masked = masks * obj_batch
 
-    # FFT
+    # FFT (FFT2DPropagator)
     Y = fft2(masked)
 
-    # Amplitude measurement (batched)
+    # Amplitude measurement
     AmplitudeMeasurement(var=var, damping=0.3) << Y
     return
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_coded_diffraction_model_reconstruction(xp):
+@pytest.mark.parametrize("schedule", ["parallel", "sequential"])
+def test_coded_diffraction_model_reconstruction(xp, schedule):
+    """
+    Verify that coded diffraction pattern reconstruction converges
+    for both parallel and sequential schedules.
+    """
     backend.set_backend(xp)
     rng = get_rng(seed=123)
 
@@ -57,21 +62,21 @@ def test_coded_diffraction_model_reconstruction(xp):
     dtype = xp.complex64
     noise = 1e-4
 
-    # ground-truth object
+    # Ground-truth object (batch_size=1)
     true_obj = random_normal_array((1, *shape), dtype=dtype, rng=rng)
 
-    # batched random masks
+    # Batched random masks
     masks = random_normal_array((n_measurements, *shape), dtype=dtype, rng=rng)
 
-    # Build graph with @model
+    # Build graph
     g = coded_diffraction_model(var=noise, masks=masks, dtype=dtype)
     g.set_init_rng(get_rng(seed=4))
 
-    # Inject known sample
+    # Inject known sample and generate observations
     g.get_wave("obj").set_sample(true_obj)
     g.generate_sample(rng=get_rng(seed=2), update_observed=True)
 
-    # Inference with monitoring
+    # Track reconstruction error
     history = []
 
     def monitor(graph, t):
@@ -79,14 +84,20 @@ def test_coded_diffraction_model_reconstruction(xp):
         err = pmse(x, true_obj)
         history.append(err)
 
-    g.run(n_iter=100, callback=monitor)
+    # Run inference
+    g.run(
+        n_iter=100,
+        schedule=schedule,
+        callback=monitor,
+    )
 
-    # Check convergence
-    assert history[-1] < 1e-3
+    # Convergence check
+    assert history[-1] < 1e-3, (
+        f"CDP reconstruction did not converge under schedule='{schedule}': "
+        f"final PMSE={history[-1]:.2e}"
+    )
 
+    # Final estimate sanity check
     est = g.get_wave("obj").compute_belief().data
     assert est.shape == (1, *shape)
     assert isinstance(est, xp.ndarray)
-
-
-
