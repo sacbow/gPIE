@@ -60,7 +60,7 @@ class AmplitudeMeasurement(Measurement):
         self._sample = (abs_x + noise).astype(self.observed_dtype)
 
 
-    def compute_belief(self, incoming: UA, observed: Optional[UA] = None) -> UA:
+    def compute_belief(self, incoming: UA, observed: Optional[UA] = None, block = None) -> UA:
         """
         Compute approximate posterior using Laplace approximation.
         If `observed` is provided, the computation is done using
@@ -87,10 +87,22 @@ class AmplitudeMeasurement(Measurement):
         v_hat = np().maximum(v_hat, eps)
 
         posterior = UA(z_hat, dtype=self.input_dtype, precision=np().reciprocal(v_hat))
-        self.belief = posterior
 
         if self.precision_mode_enum == PrecisionMode.SCALAR:
-            return posterior.as_scalar_precision()
+            posterior = posterior.as_scalar_precision()
+        
+        if block is None:
+            self.belief = posterior
+        else:
+            if self.belief is None:
+                self.belief = UA.zeros(
+                event_shape=self.input.event_shape,
+                batch_size=self.batch_size,
+                dtype=self.input.dtype,
+                precision=1.0,
+                scalar_precision=(self.precision_mode_enum == PrecisionMode.SCALAR),
+            )
+            self.belief.insert_block(block, posterior)
 
         return posterior
 
@@ -102,7 +114,7 @@ class AmplitudeMeasurement(Measurement):
         observed_blk = self.observed.extract_block(block)
 
         # --- compute block belief ---
-        belief_blk = self.compute_belief(incoming_blk, observed=observed_blk)
+        belief_blk = self.compute_belief(incoming_blk, observed=observed_blk, block = block)
 
         # --- raw message ---
         full_msg_blk = belief_blk / incoming_blk
