@@ -47,18 +47,49 @@ class AddConstPropagator(Propagator):
         if mode is not None:
             self._set_precision_mode(mode)
 
-    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block=None) -> UA:
         x = inputs["input"]
-        target_dtype = np().result_type(x.dtype, self.const_dtype)
-        if x.dtype != target_dtype:
-            x = x.astype(target_dtype)
 
-        const = self.const.astype(target_dtype) if self.const_dtype != target_dtype else self.const
-        return UA(x.data + const, dtype=target_dtype, precision=x.precision(raw=True))
+        # Select block
+        if block is not None:
+            x_blk = x.extract_block(block)
+            const = self.const[block]
+        else:
+            x_blk = x
+            const = self.const
 
-    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
-        const = self.const.astype(output_msg.dtype) if output_msg.dtype != self.const_dtype else self.const
-        return UA(output_msg.data - const, dtype=output_msg.dtype, precision=output_msg.precision(raw=True))
+        # Promote dtype if needed
+        target_dtype = np().result_type(x_blk.dtype, const.dtype)
+        if x_blk.dtype != target_dtype:
+            x_blk = x_blk.astype(target_dtype)
+        if const.dtype != target_dtype:
+            const = const.astype(target_dtype)
+
+        return UA(
+            array=x_blk.data + const,
+            dtype=target_dtype,
+            precision=x_blk.precision(raw=True),
+        )
+
+
+    def _compute_backward(self, output_msg: UA, exclude: str, block=None) -> UA:
+        # Select block
+        if block is not None:
+            out_blk = output_msg.extract_block(block)
+            const = self.const[block]
+        else:
+            out_blk = output_msg
+            const = self.const
+
+        if const.dtype != out_blk.dtype:
+            const = const.astype(out_blk.dtype)
+
+        return UA(
+            array=out_blk.data - const,
+            dtype=out_blk.dtype,
+            precision=out_blk.precision(raw=True),
+        )
+
 
     def get_sample_for_output(self, rng=None):
         x_sample = self.inputs["input"].get_sample()

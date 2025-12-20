@@ -115,3 +115,61 @@ def test_add_const_repr(xp):
     rep = repr(prop)
     assert "AddConst" in rep
     assert "mode=" in rep
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_add_const_blockwise_forward_backward(xp):
+    backend.set_backend(xp)
+    rng = get_rng(seed=0)
+
+    B, H, W = 4, 3, 3
+    block = slice(1, 3)
+
+    # Create wave and propagator
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.float32)
+    output = AddConstPropagator(const=2.0) @ wave
+    prop = output.parent
+
+    # Input UA
+    ua_in = UA.random(
+        (H, W),
+        batch_size=B,
+        dtype=xp.float32,
+        rng=rng,
+        scalar_precision=True,
+    )
+
+    # -------------------------------
+    # Forward: full vs block-wise
+    # -------------------------------
+    ua_full = prop._compute_forward({"input": ua_in})
+    ua_blk = prop._compute_forward({"input": ua_in}, block=block)
+
+    # Block output must match sliced full output
+    assert ua_blk.batch_size == block.stop - block.start
+    assert xp.allclose(
+        ua_blk.data,
+        ua_full.data[block],
+    )
+
+    # Precision must be preserved
+    assert xp.allclose(
+        ua_blk.precision(raw=True),
+        ua_full.precision(raw=True)[block],
+    )
+
+    # -------------------------------
+    # Backward: full vs block-wise
+    # -------------------------------
+    ua_back_full = prop._compute_backward(ua_full, exclude="input")
+    ua_back_blk = prop._compute_backward(ua_full, exclude="input", block=block)
+
+    assert ua_back_blk.batch_size == block.stop - block.start
+    assert xp.allclose(
+        ua_back_blk.data,
+        ua_back_full.data[block],
+    )
+
+    assert xp.allclose(
+        ua_back_blk.precision(raw=True),
+        ua_back_full.precision(raw=True)[block],
+    )
