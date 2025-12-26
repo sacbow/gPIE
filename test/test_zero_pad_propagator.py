@@ -126,3 +126,110 @@ def test_wave_zero_pad_get_sample(xp):
     # 中央部分が元の sample に一致する
     assert xp.allclose(padded[:, 1:, 0:2], sample)
 
+@pytest.mark.parametrize("xp", backend_libs)
+def test_zero_pad_blockwise_forward_backward(xp):
+    backend.set_backend(xp)
+
+    B = 4
+    H, W = 2, 3
+    block = slice(1, 3)
+
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    pad_width = ((1, 1), (2, 0))
+    prop = ZeroPadPropagator(pad_width)
+    _ = prop @ wave
+
+    # Input UA
+    ua = UA.zeros((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    for b in range(B):
+        ua.data[b] = b + 1  # make batch elements distinguishable
+
+    # -------------------------
+    # Forward: full vs block
+    # -------------------------
+    out_full = prop._compute_forward({"input": ua})
+    out_blk = prop._compute_forward({"input": ua}, block=block)
+
+    assert out_blk.batch_size == block.stop - block.start
+    assert xp.allclose(
+        out_blk.data,
+        out_full.data[block],
+    )
+
+    # -------------------------
+    # Backward: full vs block
+    # -------------------------
+    back_full = prop._compute_backward(out_full, exclude="input")
+    back_blk = prop._compute_backward(out_full, exclude="input", block=block)
+
+    assert back_blk.batch_size == block.stop - block.start
+    assert xp.allclose(
+        back_blk.data,
+        back_full.data[block],
+    )
+
+import importlib.util
+import pytest
+import numpy as np
+
+import gpie
+from gpie import model, fft2, mse, Graph
+from gpie import SparsePrior, GaussianMeasurement
+from gpie.core.linalg_utils import random_binary_mask
+from gpie.core.rng_utils import get_rng
+
+# Optional CuPy support
+cupy_spec = importlib.util.find_spec("cupy")
+has_cupy = cupy_spec is not None
+if has_cupy:
+    import cupy as cp
+
+backend_libs = [np]
+if has_cupy:
+    backend_libs.append(cp)
+
+
+def build_fft_cs_graph(
+    *,
+    xp,
+    event_shape,
+    batch_size,
+    rho,
+    var,
+    mask,
+    seed_init=11,
+    seed_sample=123,
+):
+    """
+    Build and initialize an FFT-based compressive sensing graph
+    using the @model decorator.
+    """
+
+    @model
+    def fft_cs_model(rho, shape, var, batch_size):
+        x = ~SparsePrior(
+            rho=rho,
+            event_shape=shape,
+            batch_size=batch_size,
+            label="x",
+            dtype=xp.complex64,
+        )
+        GaussianMeasurement(var=var, with_mask=True) << fft2(x)
+
+    g = fft_cs_model(
+        rho=rho,
+        shape=event_shape,
+        var=var,
+        batch_size=batch_size,
+    )
+
+    # Initialization & sampling
+    g.set_init_rng(get_rng(seed=seed_init))
+    g.generate_sample(
+        rng=get_rng(seed=seed_sample),
+        update_observed=True,
+        mask=mask,
+    )
+
+    return g
+

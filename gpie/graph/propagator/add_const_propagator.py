@@ -114,7 +114,7 @@ class AddConstPropagator(Propagator):
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
-
+        self.batch_size = wave.batch_size
         out_wave = Wave(event_shape=wave.event_shape, batch_size=wave.batch_size, dtype=self.dtype)
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)

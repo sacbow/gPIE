@@ -16,43 +16,97 @@ else:
     backend_libs = [np]
 
 
+# ------------------------------------------------------------
+# Model definition
+# ------------------------------------------------------------
+
 @model
-def random_structured_cdi(masks, noise):
-    obj = ~GaussianPrior(event_shape=(32,32), label = "sample")
-    pad_width = ((16,16),(16,16))
+def structured_random_cdi(
+    masks,
+    noise,
+    *,
+    batch_size: int,
+    dtype=np.complex64,
+):
+    """
+    Structured CDI model with explicit batch_size and zero-padding.
+    """
+    obj = ~GaussianPrior(
+        event_shape=(32, 32),
+        batch_size=batch_size,
+        label="sample",
+        dtype=dtype,
+    )
+
+    pad_width = ((16, 16), (16, 16))
     x = obj.zero_pad(pad_width)
+
     for mask in masks:
         x = fft2(mask * x)
-    AmplitudeMeasurement(var = noise, damping = 0.3) << x
 
+    AmplitudeMeasurement(var=noise, damping = 0.3) << x
+    return
+
+
+# ------------------------------------------------------------
+# Test utility
+# ------------------------------------------------------------
+
+def build_structured_cdi_graph(
+    xp,
+    batch_size,
+    n_layers=2,
+    seed=0,
+):
+    backend.set_backend(xp)
+    rng = get_rng(seed)
+
+    masks = [
+        random_phase_mask((batch_size, 64, 64), dtype=xp.complex64, rng=rng)
+        for _ in range(n_layers)
+    ]
+
+    g = structured_random_cdi(
+        masks=masks,
+        noise=1e-4,
+        batch_size=batch_size,
+        dtype=xp.complex64,
+    )
+
+    g.set_init_rng(get_rng(seed + 1))
+    g.generate_sample(rng=get_rng(seed + 2), update_observed=True)
+    return g
+
+
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_structured_random_model_reconstruction(xp):
-    """Test structured random model reconstruction with numpy/cupy and dtype precision control."""
-    backend.set_backend(xp)
-    rng = get_rng(seed=42)
-
-    # Generate random phase masks
-    n_layers = 2
-    phase_masks = [random_phase_mask((64,64), dtype=xp.complex64, rng=rng) for _ in range(n_layers)]
-
-    g = random_structured_cdi(masks = phase_masks, noise = 1e-4)
+@pytest.mark.parametrize("schedule", ["parallel", "sequential"])
+def test_structured_random_cdi_parallel_sequential(xp, schedule):
+    """
+    Sanity check: structured CDI with zero_pad converges under
+    both parallel and sequential scheduling.
+    """
+    g = build_structured_cdi_graph(
+        xp=xp,
+        batch_size=2,
+        seed=99,
+    )
 
     sample_wave = g.get_wave("sample")
-
-    g.set_init_rng(get_rng(seed=1))
-    g.generate_sample(rng=get_rng(seed=2), update_observed=True)
     true_sample = sample_wave.get_sample()
 
-    def monitor(graph, t):
-        est = graph.get_wave("sample").compute_belief().data
-        err = pmse(est, true_sample)
-        if t % 20 == 0:
-            print(f"[t={t}] PMSE = {err:.5e}")
-
-    g.run(n_iter=200, callback=monitor, verbose=False)
+    g.run(
+        n_iter=200,
+        schedule=schedule,
+        verbose=False,
+    )
 
     recon = sample_wave.compute_belief().data
-    final_err = pmse(recon, true_sample)
-    assert final_err < 1e-3
+    err = pmse(recon[0], true_sample[0])
+
+    assert err < 1e-3
+    assert recon.shape == true_sample.shape
     assert recon.dtype == xp.complex64

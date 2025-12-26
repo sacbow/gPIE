@@ -40,6 +40,7 @@ class ZeroPadPropagator(Propagator):
         )
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
+        self.batch_size = wave.batch_size
         self.output = out_wave
         return out_wave
 
@@ -55,23 +56,36 @@ class ZeroPadPropagator(Propagator):
     def set_precision_mode_backward(self):
         return
 
-    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block=None) -> UA:
         x_msg = inputs["input"]
+
+        # Apply block slicing first if needed
+        if block is not None:
+            x_msg = x_msg.extract_block(block)
         return x_msg.zero_pad(self.pad_width)
 
-    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
+
+    def _compute_backward(self, output_msg: UA, exclude: str, block=None) -> UA:
         """
         Crop the padded UncertainArray back to the input shape.
+        Returns a block-sized UA if block is provided.
         """
+        # Apply block slicing first if needed
+        if block is not None:
+            output_msg = output_msg.extract_block(block)
+
         input_shape = self.inputs["input"].event_shape
 
-        # build slicing indices according to pad_width
-        idx = tuple(slice(l, l + dim) for (l, _), dim in zip(self.pad_width, input_shape))
+        # Build slicing indices for event dimensions
+        idx = tuple(
+            slice(l, l + dim) for (l, _), dim in zip(self.pad_width, input_shape)
+        )
 
         cropped_data = output_msg.data[(slice(None),) + idx]
         cropped_prec = output_msg.precision(raw=False)[(slice(None),) + idx]
 
         return UA(cropped_data, dtype=output_msg.dtype, precision=cropped_prec)
+
 
     
     def get_sample_for_output(self, rng=None):
