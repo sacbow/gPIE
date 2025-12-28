@@ -95,7 +95,7 @@ def test_compute_message_and_shapes(xp):
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_compute_belief_shapes_and_type(xp):
-    """compute_belief(incoming) should return a UA with correct batch/event shapes and dtype."""
+    """compute_belief(incoming) should return a UncertainArray with correct batch/event shapes and dtype."""
     backend.set_backend(xp)
     wave = Wave(event_shape=(2, 2), dtype=xp.complex64)
     m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar") << wave
@@ -379,3 +379,153 @@ def test_block_damping_applied(xp):
 
     assert np.allclose(msg_blk.data, expected, atol=1e-6)
 
+@pytest.mark.parametrize("xp", backend_libs)
+def test_amplitude_compute_belief_block_equals_full(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 4, 4
+
+    meas = AmplitudeMeasurement(var=1e-4, damping=0.0)
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    meas.add_input("input", wave)
+    meas.batch_size = B
+
+    incoming = UncertainArray.random((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    observed = UncertainArray.random((H, W), batch_size=B, dtype=xp.float32, precision=1.0)
+
+    # Full
+    full = meas.compute_belief(incoming, observed=observed, block=None)
+
+    # Block-wise
+    re_data = xp.zeros_like(full.data)
+    re_prec = xp.zeros_like(full.precision(raw=False))
+
+    for b in range(B):
+        blk = slice(b, b + 1)
+        part = meas.compute_belief(
+            incoming.extract_block(blk),
+            observed=observed.extract_block(blk),
+            block=blk,
+        )
+        re_data[b] = part.data[0]
+        re_prec[b] = part.precision(raw=False)[0]
+
+    assert xp.allclose(re_data, full.data)
+    assert xp.allclose(re_prec, full.precision(raw=False))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_amplitude_compute_message_blockwise_equals_full(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 4, 4
+
+    meas = AmplitudeMeasurement(var=1e-4, damping=0.0)
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    meas.add_input("input", wave)
+    meas.batch_size = B
+    meas._set_precision_mode(PrecisionMode.SCALAR)
+    incoming = UncertainArray.random((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    meas.input_messages[wave] = incoming
+
+    meas.observed = UncertainArray.random((H, W), batch_size=B, dtype=xp.float32, precision=1.0)
+
+    full = meas._compute_message(incoming, block=None)
+
+    re_data = xp.zeros_like(full.data)
+    re_prec = xp.zeros_like(full.precision(raw=False))
+
+    for b in range(B):
+        blk = slice(b, b + 1)
+        part = meas._compute_message(incoming, block=blk)
+        re_data[b] = part.data[0]
+        re_prec[b] = part.precision(raw=False)[0]
+
+    assert xp.allclose(re_data, full.data)
+    assert xp.allclose(re_prec, full.precision(raw=False))
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_amplitude_backward_blockwise_equals_full(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 4, 4
+
+    meas = AmplitudeMeasurement(var=1e-4, damping=0.0)
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    meas.add_input("input", wave)
+    meas.input = wave
+    meas.batch_size = B
+    meas._set_precision_mode(PrecisionMode.SCALAR)
+    incoming = UncertainArray.random(
+        (H, W),
+        batch_size=B,
+        dtype=xp.complex64,
+        precision=1.0,
+    )
+    meas.input_messages[wave] = incoming
+    meas.observed = UncertainArray.random(
+        (H, W),
+        batch_size=B,
+        dtype=xp.float32,
+        precision=1.0,
+    )
+
+    # --------------------------
+    # Full backward
+    # --------------------------
+    meas.backward(block=None)
+    full_msg = wave.child_messages[meas]
+
+    # --------------------------
+    # Reset state
+    # --------------------------
+    meas.last_backward_messages.clear()
+    wave.child_messages.clear()
+    meas.input_messages[wave] = incoming
+
+    # --------------------------
+    # Block-wise backward
+    # --------------------------
+    for b in range(B):
+        meas.backward(block=slice(b, b + 1))
+
+    blk_msg = wave.child_messages[meas]
+
+    # --------------------------
+    # Assertions
+    # --------------------------
+    assert xp.allclose(full_msg.data, blk_msg.data)
+    assert xp.allclose(
+        full_msg.precision(raw=False),
+        blk_msg.precision(raw=False),
+    )
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_amplitude_batch_independence(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 4, 4
+
+    meas = AmplitudeMeasurement(var=1e-4, damping=0.0)
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    meas.add_input("input", wave)
+    meas.input = wave
+    meas.batch_size = B
+    meas._set_precision_mode(PrecisionMode.SCALAR)
+    incoming = UncertainArray.zeros((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    incoming.data[0] = 1.0
+    incoming.data[1] = 10.0
+    incoming.data[2] = 100.0
+
+    meas.input_messages[wave] = incoming
+    meas.observed = UncertainArray.zeros((H, W), batch_size=B, dtype=xp.float32, precision=1.0)
+    meas.observed.data[:] = 1.0
+
+    out = meas._compute_message(incoming)
+
+    assert not xp.allclose(out.data[0], out.data[1])
+    assert not xp.allclose(out.data[1], out.data[2])

@@ -184,13 +184,11 @@ class AmplitudeMeasurement(Measurement):
             )
 
         full_msg = self.last_backward_messages[self.input]
-
         # Insert block update into full cached message
         full_msg.insert_block(block, msg_blk)
 
         # Send the updated full message
         self.input.receive_message(self, full_msg)
-
         # -----------------------------------------------------------
         # Adaptive damping update only at the final block
         # -----------------------------------------------------------

@@ -419,3 +419,109 @@ def test_repr_contains_core_fields(xp):
 
     # should contain at least mode/batch/event_shape under the new repr style
     assert "batch" in r1
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_multiply_const_block_forward_matches_full(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 2, 2
+    const = xp.arange(B * H * W).reshape(B, H, W).astype(xp.complex64)
+
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    prop = MultiplyConstPropagator(const)
+    _ = prop @ wave
+
+    ua = UA.zeros((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    for b in range(B):
+        ua.data[b] = b + 1
+
+    full = prop._compute_forward({"input": ua})
+
+    block = slice(1, 3)
+    blk = prop._compute_forward({"input": ua}, block=block)
+    expected = full.extract_block(block)
+
+    assert xp.allclose(blk.data, expected.data)
+    assert xp.allclose(
+        blk.precision(raw=False),
+        expected.precision(raw=False),
+    )
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_multiply_const_block_backward_matches_full(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 2, 2
+    const = xp.ones((B, H, W), dtype=xp.complex64)
+
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    prop = MultiplyConstPropagator(const)
+    _ = prop @ wave
+
+    ua = UA.random((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    out = prop._compute_forward({"input": ua})
+    full_back = prop._compute_backward(out, exclude="input")
+
+    block = slice(0, 2)
+    blk_back = prop._compute_backward(out, exclude="input", block=block)
+    expected = full_back.extract_block(block)
+
+    assert xp.allclose(blk_back.data, expected.data)
+    assert xp.allclose(
+        blk_back.precision(raw=False),
+        expected.precision(raw=False),
+    )
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_multiply_const_blockwise_reassembly_equals_full(xp):
+    backend.set_backend(xp)
+
+    B = 4
+    H, W = 2, 2
+    const = xp.arange(B * H * W).reshape(B, H, W).astype(xp.complex64)
+
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    prop = MultiplyConstPropagator(const)
+    _ = prop @ wave
+
+    ua = UA.zeros((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    for b in range(B):
+        ua.data[b] = b + 1
+
+    full = prop._compute_forward({"input": ua})
+
+    re_data = xp.zeros_like(full.data)
+    re_prec = xp.zeros_like(full.precision(raw=False))
+
+    for b in range(B):
+        blk = slice(b, b + 1)
+        part = prop._compute_forward({"input": ua}, block=blk)
+        re_data[b] = part.data[0]
+        re_prec[b] = part.precision(raw=False)[0]
+
+    assert xp.allclose(re_data, full.data)
+    assert xp.allclose(re_prec, full.precision(raw=False))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_multiply_const_batch_independence(xp):
+    backend.set_backend(xp)
+
+    B = 3
+    H, W = 2, 2
+    const = xp.ones((B, H, W), dtype=xp.complex64)
+
+    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
+    prop = MultiplyConstPropagator(const)
+    _ = prop @ wave
+
+    ua = UA.zeros((H, W), batch_size=B, dtype=xp.complex64, precision=1.0)
+    ua.data[0] = 1.0
+    ua.data[1] = 10.0
+    ua.data[2] = 100.0
+
+    out = prop._compute_forward({"input": ua})
+
+    assert not xp.allclose(out.data[0], out.data[1])
+    assert not xp.allclose(out.data[1], out.data[2])

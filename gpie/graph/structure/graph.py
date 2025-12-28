@@ -379,7 +379,7 @@ class Graph:
                 iterator = range(n_iter)
         else:
             iterator = range(n_iter)
-
+        
         for t in iterator:
             for blk in blocks:
                 self.forward(block=blk)
