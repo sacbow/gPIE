@@ -163,7 +163,7 @@ class Propagator(Factor, ABC):
                 else:
                     msg_full = last
 
-                msg_full.insert_block(block, msg_block)
+            msg_full.insert_block(block, msg_block)
 
             # send message to input wave
             wave.receive_message(self, msg_full)

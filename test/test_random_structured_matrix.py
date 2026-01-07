@@ -34,7 +34,7 @@ def random_structured_cdi(
     """
     obj = ~GaussianPrior(
         event_shape=(32, 32),
-        batch_size=1,
+        batch_size=3,
         label="sample",
         dtype=dtype,
     )
@@ -57,7 +57,7 @@ def build_random_structured_cdi_graph(xp, seed=0, n_layers=2):
     rng = get_rng(seed)
 
     masks = [
-        random_phase_mask((64, 64), dtype=xp.complex64, rng=rng)
+        random_phase_mask((3, 64, 64), dtype=xp.complex64, rng=rng)
         for _ in range(n_layers)
     ]
 
@@ -79,7 +79,7 @@ def build_random_structured_cdi_graph(xp, seed=0, n_layers=2):
 # Tests
 # ------------------------------------------------------------
 @pytest.mark.parametrize("xp", backend_libs)
-@pytest.mark.parametrize("schedule", ["parallel"])
+@pytest.mark.parametrize("schedule", ["parallel", "sequential"])
 def test_random_structured_cdi_batch1_converges(xp, schedule):
     """
     Sanity check for structured random CDI with batch_size=1.
@@ -100,12 +100,11 @@ def test_random_structured_cdi_batch1_converges(xp, schedule):
     g.run(
         n_iter=200,
         schedule=schedule,
-        block_size=1,
         verbose=False,
     )
 
     recon = sample_wave.compute_belief().data
-    err = pmse(recon, true_sample)
+    err = (pmse(recon[0], true_sample[0]) + pmse(recon[1], true_sample[1]))/2
 
     assert err < 1e-3, f"PMSE too large: {err:.2e}"
     assert recon.shape == true_sample.shape

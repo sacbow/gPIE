@@ -70,13 +70,13 @@ def fork(self, batch_size: int) -> "UncertainArray":
         new_precision = np().broadcast_to(
                 raw_prec,
                 (batch_size,) + (1,) * len(self.event_shape)
-            )
+            ).copy()
     else:
         # e.g. shape (1,H,W) → (B,H,W)
         new_precision = np().broadcast_to(
                 raw_prec,
                 (batch_size,) + self.event_shape
-            )
+            ).copy()
 
     return UncertainArray(new_data, dtype=self.dtype, precision=new_precision)
 

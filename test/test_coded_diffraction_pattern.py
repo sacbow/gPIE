@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import importlib.util
 
-from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replicate
+from gpie import model, GaussianPrior, fft2, GaussianMeasurement, AmplitudeMeasurement, pmse, replicate
 from gpie.core import backend
 from gpie.core.rng_utils import get_rng
 from gpie.core.linalg_utils import random_normal_array
@@ -43,7 +43,7 @@ def coded_diffraction_model(var, masks, dtype=np.complex64):
     Y = fft2(masked)
 
     # Amplitude measurement
-    AmplitudeMeasurement(var=var, damping=0.3) << Y
+    AmplitudeMeasurement(var=var, damping = 0.3) << Y
     return
 
 
@@ -74,7 +74,7 @@ def test_coded_diffraction_model_reconstruction(xp, schedule):
 
     # Inject known sample and generate observations
     g.get_wave("obj").set_sample(true_obj)
-    g.generate_sample(rng=get_rng(seed=2), update_observed=True)
+    g.generate_sample(rng=get_rng(seed=5), update_observed=True)
 
     # Track reconstruction error
     history = []

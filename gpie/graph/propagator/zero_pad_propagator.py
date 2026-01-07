@@ -82,7 +82,7 @@ class ZeroPadPropagator(Propagator):
         )
 
         cropped_data = output_msg.data[(slice(None),) + idx]
-        cropped_prec = output_msg.precision(raw=False)[(slice(None),) + idx]
+        cropped_prec = output_msg.precision(raw=True)[(slice(None),) + idx]
 
         return UA(cropped_data, dtype=output_msg.dtype, precision=cropped_prec)
 

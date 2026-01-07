@@ -364,13 +364,20 @@ class Graph:
 
         B = self._full_batch_size
 
-        # Determine blocks for this run
+        # ------------------------------------------------------------
+        # Determine block schedule
+        # ------------------------------------------------------------
         if schedule == "parallel" or block_size is None or block_size >= B:
             blocks = [None]
         else:
             from ...core.blocks import BlockGenerator
-            blocks = list(BlockGenerator(B=B, block_size=block_size).iter_blocks())
+            blocks = list(
+                BlockGenerator(B=B, block_size=block_size).iter_blocks()
+            )
 
+        # ------------------------------------------------------------
+        # Iteration iterator (with optional progress bar)
+        # ------------------------------------------------------------
         if verbose:
             try:
                 from tqdm import tqdm
@@ -379,7 +386,18 @@ class Graph:
                 iterator = range(n_iter)
         else:
             iterator = range(n_iter)
-        
+
+        # ------------------------------------------------------------
+        # Warm-start: stabilize messages before sequential updates
+        # ------------------------------------------------------------
+        self.forward()
+        self.backward()
+        self.forward()
+        self.backward()
+
+        # ------------------------------------------------------------
+        # Main EP loop
+        # ------------------------------------------------------------
         for t in iterator:
             for blk in blocks:
                 self.forward(block=blk)
@@ -387,6 +405,7 @@ class Graph:
 
             if callback is not None:
                 callback(self, t)
+
 
 
     def generate_sample(self, rng=None, update_observed: bool = True, mask: Optional[np().ndarray] = None):
