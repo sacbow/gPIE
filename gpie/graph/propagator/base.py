@@ -88,6 +88,7 @@ class Propagator(Factor, ABC):
         """
         Compute and send a (possibly block-wise) message to the output wave.
         """
+
         # Ensure all inputs exist
         if not all(self.inputs.get(name) for name in self.input_names):
             raise RuntimeError("Inputs not fully connected.")
@@ -135,6 +136,7 @@ class Propagator(Factor, ABC):
         """
         Compute and send (possibly block-wise) messages to each input wave.
         """
+
         out_msg = self.output_message
         if out_msg is None:
             raise RuntimeError("Missing output message for backward.")

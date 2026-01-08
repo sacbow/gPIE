@@ -123,7 +123,7 @@ class GaussianPrior(Prior):
             - Later iterations: ignore block and incoming beliefs; send const_msg.
         """
         if self.output_message is None:
-            if self._init_rng is None:
+            if self._init_rng is None and self._manual_init_msg is None:
                 raise RuntimeError(
                     "Initial RNG not configured for Prior. "
                     "Call graph.set_init_rng(...) before run()."

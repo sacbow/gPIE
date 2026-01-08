@@ -143,7 +143,7 @@ def fft2_centered(self: UncertainArray) -> UncertainArray:
     transformed_data = fft_backend.fft2_centered(self.data)
 
     if self._scalar_precision:
-        new_precision = self.precision(raw=True)
+        new_precision = self.precision(raw=True).copy()
     else:
         new_precision = reduce_precision_to_scalar(self.precision(raw=True))
 
@@ -165,7 +165,7 @@ def ifft2_centered(self: UncertainArray) -> UncertainArray:
     transformed_data = fft_backend.ifft2_centered(self.data)
 
     if self._scalar_precision:
-        new_precision = self.precision(raw=True)
+        new_precision = self.precision(raw=True).copy()
     else:
         new_precision = reduce_precision_to_scalar(self.precision(raw=True))
 

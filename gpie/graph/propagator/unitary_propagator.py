@@ -188,22 +188,38 @@ class UnitaryPropagator(Propagator, ABC):
             - self.x_belief
             - self.y_belief
 
-        Block semantics:
-            - block=None: full batch
-            - block=slice: compute only the slice and merge with insert_block()
+        Design invariants:
+            - Full-batch (block=None): beliefs are replaced directly.
+            - Block-wise (block!=None): beliefs must already exist.
+            - No zero-fill initialization is allowed.
         """
         x_wave = self.inputs["input"]
         msg_x = self.input_messages[x_wave]
         msg_y = self.output_message
 
         if msg_x is None or msg_y is None:
-            raise RuntimeError("Both input and output messages are required to compute belief.")
+            raise RuntimeError(
+                "Both input and output messages are required to compute belief."
+            )
+
+        # ------------------------------------------------------------
+        # Enforce invariant: block update requires existing belief
+        # ------------------------------------------------------------
+        if block is not None:
+            if self.x_belief is None or self.y_belief is None:
+                raise RuntimeError(
+                    "Block-wise belief update requested before full-batch "
+                    "belief initialization."
+                )
 
         msg_x_blk = msg_x.extract_block(block)
         msg_y_blk = msg_y.extract_block(block)
 
         mode = self._precision_mode
 
+        # ------------------------------------------------------------
+        # Compute block belief
+        # ------------------------------------------------------------
         if mode == UnaryPropagatorPrecisionMode.SCALAR:
             x_blk = msg_x_blk * self._backward_UA(msg_y_blk)
             y_blk = self._forward_UA(x_blk)
@@ -219,38 +235,22 @@ class UnitaryPropagator(Propagator, ABC):
         else:
             raise ValueError(f"Unknown precision_mode: {mode}")
 
-        # Lazy init: belief buffers must match the mode-defined precision forms
-        if self.x_belief is None or self.y_belief is None:
-            if mode == UnaryPropagatorPrecisionMode.SCALAR:
-                scalar_x, scalar_y = True, True
-            elif mode == UnaryPropagatorPrecisionMode.SCALAR_TO_ARRAY:
-                scalar_x, scalar_y = True, False
-            elif mode == UnaryPropagatorPrecisionMode.ARRAY_TO_SCALAR:
-                scalar_x, scalar_y = False, True
-            else:
-                raise ValueError(f"Unknown precision_mode: {mode}")
+        # ------------------------------------------------------------
+        # Full-batch case: direct replacement
+        # ------------------------------------------------------------
+        if block is None:
+            self.x_belief = x_blk
+            self.y_belief = y_blk
+            return x_blk, y_blk
 
-            if self.x_belief is None:
-                self.x_belief = UA.zeros(
-                    event_shape=x_wave.event_shape,
-                    batch_size=x_wave.batch_size,
-                    dtype=self.dtype,
-                    precision=1.0,
-                    scalar_precision=scalar_x,
-                )
-            if self.y_belief is None:
-                self.y_belief = UA.zeros(
-                    event_shape=self.output.event_shape,
-                    batch_size=self.output.batch_size,
-                    dtype=self.dtype,
-                    precision=1.0,
-                    scalar_precision=scalar_y,
-                )
-
+        # ------------------------------------------------------------
+        # Block-wise merge
+        # ------------------------------------------------------------
         self.x_belief.insert_block(block, x_blk)
         self.y_belief.insert_block(block, y_blk)
 
         return x_blk, y_blk
+
 
     # ============================================================
     # EP message updates (shared)
@@ -268,6 +268,7 @@ class UnitaryPropagator(Propagator, ABC):
         Returns:
             msg_block (UA): message restricted to the given block
         """
+
         msg_x = inputs["input"]
         out_msg = self.output_message
         yb = self.y_belief

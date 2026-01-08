@@ -174,6 +174,7 @@ class AmplitudeMeasurement(Measurement):
         # Sequential (block-wise) mode
         # -----------------------------------------------------------
         # Initialize the full backward message cache if needed
+        
         if self.input not in self.last_backward_messages:
             self.last_backward_messages[self.input] = UA.zeros(
                 event_shape=self.input.event_shape,
