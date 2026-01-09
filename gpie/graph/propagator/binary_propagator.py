@@ -160,26 +160,3 @@ class BinaryPropagator(Propagator):
             return "array" if wave is self.inputs["a"] else "scalar"
 
         raise ValueError(f"Wave {wave} not recognized.")
-
-    def forward(self):
-        a_msg = self.input_messages[self.inputs["a"]]
-        b_msg = self.input_messages[self.inputs["b"]]
-        if a_msg is None or b_msg is None:
-            raise RuntimeError("Missing input messages for BinaryPropagator.")
-        output_msg = self._compute_forward({"a": a_msg, "b": b_msg})
-        self.output.receive_message(self, output_msg)
-
-    def backward(self):
-        if self.output_message is None:
-            raise RuntimeError("Missing output message for backward pass.")
-
-        for exclude in ("a", "b"):
-            wave = self.inputs[exclude]
-            msg = self._compute_backward(self.output_message, exclude=exclude)
-            wave.receive_message(self, msg)
-
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
-        raise NotImplementedError()
-
-    def _compute_backward(self, output: UA, exclude: str) -> UA:
-        raise NotImplementedError()

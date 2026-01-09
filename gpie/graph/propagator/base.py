@@ -110,12 +110,9 @@ class Propagator(Factor, ABC):
         else:
             # Merge into full outgoing message
             if self.last_forward_message is None:
-                msg_full = UA.zeros(
-                    event_shape=self.output.event_shape,
-                    batch_size=self.output.batch_size,
-                    dtype=self.output.dtype,
-                    precision=1.0,
-                    scalar_precision=(self.output.precision_mode_enum == PrecisionMode.SCALAR),
+                raise RuntimeError(
+                    "Block-wise forward called before full-batch initialization. "
+                    "Run a full forward() pass before sequential updates."
                 )
             else:
                 msg_full = self.last_forward_message
@@ -155,12 +152,9 @@ class Propagator(Factor, ABC):
                 # merge into full backward message buffer
                 last = self.last_backward_messages.get(wave)
                 if last is None:
-                    msg_full = UA.zeros(
-                        event_shape=wave.event_shape,
-                        batch_size=wave.batch_size,
-                        dtype=wave.dtype,
-                        precision=1.0,
-                        scalar_precision=(wave.precision_mode_enum == PrecisionMode.SCALAR),
+                    raise RuntimeError(
+                    "Block-wise backward called before full-batch initialization. "
+                    "Run a full backward() pass before sequential updates."
                     )
                 else:
                     msg_full = last

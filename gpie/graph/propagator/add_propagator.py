@@ -27,65 +27,61 @@ class AddPropagator(BinaryPropagator):
     """
 
 
-    def _compute_forward(self, inputs: dict[str, UA]) -> UA:
+    def _compute_forward(
+        self,
+        inputs: dict[str, UA],
+        block: slice | None = None
+    ) -> UA:
         """
-        Combine two input beliefs into a posterior for Z = A + B.
-
-        If precision mode is ARRAY_AND_ARRAY_TO_SCALAR, the resulting fused message
-        is projected into scalar precision using the current output message (if available).
-
-        Args:
-            inputs (dict): Contains "a" and "b" UncertainArray inputs.
-
-        Returns:
-            UncertainArray: Fused belief for z with updated mean and precision.
-
-        Raises:
-            RuntimeError: If any input message is missing.
+        Block-aware forward message for Z = A + B.
         """
+
         a = inputs.get("a")
         b = inputs.get("b")
 
         if a is None or b is None:
             raise RuntimeError("Missing input messages: a or b is None.")
 
-        a, b = a.astype(self.dtype), b.astype(self.dtype)
+        # ------------------------------------------------------------
+        # Extract block (or full batch if block is None)
+        # ------------------------------------------------------------
+        a_blk = a.extract_block(block).astype(self.dtype)
+        b_blk = b.extract_block(block).astype(self.dtype)
 
-        mu = a.data + b.data
-        prec = 1.0 / (1.0 / a.precision(raw=True) + 1.0 / b.precision(raw=True))
+        # ------------------------------------------------------------
+        # Gaussian fusion for addition
+        # ------------------------------------------------------------
+        mu = a_blk.data + b_blk.data
+        prec = 1.0 / (
+            1.0 / a_blk.precision(raw=True) +
+            1.0 / b_blk.precision(raw=True)
+        )
         msg = UA(mu, dtype=self.dtype, precision=prec)
 
+        # ------------------------------------------------------------
+        # Precision-mode specific projection
+        # ------------------------------------------------------------
         mode = self.precision_mode_enum
         if mode == BPM.ARRAY_AND_ARRAY_TO_SCALAR:
             if self.output_message is None:
-                return UA.random(
-                    event_shape=a.event_shape,
-                    batch_size=a.batch_size,
-                    dtype=self.dtype,
-                    precision=1.0,
-                    scalar_precision=True,
-                    rng=self._init_rng
-                )
-            proj = (msg * self.output_message.as_array_precision()).as_scalar_precision()
-            return proj / self.output_message
+                return msg.as_scalar_precision()
+
+            # Use full output_message but restrict to block
+            out_blk = self.output_message.extract_block(block)
+            proj = (msg * out_blk.as_array_precision()).as_scalar_precision()
+            return proj / out_blk
 
         return msg
 
 
-
-    def _compute_backward(self, output: UA, exclude: str) -> UA:
+    def _compute_backward(
+        self,
+        output: UA,
+        exclude: str,
+        block: slice | None = None
+    ) -> UA:
         """
-        Compute the residual message to one input by subtracting the other.
-
-        Args:
-            output: Current belief of z.
-            exclude: Which input to exclude when computing the backward message ("a" or "b").
-
-        Returns:
-            UncertainArray: The updated message to send to the excluded input.
-
-        Raises:
-            RuntimeError: If required inputs are not available.
+        Block-aware backward message for Z = A + B.
         """
 
         other_name = "b" if exclude == "a" else "a"
@@ -97,29 +93,49 @@ class AddPropagator(BinaryPropagator):
         if other_msg is None:
             raise RuntimeError(f"Missing message from input wave '{other_name}'.")
 
-        mu = output.data - other_msg.data
-        precision = 1.0 / (1.0 / output.precision(raw = True) + 1.0 / other_msg.precision(raw = True))
-        out_dtype = get_lower_precision_dtype(output.dtype, other_msg.dtype)
+        # ------------------------------------------------------------
+        # Extract block
+        # ------------------------------------------------------------
+        z_blk = output.extract_block(block)
+        other_blk = other_msg.extract_block(block)
+
+        # ------------------------------------------------------------
+        # Residual computation
+        # ------------------------------------------------------------
+        mu = z_blk.data - other_blk.data
+        precision = 1.0 / (
+            1.0 / z_blk.precision(raw=True) +
+            1.0 / other_blk.precision(raw=True)
+        )
+
+        out_dtype = get_lower_precision_dtype(z_blk.dtype, other_blk.dtype)
         msg = UA(mu, dtype=out_dtype, precision=precision)
 
+        # ------------------------------------------------------------
+        # Precision-mode specific projection
+        # ------------------------------------------------------------
         mode = self.precision_mode_enum
 
-        # Handle scalar projection if mixed precision
         if mode == BPM.SCALAR_AND_ARRAY_TO_ARRAY and exclude == "a":
             a_wave = self.inputs.get("a")
             a_msg = self.input_messages.get(a_wave)
             if a_msg is None:
                 raise RuntimeError("Missing input message from wave 'a'.")
-            return (a_msg.as_array_precision() * msg).as_scalar_precision() / a_msg
+
+            a_blk = a_msg.extract_block(block)
+            return (a_blk.as_array_precision() * msg).as_scalar_precision() / a_blk
 
         if mode == BPM.ARRAY_AND_SCALAR_TO_ARRAY and exclude == "b":
             b_wave = self.inputs.get("b")
             b_msg = self.input_messages.get(b_wave)
             if b_msg is None:
                 raise RuntimeError("Missing input message from wave 'b'.")
-            return (b_msg.as_array_precision() * msg).as_scalar_precision() / b_msg
+
+            b_blk = b_msg.extract_block(block)
+            return (b_blk.as_array_precision() * msg).as_scalar_precision() / b_blk
 
         return msg
+
 
     def get_sample_for_output(self, rng):
         a = self.inputs["a"].get_sample()

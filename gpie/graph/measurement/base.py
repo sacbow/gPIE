@@ -236,25 +236,19 @@ class Measurement(Factor, ABC):
 
         # block=None: standard EP behavior
         if block is None:
+            self.last_backward_messages[self.input] = msg_blk
             self.input.receive_message(self, msg_blk)
             return
-
-        if self.input not in self.last_backward_messages:
-            # poputate last_backward_message (initialization method here have no consequence in inference.)
-            self.last_backward_messages[self.input] = UncertainArray.zeros(
-                event_shape=self.input.event_shape,
-                batch_size=self.batch_size,
-                dtype=self.input.dtype,
-                precision=1.0,
-                scalar_precision=(self.precision_mode_enum == PrecisionMode.SCALAR),
-            )
-
-        # update cache
-        full_msg = self.last_backward_messages[self.input]
-        full_msg.insert_block(block, msg_blk)
-
-        self.input.receive_message(self, full_msg)
-
+        else:
+            if self.input not in self.last_backward_messages:
+                raise RuntimeError(
+                    "Block-wise forward called before full-batch initialization. "
+                    "Run a full forward() pass before sequential updates."
+                    )
+            # update cache
+            full_msg = self.last_backward_messages[self.input]
+            full_msg.insert_block(block, msg_blk)
+            self.input.receive_message(self, full_msg)
 
 
     def _check_observed(self) -> None:

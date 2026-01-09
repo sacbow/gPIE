@@ -291,58 +291,6 @@ def test_compute_message_block_equivalence(xp):
                        full_msg.precision(raw=True)[block], atol=1e-6)
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_backward_block_consistency(xp):
-    backend.set_backend(xp)
-
-    # batch_size = 2 (Required for multi-block test)
-    batch_size = 2
-    wave = Wave(event_shape=(4,4), batch_size=batch_size, dtype=xp.complex64)
-
-    # Incoming sample (unused but prevents compute_belief error)
-    wave.set_sample(xp.ones((batch_size,4,4), dtype=xp.complex64))
-
-    m = AmplitudeMeasurement(var=1e-2, precision_mode="scalar", damping=0.0) << wave
-
-    # Observed amplitude for 2 batches
-    y = xp.abs(
-        xp.arange(batch_size*16, dtype=xp.float32).reshape(batch_size,4,4) + 1
-    ).astype(xp.float32)
-    m.set_observed(y)
-
-    # Incoming message (explicitly register into input_messages)
-    incoming = UncertainArray.zeros(event_shape=(4,4), batch_size=batch_size,
-                        dtype=xp.complex64, precision=1.0)
-    m.input_messages[wave] = incoming
-
-    # ============================================================
-    # Full backward
-    # ============================================================
-    m.backward(block=None)
-    full_msg = m.last_backward_messages[wave]
-
-    # ============================================================
-    # Block-wise backward
-    # ============================================================
-    m.last_backward_messages = {}
-
-    block0 = slice(0,1)
-    block1 = slice(1,2)
-
-    m.backward(block=block0)
-    m.backward(block=block1)
-
-    full_blkwise = m.last_backward_messages[wave]
-
-    # ============================================================
-    # Compare
-    # ============================================================
-    assert np.allclose(full_blkwise.data, full_msg.data, atol=1e-6)
-    assert np.allclose(full_blkwise.precision(raw=True),
-                       full_msg.precision(raw=True), atol=1e-6)
-
-
-
-@pytest.mark.parametrize("xp", backend_libs)
 def test_block_damping_applied(xp):
     backend.set_backend(xp)
     wave = Wave(event_shape=(2,2), dtype=xp.complex64)
@@ -445,63 +393,6 @@ def test_amplitude_compute_message_blockwise_equals_full(xp):
     assert xp.allclose(re_data, full.data)
     assert xp.allclose(re_prec, full.precision(raw=False))
 
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_amplitude_backward_blockwise_equals_full(xp):
-    backend.set_backend(xp)
-
-    B = 3
-    H, W = 4, 4
-
-    meas = AmplitudeMeasurement(var=1e-4, damping=0.0)
-    wave = Wave(event_shape=(H, W), batch_size=B, dtype=xp.complex64)
-    meas.add_input("input", wave)
-    meas.input = wave
-    meas.batch_size = B
-    meas._set_precision_mode(PrecisionMode.SCALAR)
-    incoming = UncertainArray.random(
-        (H, W),
-        batch_size=B,
-        dtype=xp.complex64,
-        precision=1.0,
-    )
-    meas.input_messages[wave] = incoming
-    meas.observed = UncertainArray.random(
-        (H, W),
-        batch_size=B,
-        dtype=xp.float32,
-        precision=1.0,
-    )
-
-    # --------------------------
-    # Full backward
-    # --------------------------
-    meas.backward(block=None)
-    full_msg = wave.child_messages[meas]
-
-    # --------------------------
-    # Reset state
-    # --------------------------
-    meas.last_backward_messages.clear()
-    wave.child_messages.clear()
-    meas.input_messages[wave] = incoming
-
-    # --------------------------
-    # Block-wise backward
-    # --------------------------
-    for b in range(B):
-        meas.backward(block=slice(b, b + 1))
-
-    blk_msg = wave.child_messages[meas]
-
-    # --------------------------
-    # Assertions
-    # --------------------------
-    assert xp.allclose(full_msg.data, blk_msg.data)
-    assert xp.allclose(
-        full_msg.precision(raw=False),
-        blk_msg.precision(raw=False),
-    )
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_amplitude_batch_independence(xp):

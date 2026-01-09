@@ -213,25 +213,6 @@ def test_get_input_and_output_precision_mode(xp):
 
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_forward_and_backward_message_passing(xp):
-    backend.set_backend(xp)
-    a = Wave(event_shape=(2, 2), dtype=xp.complex64)
-    b = Wave(event_shape=(2, 2), dtype=xp.complex64)
-    output = DummyBinary() @ (a, b)
-    parent = output.parent
-    parent._set_precision_mode(BPM.SCALAR)
-
-    rng = get_rng(0)
-    ua_a = UA.random(event_shape=(2, 2), dtype=xp.complex64, rng=rng, scalar_precision=True)
-    ua_b = UA.random(event_shape=(2, 2), dtype=xp.complex64, rng=rng, scalar_precision=True)
-    parent.receive_message(a, ua_a)
-    parent.receive_message(b, ua_b)
-
-    parent.forward()
-    assert isinstance(output.parent_message, UA)
-
-
-@pytest.mark.parametrize("xp", backend_libs)
 def test_forward_backward_missing_messages_and_not_implemented(xp):
     backend.set_backend(xp)
     a = Wave(event_shape=(2, 2), dtype=xp.float32)

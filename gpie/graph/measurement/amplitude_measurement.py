@@ -159,7 +159,6 @@ class AmplitudeMeasurement(Measurement):
         if block is None:
             # Cache full backward message
             self.last_backward_messages[self.input] = msg_blk
-
             # Send to wave
             self.input.receive_message(self, msg_blk)
 
@@ -176,13 +175,10 @@ class AmplitudeMeasurement(Measurement):
         # Initialize the full backward message cache if needed
         
         if self.input not in self.last_backward_messages:
-            self.last_backward_messages[self.input] = UA.zeros(
-                event_shape=self.input.event_shape,
-                batch_size=self.batch_size,
-                dtype=self.input.dtype,
-                precision=1.0,
-                scalar_precision=(self.precision_mode_enum == PrecisionMode.SCALAR),
-            )
+            raise RuntimeError(
+                "Block-wise forward called before full-batch initialization. "
+                "Run a full forward() pass before sequential updates."
+                )
 
         full_msg = self.last_backward_messages[self.input]
         # Insert block update into full cached message
