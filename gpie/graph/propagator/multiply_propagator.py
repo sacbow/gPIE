@@ -35,7 +35,7 @@ class MultiplyPropagator(BinaryPropagator):
     """
 
 
-    def __init__(self, precision_mode: Optional[BPM] = None, num_inner_loop: int = 2):
+    def __init__(self, precision_mode: Optional[BPM] = None, num_inner_loop: int = 1):
         super().__init__(precision_mode=precision_mode)
         # Beliefs for input and output variables
         self.input_beliefs = {"a": None, "b": None}
@@ -90,150 +90,292 @@ class MultiplyPropagator(BinaryPropagator):
                 self._set_precision_mode(BPM.ARRAY)
 
 
-    def compute_variational_inference(self) -> None:
+    def compute_variational_inference(self, block: slice | None = None) -> None:
         """
-        Perform inner-loop VMP updates for Q_x, Q_y and compute Q_z.
-        Also stores raw backward messages to inputs to avoid UA division shrinking.
+        Perform (block-aware) inner-loop VMP updates for MultiplyPropagator.
+
+        Contract:
+            - Updates ONLY the specified block for:
+                * self.input_beliefs["a"], self.input_beliefs["b"]
+                * self.output_belief
+                * self._last_backward_msgs ("a" and "b": raw VMP messages)
+            - For block-wise execution (block is not None), full-batch initialization MUST
+            have already populated:
+                * self.output_message
+                * self.output_belief
+                * self.input_beliefs["a"], self.input_beliefs["b"]
+                * self._last_backward_msgs["a"], self._last_backward_msgs["b"]
+            - This method must not silently zero-initialize any of the above buffers in
+            block-wise mode; it raises RuntimeError instead.
         """
-        qx = self.input_beliefs["a"]
-        qy = self.input_beliefs["b"]
-        z_msg = self.output_message
 
-        z_m, gamma_z = z_msg.data, z_msg.precision(raw=False)
+        # ------------------------------------------------------------
+        # Preconditions (common)
+        # ------------------------------------------------------------
+        if self.output_message is None:
+            raise RuntimeError("compute_variational_inference(): output_message is None.")
 
-        # Keep last messages for backward sending
-        last_msg_to_x = None
-        last_msg_to_y = None
+        if self.input_beliefs.get("a") is None or self.input_beliefs.get("b") is None:
+            raise RuntimeError("compute_variational_inference(): input_beliefs not initialized.")
 
+        if self.output_belief is None:
+            raise RuntimeError(
+                "compute_variational_inference(): output_belief is None. "
+                "Full-batch forward initialization must run before VMP."
+            )
+
+        # In block-wise mode, raw backward-message buffers must already exist
+        if block is not None:
+            if (
+                getattr(self, "_last_backward_msgs", None) is None
+                or self._last_backward_msgs.get("a") is None
+                or self._last_backward_msgs.get("b") is None
+            ):
+                raise RuntimeError(
+                    "compute_variational_inference(): block-wise update called before "
+                    "full-batch initialization of _last_backward_msgs."
+                )
+
+        # ------------------------------------------------------------
+        # Extract block-local beliefs and messages
+        # ------------------------------------------------------------
+        qx_blk = self.input_beliefs["a"].extract_block(block)
+        qy_blk = self.input_beliefs["b"].extract_block(block)
+        z_msg_blk = self.output_message.extract_block(block)
+
+        z_m = z_msg_blk.data
+        gamma_z = z_msg_blk.precision(raw=False)
+
+        # Incoming messages for EP/VMP fusion (array precision, block-local)
+        msg_a_blk = self.input_messages[self.inputs["a"]].extract_block(block).as_array_precision()
+        msg_b_blk = self.input_messages[self.inputs["b"]].extract_block(block).as_array_precision()
+
+        last_msg_to_x: UA | None = None
+        last_msg_to_y: UA | None = None
+
+        # ------------------------------------------------------------
+        # Inner-loop VMP updates (block-local)
+        # ------------------------------------------------------------
         for _ in range(self.num_inner_loop):
             # --- Q_x update ---
-            y_m, sy2 = qy.data, 1.0 / qy.precision(raw=False)
+            y_m = qy_blk.data
+            sy2 = 1.0 / qy_blk.precision(raw=False)
             abs_y2_plus_var = np().abs(y_m) ** 2 + sy2
+
             mean_x = np().conj(y_m) * z_m / abs_y2_plus_var
             prec_x = gamma_z * abs_y2_plus_var
-            msg_to_x = UA(mean_x, dtype=self.dtype, precision=prec_x)  # <-- raw VMP message
-            self.input_beliefs["a"] = msg_to_x * self.input_messages[self.inputs["a"]].as_array_precision()
-            qx = self.input_beliefs["a"]
-            last_msg_to_x = msg_to_x  # <-- store raw message
+            msg_to_x = UA(mean_x, dtype=self.dtype, precision=prec_x)  # raw VMP message
+
+            qx_blk = msg_to_x * msg_a_blk
+            last_msg_to_x = msg_to_x
 
             # --- Q_y update ---
-            x_m, sx2 = qx.data, 1.0 / qx.precision(raw=False)
+            x_m = qx_blk.data
+            sx2 = 1.0 / qx_blk.precision(raw=False)
             abs_x2_plus_var = np().abs(x_m) ** 2 + sx2
+
             mean_y = np().conj(x_m) * z_m / abs_x2_plus_var
             prec_y = gamma_z * abs_x2_plus_var
-            msg_to_y = UA(mean_y, dtype=self.dtype, precision=prec_y)  # <-- raw VMP message
-            self.input_beliefs["b"] = msg_to_y * self.input_messages[self.inputs["b"]].as_array_precision()
-            qy = self.input_beliefs["b"]
-            last_msg_to_y = msg_to_y  # <-- store raw message
+            msg_to_y = UA(mean_y, dtype=self.dtype, precision=prec_y)  # raw VMP message
 
-        # Save for backward() to send directly (no UA division)
-        self._last_backward_msgs = {"a": last_msg_to_x, "b": last_msg_to_y}
+            qy_blk = msg_to_y * msg_b_blk
+            last_msg_to_y = msg_to_y
 
-        # --- Compute Q_z after inner loop (with eps stabilization) ---
-        mu_z = qx.data * qy.data
-        var_z = (np().abs(qx.data) ** 2 + 1.0 / qx.precision(raw=False)) * \
-                (np().abs(qy.data) ** 2 + 1.0 / qy.precision(raw=False)) - np().abs(mu_z) ** 2
+        # ------------------------------------------------------------
+        # Register/update raw backward messages (no UA division)
+        # ------------------------------------------------------------
+        if block is None:
+            # Full-batch assignment
+            self._last_backward_msgs = {"a": last_msg_to_x, "b": last_msg_to_y}
+        else:
+            # Block-wise overwrite into existing full-batch buffers
+            self._last_backward_msgs["a"].insert_block(block, last_msg_to_x)
+            self._last_backward_msgs["b"].insert_block(block, last_msg_to_y)
+
+        # ------------------------------------------------------------
+        # Compute output belief on this block and insert into full belief buffer
+        # ------------------------------------------------------------
+        mu_z = qx_blk.data * qy_blk.data
+        var_z = (
+            (np().abs(qx_blk.data) ** 2 + 1.0 / qx_blk.precision(raw=False))
+            * (np().abs(qy_blk.data) ** 2 + 1.0 / qy_blk.precision(raw=False))
+            - np().abs(mu_z) ** 2
+        )
+
         eps = np().array(1e-8, dtype=get_real_dtype(self.dtype))
         prec_z = 1.0 / np().maximum(var_z, eps)
-        self.output_belief = UA(mu_z, dtype=self.dtype, precision=prec_z)
+        out_blk = UA(mu_z, dtype=self.dtype, precision=prec_z)
+
+        # output_belief is a full-batch UA buffer (must already exist)
+        if block is None:
+            self.output_belief = out_blk
+            self.input_beliefs["a"] = qx_blk
+            self.input_beliefs["b"] = qy_blk
+        else:
+            self.output_belief.insert_block(block, out_blk)
+            self.input_beliefs["a"].insert_block(block, qx_blk)
+            self.input_beliefs["b"].insert_block(block, qy_blk)
 
 
-
-    def forward(self) -> None:
+    def _compute_forward(
+        self,
+        inputs: dict[str, UA],
+        block: slice | None = None
+    ) -> UA:
         """
-        Deterministic forward message passing for MultiplyPropagator.
+        Block-aware forward kernel for MultiplyPropagator.
 
-        Logic:
-        - On the first iteration (no output_belief / output_message):
-            → Initialize input_beliefs from input_messages if missing.
-            → Use those beliefs (qa, qb) to moment-match Z = X * Y.
-            → Construct deterministic UA for output message.
-            → Align precision with output wave.
-        - On subsequent iterations:
-            → Perform EP-style message update using existing beliefs/messages.
+        Semantics:
+            - Initialization (full-batch only):
+                If output_message is None and output_belief is None, build an initial
+                Gaussian approximation for Z = A * B by moment matching, store it
+                into self.output_belief, and return the full-batch message.
+
+            - EP update (full-batch or block-wise):
+                If both output_message and output_belief exist, return the EP-style
+                outgoing message for the requested block:
+                    msg = output_belief / output_message
+                with scalar/array precision alignment.
+
+        Notes:
+            - This method must NOT call receive_message(); Propagator.forward() handles that.
+            - For block-wise execution, full-batch initialization must have already happened.
         """
-        z_wave = self.output
-        a_wave = self.inputs["a"]
-        b_wave = self.inputs["b"]
+        a_msg = inputs.get("a")
+        b_msg = inputs.get("b")
+        if a_msg is None or b_msg is None:
+            raise RuntimeError("MultiplyPropagator: missing input messages in _compute_forward().")
 
-        # --- Ensure input_beliefs are initialized from input_messages ---
-        if self.input_beliefs["a"] is None:
-            self.input_beliefs["a"] = self.input_messages.get(a_wave)
-        if self.input_beliefs["b"] is None:
-            self.input_beliefs["b"] = self.input_messages.get(b_wave)
-
-        qa = self.input_beliefs["a"]
-        qb = self.input_beliefs["b"]
         out_msg = self.output_message
         out_belief = self.output_belief
 
-        # --- Case A: initial iteration (no output belief/message yet) ---
+        # ------------------------------------------------------------
+        # Ensure input beliefs are initialized (full-batch buffers)
+        # ------------------------------------------------------------
+        if self.input_beliefs.get("a") is None:
+            self.input_beliefs["a"] = a_msg
+        if self.input_beliefs.get("b") is None:
+            self.input_beliefs["b"] = b_msg
+
+        # Cast to factor dtype (keep computation consistent)
+        qa_full = self.input_beliefs["a"].astype(self.dtype)
+        qb_full = self.input_beliefs["b"].astype(self.dtype)
+
+        z_wave = self.output
+        if z_wave is None:
+            raise RuntimeError("MultiplyPropagator._compute_forward(): output wave is not connected.")
+
+        # ------------------------------------------------------------
+        # Case A: initialization (full-batch only)
+        # ------------------------------------------------------------
         if out_msg is None and out_belief is None:
-            # Moment-matching approximation for Z = X * Y
-            mu_z = qa.data * qb.data
+            if block is not None:
+                raise RuntimeError(
+                    "MultiplyPropagator._compute_forward(): initialization must be full-batch (block=None)."
+                )
+
+            # Moment-matching approximation for Z = A * B
+            mu_z = qa_full.data * qb_full.data
             var_z = (
-                (np().abs(qa.data) ** 2 + 1.0 / qa.precision(raw=False))
-                * (np().abs(qb.data) ** 2 + 1.0 / qb.precision(raw=False))
+                (np().abs(qa_full.data) ** 2 + 1.0 / qa_full.precision(raw=False))
+                * (np().abs(qb_full.data) ** 2 + 1.0 / qb_full.precision(raw=False))
                 - np().abs(mu_z) ** 2
             )
+
             eps = np().array(1e-8, dtype=get_real_dtype(self.dtype))
             prec_z = 1.0 / np().maximum(var_z, eps)
 
-            msg = UA(mu_z, dtype=self.dtype, precision=prec_z)
+            msg_full = UA(mu_z, dtype=self.dtype, precision=prec_z)
 
             # Align precision mode with output wave
             if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
-                msg = msg.as_scalar_precision()
+                msg_full = msg_full.as_scalar_precision()
             else:
-                msg = msg.as_array_precision()
+                msg_full = msg_full.as_array_precision()
 
-            # Save as output_belief and emit to output wave
-            self.output_belief = msg
-            z_wave.receive_message(self, msg)
-            return
+            # Cache as the current output belief (full batch)
+            self.output_belief = msg_full
 
-        # --- Case B: subsequent EP-style iteration ---
+            # Return the full-batch outgoing message
+            return msg_full
+
+        # ------------------------------------------------------------
+        # Case B: EP update (full-batch or block-wise)
+        # ------------------------------------------------------------
         if out_msg is not None and out_belief is not None:
-            if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
-                msg = out_belief.as_scalar_precision() / out_msg
-            else:
-                msg = out_belief / out_msg
-            z_wave.receive_message(self, msg)
-            return
+            out_msg_blk = out_msg.extract_block(block)
+            belief_blk = out_belief.extract_block(block)
 
-        # --- Case C: inconsistent message state ---
+            if z_wave.precision_mode_enum == PrecisionMode.SCALAR:
+                return belief_blk.as_scalar_precision() / out_msg_blk
+            return belief_blk / out_msg_blk
+
+        # ------------------------------------------------------------
+        # Case C: inconsistent internal state
+        # ------------------------------------------------------------
         raise RuntimeError(
-            "MultiplyPropagator.forward(): inconsistent state — "
-            "expected both output_belief/output_message to be None (init) or both present (EP update)."
+            "MultiplyPropagator._compute_forward(): inconsistent state — "
+            "expected (output_message, output_belief) to be both None (init) or both present (EP update)."
         )
 
 
-    def backward(self) -> None:
+
+    def _compute_backward(
+        self,
+        output_msg: UA,
+        exclude: str,
+        block: slice | None = None
+    ) -> UA:
         """
-        Run VMP updates and send messages to inputs.
-        - For array-precision waves: send raw VMP message (no UA division)
-        - For scalar-precision waves: send scalarized belief divided by incoming message
+        Block-aware backward kernel for MultiplyPropagator.
+
+        Semantics:
+            - Runs block-aware VMP updates via compute_variational_inference(block).
+            - For ARRAY-precision input waves:
+                returns raw VMP backward message (no UA division).
+            - For SCALAR-precision input waves:
+                returns scalarized belief divided by incoming message.
         """
+
+        wave = self.inputs.get(exclude)
+        msg_in_full = self.input_messages.get(wave)
+
+        if msg_in_full is None:
+            raise RuntimeError(f"_compute_backward(): missing input message for '{exclude}'.")
+
         if self.output_message is None:
-            raise RuntimeError("Output message missing.")
-        if any(v is None for v in self.input_beliefs.values()):
-            raise RuntimeError("Input beliefs not initialized before backward().")
+            raise RuntimeError("_compute_backward(): output_message is None.")
 
-        # Perform VMP updates (stores _last_backward_msgs and updates input_beliefs)
-        self.compute_variational_inference()
+        if self.input_beliefs.get(exclude) is None:
+            raise RuntimeError("_compute_backward(): input_belief not initialized.")
 
-        for name, wave in self.inputs.items():
-            msg_in = self.input_messages[wave]
-            belief = self.input_beliefs[name]
+        # ------------------------------------------------------------
+        # Run block-aware VMP updates (updates beliefs and raw messages)
+        # ------------------------------------------------------------
+        self.compute_variational_inference(block=block)
 
-            if wave.precision_mode_enum == PrecisionMode.SCALAR:
-                # Scalar precision → use scalarized belief / incoming message
-                msg = belief.as_scalar_precision() / msg_in
-            else:
-                # Array precision → send raw VMP message as-is
-                msg = self._last_backward_msgs[name]
+        # ------------------------------------------------------------
+        # Extract block-local quantities
+        # ------------------------------------------------------------
+        msg_in_blk = msg_in_full.extract_block(block)
+        belief_blk = self.input_beliefs[exclude].extract_block(block)
 
-            wave.receive_message(self, msg)
+        # ------------------------------------------------------------
+        # Construct backward EP message
+        # ------------------------------------------------------------
+        if wave.precision_mode_enum == PrecisionMode.SCALAR:
+            # Scalar precision: belief / incoming message
+            return belief_blk.as_scalar_precision() / msg_in_blk
+
+        # Array precision: use raw VMP message directly
+        raw_msg = self._last_backward_msgs.get(exclude)
+        if raw_msg is None:
+            raise RuntimeError(
+                "_compute_backward(): raw backward message missing for ARRAY-precision wave."
+            )
+
+        return raw_msg.extract_block(block)
+
 
 
     def get_sample_for_output(self, rng):
