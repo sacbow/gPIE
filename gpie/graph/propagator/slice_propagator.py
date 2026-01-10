@@ -101,7 +101,7 @@ class SlicePropagator(Propagator):
         # register input
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
-
+        self.batch_size = len(self.indices)
         # output wave: batch_size = number of slices, event_shape = patch_shape
         self.dtype = wave.dtype
         out_wave = Wave(
