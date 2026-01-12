@@ -274,3 +274,102 @@ def test_to_backend_numpy_cupy_roundtrip():
     assert isinstance(aua.precision, np.ndarray)
     assert np.allclose(aua.weighted_data, np.full(event_shape, 1.0 + 1.0j))
     assert np.allclose(aua.precision, np.full(event_shape, 2.0))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_forward_block_matches_full_batch(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(0, 2), slice(2, 4)),
+        (slice(2, 4), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator(indices)
+    _ = prop @ wave
+
+    # --- warm-start ---
+    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    x_msg.data[...] = 1.0
+    prop._compute_forward({"input": x_msg})
+
+    # prepare output_message and output_product (as if backward ran)
+    patch_msg = UA.zeros((2, 2), batch_size=4, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    patch_msg.data[...] = 2.0
+    prop.output_message = patch_msg
+    prop.output_product.scatter_mul(patch_msg)
+
+    # --- full-batch forward ---
+    full = prop._compute_forward({"input": x_msg}, block=None)
+
+    # --- block-wise forward ---
+    blocks = [slice(0, 2), slice(2, 4)]
+    blk_msgs = []
+    for blk in blocks:
+        blk_msgs.append(prop._compute_forward({"input": x_msg}, block=blk))
+
+    # merge blocks
+    merged = UA.zeros(
+        full.event_shape,
+        batch_size=full.batch_size,
+        dtype=full.dtype,
+        precision=full.precision(raw=False),
+        scalar_precision = False
+    )
+    merged.insert_block(blocks[0], blk_msgs[0])
+    merged.insert_block(blocks[1], blk_msgs[1])
+
+    assert xp.allclose(merged.data, full.data)
+    assert xp.allclose(merged.precision(raw=False), full.precision(raw=False))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_forward_block_before_warm_start_raises(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator(indices)
+    _ = prop @ wave
+
+    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0)
+
+    with pytest.raises(RuntimeError, match="warm-start"):
+        _ = prop._compute_forward({"input": x_msg}, block=slice(0, 1))
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_compute_forward_block_with_overlap(xp):
+    backend.set_backend(xp)
+
+    event_shape = (3, 3)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(1, 3), slice(1, 3)),
+    ]
+
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator(indices)
+    _ = prop @ wave
+
+    # warm-start
+    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    x_msg.data[...] = 1.0
+    prop._compute_forward({"input": x_msg})
+
+    # simulate backward accumulation
+    patch_msg = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    patch_msg.data[...] = 1.0
+    prop.output_message = patch_msg
+    prop.output_product.scatter_mul(patch_msg)
+
+    # extract only second patch
+    blk = slice(1, 2)
+    out_blk = prop._compute_forward({"input": x_msg}, block=blk)
+
+    assert out_blk.batch_size == 1
+    assert xp.allclose(out_blk.data, 1.0)
+    # precision reflects overlap
+    assert xp.isclose(out_blk.precision(raw=False)[0, 0, 0], 2.0)

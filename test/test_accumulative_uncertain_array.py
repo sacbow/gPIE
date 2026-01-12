@@ -250,3 +250,87 @@ def test_multiple_blocks_add_and_sub_sequence(xp):
     assert xp.allclose(aua.precision, aua_ref.precision)
     assert xp.allclose(aua.weighted_data, aua_ref.weighted_data)
 
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_patches_block_none_matches_full(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
+
+    ua = UncertainArray.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = 1.0
+    aua.scatter_mul(ua)
+
+    ua_full = aua.extract_patches()
+    ua_block_none = aua.extract_patches(block=None)
+
+    assert xp.allclose(ua_full.data, ua_block_none.data)
+    assert xp.allclose(
+        ua_full.precision(raw=False),
+        ua_block_none.precision(raw=False),
+    )
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_patches_block_subset(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(0, 2), slice(2, 4)),
+        (slice(2, 4), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
+
+    ua = UncertainArray.zeros((2, 2), batch_size=4, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = xp.arange(4).reshape(4, 1, 1)
+    aua.scatter_mul(ua)
+
+    blk = slice(1, 3)
+    ua_blk = aua.extract_patches(block=blk)
+
+    assert ua_blk.batch_size == 2
+
+    # Expected values from full extract
+    ua_full = aua.extract_patches()
+    assert xp.allclose(
+        ua_blk.data,
+        ua_full.data[blk],
+    )
+    assert xp.allclose(
+        ua_blk.precision(raw=False),
+        ua_full.precision(raw=False)[blk],
+    )
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_extract_patches_block_with_overlap(xp):
+    backend.set_backend(xp)
+
+    event_shape = (3, 3)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(1, 3), slice(1, 3)),  # overlap
+    ]
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
+
+    ua = UncertainArray.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = 1.0
+    aua.scatter_mul(ua)
+
+    ua_full = aua.extract_patches()
+
+    blk = slice(1, 2)
+    ua_blk = aua.extract_patches(block=blk)
+
+    assert ua_blk.batch_size == 1
+    assert xp.allclose(ua_blk.data, ua_full.data[blk])
+    assert xp.allclose(
+        ua_blk.precision(raw=False),
+        ua_full.precision(raw=False)[blk],
+    )

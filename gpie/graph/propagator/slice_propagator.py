@@ -151,38 +151,84 @@ class SlicePropagator(Propagator):
     def get_output_precision_mode(self) -> PrecisionMode:
         return PrecisionMode.ARRAY
     
-    def _compute_forward(self, inputs: dict[str, UA], block = None) -> UA:
+    def _compute_forward(self, inputs: dict[str, UA], block=None) -> UA:
         """
-        Compute forward message: input → patches.
+        Compute forward message: input -> patches (block-aware).
 
-        The input message (UA, batch_size=1) is fused into an internal
-        AccumulativeUncertainArray (AUA). Each slice defined in self.indices
-        is then extracted as a patch, and all patches are stacked into a
-        batched UncertainArray.
+        Forward semantics:
+            - Warm-start (output_message is None):
+                * Only full-batch forward is allowed.
+                * Deterministically slice input UA into patches.
+            - After warm-start:
+                * AUA (self.output_product) is treated as read-only.
+                * Forward message is computed purely at UA level.
 
         Args:
-            inputs (dict[str, UA]): {"input": UA}, batch_size must be 1.
+            inputs: {"input": UA} with batch_size == 1.
+            block: None (full-batch / parallel) or slice over patch index dimension.
 
         Returns:
-            UA: Batched UncertainArray with shape (num_patches, *patch_shape).
-
-        Raises:
-            ValueError: if the input UA does not have batch_size=1.
+            UA: forward message to output wave.
         """
-
         x_msg = inputs["input"]
         if x_msg.batch_size != 1:
             raise ValueError("SlicePropagator expects batch_size=1 input message.")
 
+        # ------------------------------------------------------------
+        # Warm-start: deterministic slicing only
+        # ------------------------------------------------------------
         if self.output_message is None:
-            msg_to_send = x_msg.extract_patches(self.indices)
+            if block is not None:
+                raise RuntimeError(
+                    "Block-wise forward called before warm-start. "
+                    "Run a full-batch forward() once before sequential updates."
+                )
+            return x_msg.extract_patches(self.indices)
+
+        # ------------------------------------------------------------
+        # Full-batch / parallel forward
+        # ------------------------------------------------------------
+        if block is None:
+            # 1. Convert backprojected output (AUA) to full-size UA
+            backproj_ua = self.output_product.as_uncertain_array()
+
+            # 2. Fuse with input belief (UA-level multiplication)
+            belief_ua = backproj_ua * x_msg
+
+            # 3. Slice belief into patches (UA method)
+            belief_patches = belief_ua.extract_patches(self.indices)
+
+            # 4. EP residual: divide by current output message
+            msg_to_send = belief_patches / self.output_message
             return msg_to_send
 
-        # Fuse input UA into AUA
-        self.output_product.mul_ua(x_msg)
-        msg_to_send = self.output_product.extract_patches() / self.output_message
-        # Return extracted patches
-        return msg_to_send
+        # ------------------------------------------------------------
+        # Block-wise / sequential forward
+        # ------------------------------------------------------------
+        if not isinstance(block, slice):
+            raise TypeError(f"block must be a slice or None, got {type(block)}")
+
+        start = 0 if block.start is None else block.start
+        stop = block.stop
+        indices_blk = self.indices[start:stop]
+        if len(indices_blk) == 0:
+            raise ValueError(f"Empty block slice {block} for {len(self.indices)} patches.")
+
+        # 1. Backprojected output restricted to this block (AUA -> UA, block-wise)
+        backproj_blk = self.output_product.extract_patches(block=block)
+
+        # 2. Input belief restricted to this block
+        x_blk = x_msg.extract_patches(indices_blk)
+
+        # 3. Fuse in patch domain
+        belief_blk = backproj_blk * x_blk
+
+        # 4. EP residual: divide by corresponding output message block
+        out_blk = self.output_message.extract_block(block)
+        msg_blk = belief_blk / out_blk
+
+        return msg_blk
+
 
     def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
         """
