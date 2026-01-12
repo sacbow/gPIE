@@ -252,25 +252,47 @@ class AccumulativeUncertainArray:
         return UncertainArray(data, dtype=self.dtype, precision=self.precision, batched=False)
 
 
-    def extract_patches(self):
+    def extract_patches(self, block: Optional[slice] = None):
         """
-        Extract all patches (given by the original indices) as a batched UncertainArray.
+        Extract patches as a batched UncertainArray.
+
+        Args:
+            block (slice or None):
+                Patch index slice [start:stop). If None, extract all patches.
 
         Returns:
-            UncertainArray: with shape (num_patches, *patch_shape).
-                            Each batch entry corresponds to one patch.
+            UncertainArray:
+                Batched UA with shape (num_patches_in_block, *patch_shape).
         """
         from .uncertain_array import UncertainArray
 
-        data_slices = [self.weighted_data[idx] for idx in self._indices]
-        prec_slices = [self.precision[idx] for idx in self._indices]
+        # Select patch indices
+        if block is None:
+            indices = self._indices
+        else:
+            start = block.start or 0
+            stop = block.stop
+            indices = self._indices[start:stop]
+
+        if len(indices) == 0:
+            raise ValueError("Empty block passed to extract_patches().")
+
+        # Gather weighted data and precision for selected patches
+        data_slices = [self.weighted_data[idx] for idx in indices]
+        prec_slices = [self.precision[idx] for idx in indices]
 
         stacked_weighted = np().stack(data_slices, axis=0)
         stacked_prec = np().stack(prec_slices, axis=0)
 
         data = stacked_weighted / stacked_prec
 
-        return UncertainArray(data, dtype=self.dtype, precision=stacked_prec, batched=True)
+        return UncertainArray(
+            data,
+            dtype=self.dtype,
+            precision=stacked_prec,
+            batched=True,
+        )
+
 
 
     def clear(self):

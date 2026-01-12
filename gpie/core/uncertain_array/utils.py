@@ -198,10 +198,10 @@ def extract_block(self: UncertainArray, block: slice) -> UncertainArray:
         )
 
     # Extract mean data
-    data_sub = self.data[start:stop].copy()
+    data_sub = self.data[start:stop]
 
     # Extract precision (broadcasted form)
-    prec_sub = self.precision(raw=True)[start:stop].copy()
+    prec_sub = self.precision(raw=True)[start:stop]
 
     return UncertainArray(
         array=data_sub,

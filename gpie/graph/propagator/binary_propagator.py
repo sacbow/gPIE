@@ -74,7 +74,7 @@ class BinaryPropagator(Propagator):
             raise ValueError(f"Batch size mismatch: {a.batch_size} vs {b.batch_size}")
         if a.event_shape != b.event_shape:
             raise ValueError(f"Event shape mismatch: {a.event_shape} vs {b.event_shape}")
-
+        self.batch_size = a.batch_size
         # Create output wave
         output = Wave(
             event_shape=a.event_shape,

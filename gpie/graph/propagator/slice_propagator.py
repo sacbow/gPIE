@@ -119,8 +119,6 @@ class SlicePropagator(Propagator):
         )
         return self.output
 
-    
-
     def get_sample_for_output(self, rng=None):
         """
         Return deterministic patches from the input sample.
