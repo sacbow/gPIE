@@ -1,12 +1,12 @@
 from ...core.backend import np
 from typing import Optional
 from ..wave import Wave
-from .base import Propagator
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
 from ...core.accumulative_uncertain_array import AccumulativeUncertainArray as AUA
 from ...core.uncertain_array import UncertainArray as UA
+from .accumulative_propagator import AccumulativePropagator
 
-class SlicePropagator(Propagator):
+class SlicePropagator(AccumulativePropagator):
     """
     Extracts fixed-size patches from a single input wave.
 
@@ -50,17 +50,6 @@ class SlicePropagator(Propagator):
 
         # AUA will be initialized later
         self.output_product: Optional[AUA] = None
-
-        # ------------------------------------------------------------------
-        # Speculative cache for block-wise backward
-        #
-        # We cache the "old" message for the *next expected block*,
-        # because receive_message may observe already-mutated objects.
-        # ------------------------------------------------------------------
-        self._spec_block: Optional[slice] = None
-        self._spec_old_block: Optional[UA] = None
-        self._spec_block_size: Optional[int] = None
-
     
     def to_backend(self) -> None:
         """
@@ -163,6 +152,8 @@ class SlicePropagator(Propagator):
     def get_output_precision_mode(self) -> PrecisionMode:
         return PrecisionMode.ARRAY
     
+
+    
     def _compute_forward(self, inputs: dict[str, UA], block=None) -> UA:
         """
         Compute forward message: input -> patches (block-aware).
@@ -203,13 +194,10 @@ class SlicePropagator(Propagator):
         if block is None:
             # 1. Convert backprojected output (AUA) to full-size UA
             backproj_ua = self.output_product.as_uncertain_array()
-
             # 2. Fuse with input belief (UA-level multiplication)
             belief_ua = backproj_ua * x_msg
-
             # 3. Slice belief into patches (UA method)
             belief_patches = belief_ua.extract_patches(self.indices)
-
             # 4. EP residual: divide by current output message
             msg_to_send = belief_patches / self.output_message
             return msg_to_send
@@ -220,21 +208,18 @@ class SlicePropagator(Propagator):
         if not isinstance(block, slice):
             raise TypeError(f"block must be a slice or None, got {type(block)}")
 
-        start = 0 if block.start is None else block.start
-        stop = block.stop
-        indices_blk = self.indices[start:stop]
+        blk = self._normalize_block(block)
+        indices_blk = self.indices[blk.start:blk.stop]
+
         if len(indices_blk) == 0:
             raise ValueError(f"Empty block slice {block} for {len(self.indices)} patches.")
 
         # 1. Backprojected output restricted to this block (AUA -> UA, block-wise)
         backproj_blk = self.output_product.extract_patches(block=block)
-
         # 2. Input belief restricted to this block
         x_blk = x_msg.extract_patches(indices_blk)
-
         # 3. Fuse in patch domain
         belief_blk = backproj_blk * x_blk
-
         # 4. EP residual: divide by corresponding output message block
         out_blk = self.output_message.extract_block(block)
         msg_blk = belief_blk / out_blk
@@ -242,15 +227,16 @@ class SlicePropagator(Propagator):
         return msg_blk
 
 
-    def backward(self, block=None) -> None:
-        """
-        Block-aware backward pass for SlicePropagator.
+    def _rebuild_accumulator_from_output(self, out_msg: UA) -> None:
+        self.output_product.clear()
+        self.output_product.scatter_mul(out_msg)
 
-        Design note:
-            We do NOT cache "old blocks" in receive_message, because the UA object
-            may already be mutated/shared by downstream factors by the time we receive it.
-            Instead, we speculatively snapshot the *next expected block* at the end of backward().
-        """
+    def _apply_incremental_update(self, new_blk: UA, old_blk: UA, blk: slice) -> None:
+        self.output_product.scatter_add_ua(new_blk, block=blk)
+        self.output_product.scatter_sub_ua(old_blk, block=blk)
+
+
+    def backward(self, block=None) -> None:
         out_msg = self.output_message
         if out_msg is None:
             raise RuntimeError("Missing output message for backward.")
@@ -262,88 +248,19 @@ class SlicePropagator(Propagator):
         if self.output_product is None:
             raise RuntimeError("Forward pass must be run before backward.")
 
-        # ------------------------------------------------------------
-        # Full-batch / parallel backward
-        # ------------------------------------------------------------
         if block is None:
-            if out_msg.batch_size != len(self.indices):
+            if out_msg.batch_size != self.batch_size:
                 raise ValueError("Output message batch size mismatch.")
-
-            self.output_product.clear()
-            self.output_product.scatter_mul(out_msg)
-
+            self._rebuild_accumulator_from_output(out_msg)
             msg_in = self.output_product.as_uncertain_array()
             input_wave.receive_message(self, msg_in)
             self._store_backward_message(input_wave, msg_in)
-
-            # Reset speculative cache
-            self._spec_block = None
-            self._spec_old_block = None
-            self._spec_block_size = None
+            self._clear_spec_cache()
             return
 
-        # ------------------------------------------------------------
-        # Block-wise / sequential backward
-        # ------------------------------------------------------------
-        if not isinstance(block, slice):
-            raise TypeError(f"block must be a slice or None, got {type(block)}")
+        blk = self._normalize_block(block)
+        self._backward_with_speculation(out_msg, blk)
 
-        # Normalize block
-        start = 0 if block.start is None else block.start
-        stop = block.stop
-        if stop is None:
-            raise ValueError("block.stop must not be None for block-wise backward.")
-        blk = slice(start, stop)
-
-        block_size = stop - start
-        if block_size <= 0:
-            raise ValueError(f"Invalid block slice: {block}")
-
-        # Record block size for predicting next block
-        if self._spec_block_size is None:
-            self._spec_block_size = block_size
-
-        # ------------------------------------------------------------
-        # Fast path: speculative cache hit
-        # ------------------------------------------------------------
-        did_incremental = False
-        if self._spec_block is not None and self._spec_old_block is not None:
-            if (self._spec_block.start, self._spec_block.stop) == (blk.start, blk.stop):
-                new_blk = out_msg.extract_block(blk)
-                old_blk = self._spec_old_block  # already a deep copy (snapshot)
-
-                # AUA scatter_* expects block-local UA and global block range
-                self.output_product.scatter_add_ua(new_blk, block=blk)
-                self.output_product.scatter_sub_ua(old_blk, block=blk)
-                did_incremental = True
-
-        # ------------------------------------------------------------
-        # Slow path: speculation miss -> rebuild AUA from scratch
-        # ------------------------------------------------------------
-        if not did_incremental:
-            self.output_product.clear()
-            self.output_product.scatter_mul(out_msg)
-
-        # Send backward message (always full-size UA with batch_size=1)
         msg_in = self.output_product.as_uncertain_array()
         input_wave.receive_message(self, msg_in)
         self._store_backward_message(input_wave, msg_in)
-
-        # ------------------------------------------------------------
-        # Speculatively snapshot the *next expected block*
-        # ------------------------------------------------------------
-        B = len(self.indices)
-        bsz = self._spec_block_size
-
-        # Predict next block in contiguous order (BlockGenerator semantics)
-        next_start = stop
-        if next_start >= B:
-            next_start = 0
-        next_stop = min(next_start + bsz, B)
-        next_blk = slice(next_start, next_stop)
-
-        # Snapshot "old" value for next_blk (deep copy to detach from mutation)
-        self._spec_block = next_blk
-        self._spec_old_block = out_msg.extract_block(next_blk).copy()
-
-        return

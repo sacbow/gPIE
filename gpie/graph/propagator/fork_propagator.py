@@ -1,62 +1,57 @@
+from __future__ import annotations
+
 from typing import Optional, Dict
-from ..wave import Wave
+
+from ...core.backend import np
 from ...core.uncertain_array import UncertainArray as UA
 from ...core.types import PrecisionMode, UnaryPropagatorPrecisionMode
-from ...core.backend import np
-from .base import Propagator
+from ..wave import Wave
+from .accumulative_propagator import AccumulativePropagator
 
 
-class ForkPropagator(Propagator):
+class ForkPropagator(AccumulativePropagator):
     """
-    Replicates a single input Wave (batch_size=1) into a batched output
-    with `batch_size > 1`.
+    Replicate a single input Wave (batch_size=1) into a batched output Wave.
+
+    This propagator is the "batch fork" counterpart of SlicePropagator:
+        - Forward: replicate belief to output batch and send EP residuals.
+        - Backward: accumulate (multiply) output-side messages across batch.
+
+    Block-wise scheduling:
+        - Uses speculative caching implemented by AccumulativePropagator.
+        - Full rebuild on cache miss via product_reduce_over_batch().
 
     Precision-mode policy:
         - Supported: SCALAR, ARRAY
         - Not supported: SCALAR_TO_ARRAY, ARRAY_TO_SCALAR
-
-
-    Note on caching the previous input:
-        We cache the reduced product of the message from output previous input message by self.child_product.
     """
 
     def __init__(self, batch_size: int, dtype: np().dtype = np().complex64):
         """
-        This propagator replicates a single input wave (batch_size = 1)
-        into a batched output wave with batch_size > 1.
-
-        For block-wise (sequential) scheduling, this class maintains
-        incremental caches of products of output-side messages in order
-        to update the backward message efficiently without recomputing
-        full batch products at every step.
-
         Args:
-            batch_size:
-                Target batch size of the output wave (must be >= 1).
-            dtype:
-                Complex dtype used for internal UncertainArray operations.
+            batch_size: Target batch size of the output wave (must be >= 1).
+            dtype: Complex dtype used for internal UncertainArray operations.
         """
-        super().__init__(input_names=("input",), dtype=dtype)
+        super().__init__(input_names=("input",), precision_mode=None)
 
         if batch_size < 1:
             raise ValueError("ForkPropagator requires batch_size >= 1.")
 
-        self.batch_size = batch_size
+        self.batch_size = int(batch_size)
+        self.dtype = dtype
 
-        # ------------------------------------------------------------------
-        # Incremental backward-message cache (for sequential scheduling)
-        # ------------------------------------------------------------------
+        # Shape metadata (filled in __matmul__)
+        self.event_shape: Optional[tuple[int, ...]] = None
 
-        # Global product of all child (output-side) messages.
-        self.child_product: Optional[UA] = None
+        # Accumulator over output-side messages (batch-reduced product)
+        self.output_product: Optional[UA] = None
 
-        # Cache of per-block products.
-        self.product_cache: dict[tuple[int, int], UA] = {}
+        # Current internal precision-mode selection (derived from connected waves)
+        self._precision_mode: Optional[UnaryPropagatorPrecisionMode] = None
 
-        # Cached block size used in the previous sequential run.
-        self._cached_block_size: Optional[int] = None
-
-
+    # ------------------------------------------------------------------
+    # Graph construction
+    # ------------------------------------------------------------------
     def __matmul__(self, wave: Wave) -> Wave:
         """
         Connect the input wave and create an output wave with replicated batch size.
@@ -66,21 +61,24 @@ class ForkPropagator(Propagator):
 
         self.add_input("input", wave)
         self._set_generation(wave.generation + 1)
+
         self.dtype = wave.dtype
         self.event_shape = wave.event_shape
 
         out_wave = Wave(
             event_shape=self.event_shape,
             batch_size=self.batch_size,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
         out_wave._set_generation(self._generation + 1)
         out_wave.set_parent(self)
         self.output = out_wave
         return self.output
 
-    # -------- Precision mode handling --------
-    def _set_precision_mode(self, mode: UnaryPropagatorPrecisionMode):
+    # ------------------------------------------------------------------
+    # Precision mode handling
+    # ------------------------------------------------------------------
+    def _set_precision_mode(self, mode: UnaryPropagatorPrecisionMode) -> None:
         """
         Restrict precision mode to SCALAR or ARRAY for fork.
         """
@@ -88,150 +86,161 @@ class ForkPropagator(Propagator):
             raise TypeError("ForkPropagator requires UnaryPropagatorPrecisionMode.")
         if mode not in (UnaryPropagatorPrecisionMode.SCALAR, UnaryPropagatorPrecisionMode.ARRAY):
             raise ValueError(f"Unsupported precision mode for ForkPropagator: {mode}")
-        # Delegate to base consistency checks if needed
-        super()._set_precision_mode(mode)
+
+        # Enforce consistency (no conflicts)
+        if self._precision_mode is not None and self._precision_mode != mode:
+            raise ValueError(
+                f"Precision mode conflict: existing={self._precision_mode}, requested={mode}"
+            )
+        self._precision_mode = mode
 
     def get_input_precision_mode(self, wave: Wave) -> Optional[PrecisionMode]:
         if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
             return PrecisionMode.ARRAY
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
+        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
             return PrecisionMode.SCALAR
         return None
 
     def get_output_precision_mode(self) -> Optional[PrecisionMode]:
         if self._precision_mode == UnaryPropagatorPrecisionMode.ARRAY:
             return PrecisionMode.ARRAY
-        elif self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
+        if self._precision_mode == UnaryPropagatorPrecisionMode.SCALAR:
             return PrecisionMode.SCALAR
         return None
 
-    def set_precision_mode_forward(self):
+    def set_precision_mode_forward(self) -> None:
         x_wave = self.inputs["input"]
         if x_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
         elif x_wave.precision_mode_enum == PrecisionMode.SCALAR:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
 
-    def set_precision_mode_backward(self):
+    def set_precision_mode_backward(self) -> None:
         y_wave = self.output
+        if y_wave is None:
+            return
         if y_wave.precision_mode_enum == PrecisionMode.ARRAY:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.ARRAY)
         elif y_wave.precision_mode_enum == PrecisionMode.SCALAR:
             self._set_precision_mode(UnaryPropagatorPrecisionMode.SCALAR)
-    
-    # -------- Utility for making block hashable --------
-    def _normalize_block(self, block) -> tuple[int, int]:
+
+    # ------------------------------------------------------------------
+    # AccumulativePropagator hooks
+    # ------------------------------------------------------------------
+    def _rebuild_accumulator_from_output(self, out_msg: UA) -> None:
         """
-        Normalize a block specification to a hashable (start, stop) tuple.
-
-        Args:
-            block: slice or None
-
-        Returns:
-            (start, stop)
+        Full rebuild: product over the entire output batch -> batch_size=1 UA.
         """
-        if block is None:
-            return (0, self.batch_size)
+        if out_msg.batch_size != self.batch_size:
+            raise ValueError(
+                f"Output message batch size mismatch: expected {self.batch_size}, got {out_msg.batch_size}"
+            )
+        self.output_product = out_msg.product_reduce_over_batch()
 
-        if not isinstance(block, slice):
-            raise TypeError(f"block must be a slice or None, got {type(block)}")
+    def _apply_incremental_update(self, new_blk: UA, old_blk: UA, blk: slice) -> None:
+        """
+        Incremental update on cache hit:
+            output_product <- output_product * prod(new_blk) / prod(old_blk)
+        """
+        if self.output_product is None:
+            # If accumulator is missing, fall back to full rebuild semantics upstream.
+            raise RuntimeError("output_product is not initialized for incremental update.")
 
-        start = 0 if block.start is None else block.start
-        stop = self.batch_size if block.stop is None else block.stop
+        new_prod = new_blk.product_reduce_over_batch()
+        old_prod = old_blk.product_reduce_over_batch()
 
-        if start < 0 or stop > self.batch_size or start >= stop:
-            raise ValueError(f"Invalid block slice: {block}")
+        # Update accumulated product
+        self.output_product = (self.output_product * new_prod) / old_prod
 
-        return (start, stop)
-
-
-    # -------- Message passing --------
+    # ------------------------------------------------------------------
+    # Forward message computation
+    # ------------------------------------------------------------------
     def _compute_forward(self, inputs: Dict[str, UA], block=None) -> UA:
-        # Normalize block
-        block_key = self._normalize_block(block)
-        start, stop = block_key
-        block_size = stop - start
+        """
+        Compute forward message: input (batch=1) -> output (batch=B or block_size).
 
-        out_msg = self.output_message
+        Semantics:
+            - Warm-start (output_message is None): replicate input message.
+            - Otherwise: EP residual = (replicated belief) / output_message (block-wise supported).
 
-        # ------------------------------------------------------------
-        # Handle block-size change
-        # ------------------------------------------------------------
-        if self._cached_block_size != block_size:
-            self.product_cache = {}
-            self.child_product = None
-            self._cached_block_size = block_size
-
-            if out_msg is not None:
-                B = self.batch_size
-                for s in range(0, B, block_size):
-                    blk_key = (s, min(s + block_size, B))
-                    blk_slice = slice(*blk_key)
-
-                    out_blk = out_msg.extract_block(blk_slice)
-                    blk_product = out_blk.product_reduce_over_batch()
-
-                    self.product_cache[blk_key] = blk_product
-                    self.child_product = (
-                        blk_product if self.child_product is None
-                        else self.child_product * blk_product
-                    )
-
-        # ------------------------------------------------------------
-        # Input message (batch_size=1)
-        # ------------------------------------------------------------
-        m_in = inputs["input"]
-        if m_in.batch_size != 1:
+        Note:
+            output_product is a batch-reduced product of output-side messages and is
+            treated as read-only here. It is updated in backward().
+        """
+        x_msg = inputs["input"]
+        if x_msg.batch_size != 1:
             raise ValueError("ForkPropagator expects input UA with batch_size=1.")
 
-        belief = m_in if self.child_product is None else (m_in * self.child_product)
+        # Warm-start: deterministic replication only
+        if self.output_message is None:
+            if block is not None:
+                raise RuntimeError(
+                    "Block-wise forward called before warm-start. "
+                    "Run a full-batch forward() once before sequential updates."
+                )
+            return x_msg.fork(batch_size=self.batch_size)
 
-        belief_forked = belief.fork(batch_size=block_size)
+        # Need accumulator to build belief
+        if self.output_product is None:
+            raise RuntimeError(
+                "output_product is not initialized. "
+                "Run backward() (full or block-wise) to build the accumulator."
+            )
 
-        if out_msg is None:
-            return belief_forked
+        # Full-batch forward
+        if block is None:
+            belief = x_msg * self.output_product
+            belief_forked = belief.fork(batch_size=self.batch_size)
+            return belief_forked / self.output_message
 
-        out_blk = out_msg.extract_block(slice(start, stop))
+        # Block-wise forward
+        blk = self._normalize_block(block)
+        blk_size = blk.stop - blk.start
+
+        belief = x_msg * self.output_product
+        belief_forked = belief.fork(batch_size=blk_size)
+
+        out_blk = self.output_message.extract_block(blk)
         return belief_forked / out_blk
 
-
+    # ------------------------------------------------------------------
+    # Backward pass (block-aware)
+    # ------------------------------------------------------------------
     def backward(self, block=None) -> None:
+        """
+        Send backward message to the single input wave (batch_size=1).
+
+        Uses AccumulativePropagator's speculative caching for block-wise scheduling.
+        """
         out_msg = self.output_message
         if out_msg is None:
             raise RuntimeError("Missing output message for backward.")
 
-        block_key = self._normalize_block(block)
-        start, stop = block_key
-        block_size = stop - start
+        x_wave = self.inputs.get("input")
+        if x_wave is None:
+            raise RuntimeError("Input wave not connected.")
 
-        if self._cached_block_size != block_size:
-            raise RuntimeError(
-                "ForkPropagator.backward() called with block_size "
-                f"{block_size}, but cached_block_size is {self._cached_block_size}. "
-                "Call forward() first to rebuild caches."
-            )
+        # Full-batch backward: rebuild from scratch and reset speculative cache
+        if block is None:
+            self._rebuild_accumulator_from_output(out_msg)
+            msg_in = self.output_product
+            x_wave.receive_message(self, msg_in)
+            self._store_backward_message(x_wave, msg_in)
+            self._clear_spec_cache()
+            return
 
-        out_blk = out_msg.extract_block(slice(start, stop))
-        blk_product = out_blk.product_reduce_over_batch()
+        # Block-wise backward: speculative incremental or miss->rebuild is handled by base
+        blk = self._normalize_block(block)
+        self._backward_with_speculation(out_msg, blk)
 
-        old = self.product_cache.get(block_key)
+        msg_in = self.output_product
+        x_wave.receive_message(self, msg_in)
+        self._store_backward_message(x_wave, msg_in)
 
-        if old is None:
-            self.child_product = (
-                blk_product if self.child_product is None
-                else self.child_product * blk_product
-            )
-        else:
-            self.child_product = (self.child_product * blk_product) / old
-
-        self.product_cache[block_key] = blk_product
-
-        # Send backward message (batch_size=1)
-        x_wave = self.inputs["input"]
-        x_wave.receive_message(self, self.child_product)
-
-    
-    def get_sample_for_output(self, rng):
+    # ------------------------------------------------------------------
+    # Sampling
+    # ------------------------------------------------------------------
+    def get_sample_for_output(self, rng=None):
         x_wave = self.inputs["input"]
         x = x_wave.get_sample()
         if x is None:
