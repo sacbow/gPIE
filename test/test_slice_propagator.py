@@ -261,3 +261,144 @@ def test_backward_block_matches_full(xp):
         block_back.precision(raw=False),
         full_back.precision(raw=False),
     )
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_forward_after_backward_matches_manual(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+
+    # -------------------------
+    # Build graph
+    # -------------------------
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator(indices)
+    out = prop @ wave
+
+    # -------------------------
+    # Warm-start
+    # -------------------------
+    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    x_msg.data[...] = 1.0
+
+    run_warm_start(wave, prop, x_msg)
+
+    # -------------------------
+    # Backward: inject output message
+    # -------------------------
+    patch_msg = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    patch_msg.data[...] = 2.0
+
+    # output wave → propagator
+    prop.receive_message(prop.output, patch_msg, block=None)
+
+    # backward: propagator → input wave
+    prop.backward(block=None)
+
+    # -------------------------
+    # Forward AGAIN (this is the key)
+    # -------------------------
+    # input wave → propagator
+    wave.forward(block=None)
+
+    # propagator → output wave
+    prop.forward(block=None)
+
+    out_msg = prop.last_forward_message
+
+    # -------------------------
+    # Validate
+    # -------------------------
+    # backproj = 2 everywhere
+    # belief = 2 * 1
+    # EP residual = 2 / 2 = 1
+    assert xp.allclose(out_msg.data, 1.0)
+    assert xp.allclose(out_msg.precision(raw=False), 1.0)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_forward_block_after_backward_matches_full(xp):
+    backend.set_backend(xp)
+
+    event_shape = (4, 4)
+    indices = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(0, 2), slice(2, 4)),
+        (slice(2, 4), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+
+    # -------------------------
+    # Build graph
+    # -------------------------
+    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator(indices)
+    _ = prop @ wave
+
+    # -------------------------
+    # Warm-start
+    # -------------------------
+    x_msg = UA.zeros(
+        event_shape,
+        batch_size=1,
+        dtype=xp.complex64,
+        precision=1.0,
+        scalar_precision=False,
+    )
+    x_msg.data[...] = 1.0
+    run_warm_start(wave, prop, x_msg)
+
+    # -------------------------
+    # Backward (initialize output_product and output_message)
+    # -------------------------
+    patch_msg = UA.zeros(
+        (2, 2),
+        batch_size=4,
+        dtype=xp.complex64,
+        precision=1.0,
+        scalar_precision=False,
+    )
+    patch_msg.data[...] = 2.0
+
+    prop.receive_message(prop.output, patch_msg, block=None)
+    prop.backward(block=None)
+
+    # -------------------------
+    # Full-batch forward (reference)
+    # -------------------------
+    wave.forward(block=None)
+    prop.forward(block=None)
+    full = prop.last_forward_message.copy()
+
+    # -------------------------
+    # Block-wise forward (must cover _compute_forward block branch)
+    # -------------------------
+    blocks = [slice(0, 2), slice(2, 4)]
+    parts = []
+
+    for blk in blocks:
+        wave.forward(block=blk)
+        prop.forward(block=blk)
+        parts.append(prop.last_forward_message.extract_block(blk))
+
+    # Merge blocks into a full outgoing message
+    merged = UA.zeros(
+        full.event_shape,
+        batch_size=full.batch_size,
+        dtype=full.dtype,
+        # NOTE: raw precision required because insert_block overwrites raw precision in-place
+        precision=full.precision(raw=True),
+        scalar_precision=False,
+    )
+    merged.insert_block(blocks[0], parts[0])
+    merged.insert_block(blocks[1], parts[1])
+
+    # -------------------------
+    # Validate equivalence
+    # -------------------------
+    assert xp.allclose(merged.data, full.data)
+    assert xp.allclose(merged.precision(raw=False), full.precision(raw=False))
