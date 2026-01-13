@@ -289,6 +289,26 @@ def insert_block(self: UncertainArray, block: slice, sub: UncertainArray) -> Non
     raw_sub = sub.precision(raw=True)
     raw_self[start:stop] = raw_sub
 
+def copy(self: UncertainArray) -> UncertainArray:
+    """
+    Return a deep copy of this UncertainArray.
+
+    Both data and precision buffers are fully copied, so the returned
+    UncertainArray is independent of the original one.
+    """
+    # Copy mean data
+    data_copy = self.data.copy()
+
+    # Copy raw precision (scalar or array)
+    prec_raw = self.precision(raw=True)
+    prec_copy = prec_raw.copy()
+
+    return UncertainArray(
+        array=data_copy,
+        dtype=self.dtype,
+        precision=prec_copy,
+        batched=True,
+    )
 
 
 # --- monkey patch ---
@@ -301,3 +321,4 @@ UncertainArray.as_scalar_precision = as_scalar_precision
 UncertainArray.as_array_precision = as_array_precision
 UncertainArray.extract_block = extract_block
 UncertainArray.insert_block = insert_block
+UncertainArray.copy = copy

@@ -136,45 +136,52 @@ class AccumulativeUncertainArray:
         """
         Add (fuse) a batched UncertainArray into this AUA.
 
-        Args:
-            ua (UncertainArray):
-                Batched UA with shape (batch_size, *patch_shape).
-            block (slice or None):
-                Patch index block to scatter.
-                If None, full-batch scatter is performed.
+        Semantics:
+            - block is None:
+                ua must cover the full patch batch.
+            - block is not None:
+                ua.batch_size == (block.stop - block.start)
+                ua is already block-local.
         """
         if block is None:
-            # Full-batch behavior (existing semantics)
+            # Full-batch behavior
             self.scatter_mul(ua)
             return
 
         # --------------------------------------------------------
-        # Block-wise scatter
+        # Block-wise scatter (ua is already block-local)
         # --------------------------------------------------------
-        # Extract local block from UA
-        ua_blk = ua.extract_block(block)
+        if not isinstance(block, slice):
+            raise TypeError("block must be a slice or None.")
+
+        start, stop = block.start, block.stop
+        block_size = stop - start
+
+        if ua.batch_size != block_size:
+            raise ValueError(
+                f"ua.batch_size={ua.batch_size} does not match block size {block_size}."
+            )
 
         # Flatten local precision and weighted data
-        local_prec = ua_blk.precision(raw=False).reshape(ua_blk.batch_size, -1)
-        local_weighted = (ua_blk.data * ua_blk.precision(raw=False)).reshape(
-            ua_blk.batch_size, -1
-        )
+        prec = ua.precision(raw=False)
+        local_prec = prec.reshape(ua.batch_size, -1)
+        local_weighted = (ua.data * prec).reshape(ua.batch_size, -1)
 
         # Compute flat ranges for this block
         start_flat, stop_flat = self._get_block_ranges(block)
 
         flat_prec = np().concatenate(
             [local_prec[b, :n]
-             for b, n in enumerate(self._sizes[block.start:block.stop])],
+            for b, n in enumerate(self._sizes[start:stop])],
             axis=0,
         )
         flat_weighted = np().concatenate(
             [local_weighted[b, :n]
-             for b, n in enumerate(self._sizes[block.start:block.stop])],
+            for b, n in enumerate(self._sizes[start:stop])],
             axis=0,
         )
 
-        # Corresponding coordinates
+        # Coordinates
         coords = tuple(self._coords_all[start_flat:stop_flat].T)
 
         # Scatter-add
@@ -182,62 +189,56 @@ class AccumulativeUncertainArray:
         scatter_add(self.weighted_data.real, coords, flat_weighted.real)
         scatter_add(self.weighted_data.imag, coords, flat_weighted.imag)
 
-
     # ------------------------------------------------------------
     # Block-aware scatter SUB
     # ------------------------------------------------------------
-    def scatter_sub_ua(
-        self,
-        ua,
-        block: Optional[slice] = None,
-    ):
+    def scatter_sub_ua(self, ua, block: slice):
         """
         Subtract a batched UncertainArray contribution from this AUA.
 
-        Args:
-            ua (UncertainArray):
-                Batched UA with shape (batch_size, *patch_shape).
-            block (slice or None):
-                Patch index block to subtract.
-            eps (float or None):
-                Lower bound for precision after subtraction.
-                If None, use dtype-dependent default.
+        Semantics:
+            - block must not be None
+            - ua is already block-local
         """
-
         if block is None:
             raise RuntimeError(
                 "scatter_sub_ua(block=None) is not supported. "
-                "For full-batch updates, clear the AUA and rebuild it instead."
-            )
-        else:
-            # ----------------------------------------------------
-            # Block-wise subtraction = add with negative values
-            # ----------------------------------------------------
-            ua_blk = ua.extract_block(block)
-
-            local_prec = ua_blk.precision(raw=False).reshape(ua_blk.batch_size, -1)
-            local_weighted = (ua_blk.data * ua_blk.precision(raw=False)).reshape(
-                ua_blk.batch_size, -1
+                "Clear and rebuild AUA instead."
             )
 
-            start_flat, stop_flat = self._get_block_ranges(block)
+        if not isinstance(block, slice):
+            raise TypeError("block must be a slice.")
 
-            flat_prec = np().concatenate(
-                [-local_prec[b, :n]
-                 for b, n in enumerate(self._sizes[block.start:block.stop])],
-                axis=0,
-            )
-            flat_weighted = np().concatenate(
-                [-local_weighted[b, :n]
-                 for b, n in enumerate(self._sizes[block.start:block.stop])],
-                axis=0,
+        start, stop = block.start, block.stop
+        block_size = stop - start
+
+        if ua.batch_size != block_size:
+            raise ValueError(
+                f"ua.batch_size={ua.batch_size} does not match block size {block_size}."
             )
 
-            coords = tuple(self._coords_all[start_flat:stop_flat].T)
+        prec = ua.precision(raw=False)
+        local_prec = prec.reshape(ua.batch_size, -1)
+        local_weighted = (ua.data * prec).reshape(ua.batch_size, -1)
 
-            scatter_add(self.precision, coords, flat_prec)
-            scatter_add(self.weighted_data.real, coords, flat_weighted.real)
-            scatter_add(self.weighted_data.imag, coords, flat_weighted.imag)
+        start_flat, stop_flat = self._get_block_ranges(block)
+
+        flat_prec = np().concatenate(
+            [-local_prec[b, :n]
+            for b, n in enumerate(self._sizes[start:stop])],
+            axis=0,
+        )
+        flat_weighted = np().concatenate(
+            [-local_weighted[b, :n]
+            for b, n in enumerate(self._sizes[start:stop])],
+            axis=0,
+        )
+
+        coords = tuple(self._coords_all[start_flat:stop_flat].T)
+
+        scatter_add(self.precision, coords, flat_prec)
+        scatter_add(self.weighted_data.real, coords, flat_weighted.real)
+        scatter_add(self.weighted_data.imag, coords, flat_weighted.imag)
 
 
     def as_uncertain_array(self):
@@ -294,7 +295,6 @@ class AccumulativeUncertainArray:
         )
 
 
-
     def clear(self):
         """
         Reset weighted_data and precision to zeros, keeping cached indices.
@@ -306,31 +306,6 @@ class AccumulativeUncertainArray:
         eps = real_dtype(1e-12)
         self.weighted_data[...] = 0
         self.precision[...] = eps
-    
-    def mul_ua(self, ua) -> None:
-        """
-        Multiply (fuse) a full-size UncertainArray into this AUA.
-
-        Args:
-            ua (UncertainArray): UA with batch_size=1 and event_shape == self.event_shape.
-        """
-        if ua.batch_size != 1:
-            raise ValueError("mul_ua expects a UA with batch_size=1.")
-        if ua.event_shape != self.event_shape:
-            raise ValueError(
-                f"event_shape mismatch: expected {self.event_shape}, got {ua.event_shape}"
-            )
-        if ua.dtype != self.dtype:
-            raise TypeError(
-                f"dtype mismatch: expected {self.dtype}, got {ua.dtype}"
-            )
-
-        prec = ua.precision(raw=False)[0]   # shape = event_shape
-        data = ua.data[0]
-
-        self.precision += prec
-        self.weighted_data += data * prec
-
 
     def __repr__(self):
         return f"AUA(event_shape={self.event_shape}, patches={len(self._indices)}, dtype={self.dtype})"

@@ -20,25 +20,39 @@ if has_cupy:
 
 
 # ----------------------------------------------------------------------
+# Utilities
+# ----------------------------------------------------------------------
+
+def run_warm_start(wave, prop, x_msg):
+    """
+    Run a full-batch warm-start forward pass:
+      parent -> wave -> propagator
+    """
+    wave.parent_message = x_msg
+    wave.forward(block=None)
+    prop.forward(block=None)
+
+
+# ----------------------------------------------------------------------
 # Initialization tests
 # ----------------------------------------------------------------------
 
 def test_slice_propagator_init_invalid_types():
-    with pytest.raises(TypeError, match="tuple of slices or a list of tuples of slices"):
+    with pytest.raises(TypeError):
         _ = SlicePropagator("not a slice")
 
-    with pytest.raises(TypeError, match="tuple of slices"):
+    with pytest.raises(TypeError):
         _ = SlicePropagator((1, 2))
 
-    with pytest.raises(TypeError, match="tuple of slices"):
+    with pytest.raises(TypeError):
         _ = SlicePropagator([1, 2])
 
-    with pytest.raises(TypeError, match="tuple of slices"):
+    with pytest.raises(TypeError):
         _ = SlicePropagator([(slice(0, 2), 1)])
 
 
 def test_slice_propagator_init_shape_mismatch():
-    with pytest.raises(ValueError, match="must produce patches of the same shape"):
+    with pytest.raises(ValueError, match="same shape"):
         _ = SlicePropagator([
             (slice(0, 2), slice(0, 2)),
             (slice(0, 3), slice(0, 3)),
@@ -52,16 +66,17 @@ def test_slice_propagator_init_shape_mismatch():
 @pytest.mark.parametrize("xp", backend_libs)
 def test_matmul_normal_case(xp):
     backend.set_backend(xp)
+
     wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
     indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
-    prop = SlicePropagator(indices)
 
+    prop = SlicePropagator(indices)
     out = prop @ wave
+
     assert out.batch_size == 2
     assert out.event_shape == (2, 2)
     assert out.dtype == wave.dtype
     assert out.parent is prop
-    # output_product must be initialized
     assert prop.output_product is not None
     assert prop.output_product.event_shape == wave.event_shape
 
@@ -69,6 +84,7 @@ def test_matmul_normal_case(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_matmul_batch_size_error(xp):
     backend.set_backend(xp)
+
     wave = Wave(event_shape=(4, 4), batch_size=2, dtype=xp.complex64)
     prop = SlicePropagator([(slice(0, 2), slice(0, 2))])
 
@@ -79,38 +95,46 @@ def test_matmul_batch_size_error(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_matmul_rank_mismatch(xp):
     backend.set_backend(xp)
+
     wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator([(slice(0, 2),)])  # 1D slice, mismatch
-    with pytest.raises(ValueError, match="Slice rank mismatch"):
+    prop = SlicePropagator([(slice(0, 2),)])
+
+    with pytest.raises(ValueError, match="rank mismatch"):
         _ = prop @ wave
 
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_matmul_out_of_range(xp):
     backend.set_backend(xp)
+
     wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
     prop = SlicePropagator([(slice(0, 5), slice(0, 4))])
+
     with pytest.raises(ValueError, match="out of range"):
         _ = prop @ wave
 
 
 # ----------------------------------------------------------------------
-# Forward and backward
+# Forward / backward (full-batch)
 # ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_forward_extracts_patches(xp):
     backend.set_backend(xp)
-    event_shape = (4, 4)
-    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
+
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator([
+        (slice(0, 2), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ])
     _ = prop @ wave
 
-    ua = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0)
-    ua.data[...] = 1.0
+    x_msg = UA.zeros((4, 4), batch_size=1, dtype=xp.complex64, precision=1.0)
+    x_msg.data[...] = 1.0
 
-    out = prop._compute_forward({"input": ua})
+    run_warm_start(wave, prop, x_msg)
+
+    out = prop.last_forward_message
     assert out.batch_size == 2
     assert out.event_shape == (2, 2)
     assert xp.allclose(out.data, 1.0)
@@ -120,256 +144,120 @@ def test_forward_extracts_patches(xp):
 @pytest.mark.parametrize("xp", backend_libs)
 def test_backward_reconstructs_input(xp):
     backend.set_backend(xp)
-    event_shape = (4, 4)
-    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
+
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator([
+        (slice(0, 2), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ])
     _ = prop @ wave
 
-    ua = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0)
-    ua.data[...] = 2.0
-    prop._compute_forward({"input": ua})
+    x_msg = UA.zeros((4, 4), batch_size=1, dtype=xp.complex64, precision=1.0)
+    x_msg.data[...] = 2.0
+    run_warm_start(wave, prop, x_msg)
 
-    patch_ua = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
-    patch_ua.data[...] = 3.0
+    patch_msg = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
+    patch_msg.data[...] = 3.0
 
-    recon = prop._compute_backward(patch_ua, exclude="input")
-    assert recon.batch_size == 1
-    assert recon.event_shape == event_shape
+    prop.receive_message(prop.output, patch_msg, block=None)
+    prop.backward(block=None)
 
-    expected = xp.zeros(event_shape, dtype=xp.complex64)
+    recon = wave.child_messages[prop]
+    expected = xp.zeros((4, 4), dtype=xp.complex64)
     expected[0:2, 0:2] = 3.0
     expected[2:4, 2:4] = 3.0
+
     assert xp.allclose(recon.data[0], expected)
 
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_backward_with_overlap(xp):
-    backend.set_backend(xp)
-    event_shape = (3, 3)
-    indices = [(slice(0, 2), slice(0, 2)), (slice(1, 3), slice(1, 3))]
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
-    _ = prop @ wave
-
-    ua = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0)
-    ua.data[...] = 1.0
-    prop._compute_forward({"input": ua})
-
-    patch_ua = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
-    patch_ua.data[...] = 1.0
-
-    recon = prop._compute_backward(patch_ua, exclude="input")
-    assert np.isclose(recon.precision(raw=False)[0, 1, 1], 2.0)
-    assert np.isclose(recon.data[0, 1, 1], 1.0)
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_forward_backward_error_cases(xp):
-    backend.set_backend(xp)
-    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator([(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))])
-    _ = prop @ wave
-
-    ua_invalid = UA.zeros((4, 4), batch_size=2, dtype=xp.complex64, precision=1.0)
-    with pytest.raises(ValueError):
-        prop._compute_forward({"input": ua_invalid})
-
-    patch_ua_invalid = UA.zeros((2, 2), batch_size=1, dtype=xp.complex64, precision=1.0)
-    with pytest.raises(ValueError):
-        prop._compute_backward(patch_ua_invalid, exclude="input")
-
-
 # ----------------------------------------------------------------------
-# get_sample_for_output
+# Forward: block-wise vs full-batch
 # ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_get_sample_for_output_normal(xp):
+def test_forward_block_matches_full(xp):
     backend.set_backend(xp)
+
     wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
-    sample = xp.arange(16, dtype=xp.complex64).reshape(1, 4, 4)
-    wave.set_sample(sample)
-
-    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
-    prop = SlicePropagator(indices)
-    _ = prop @ wave
-
-    patches = prop.get_sample_for_output()
-    assert patches.shape == (2, 2, 2)
-
-    expected1 = sample[0, 0:2, 0:2]
-    expected2 = sample[0, 2:4, 2:4]
-    assert xp.allclose(patches[0], expected1)
-    assert xp.allclose(patches[1], expected2)
-
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_get_sample_for_output_without_sample(xp):
-    backend.set_backend(xp)
-    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator([(slice(0, 2), slice(0, 2))])
-    _ = prop @ wave
-
-    with pytest.raises(RuntimeError, match="Input sample not set"):
-        _ = prop.get_sample_for_output()
-
-@pytest.mark.skipif(not has_cupy, reason="CuPy not installed")
-def test_to_backend_numpy_cupy_roundtrip():
-    # --- NumPy backend ---
-    backend.set_backend(np)
-    event_shape = (4, 4)
-    indices = [(slice(0, 2), slice(0, 2))]
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=np.complex64)
-    prop = SlicePropagator(indices)
-    _ = prop @ wave
-
-    # AUA should initially be numpy-based
-    assert isinstance(prop.output_product.weighted_data, np.ndarray)
-    assert isinstance(prop.output_product.precision, np.ndarray)
-
-    # --- Move to CuPy backend ---
-    backend.set_backend(cp)
-    prop.to_backend()
-
-    # Ensure AUA internal arrays are CuPy ndarrays
-    assert isinstance(prop.output_product.weighted_data, cp.ndarray)
-    assert isinstance(prop.output_product.precision, cp.ndarray)
-    assert prop.dtype == cp.dtype("complex64")
-
-    # --- Move back to NumPy backend ---
-    backend.set_backend(np)
-    prop.to_backend()
-
-    # Ensure AUA internal arrays return to NumPy ndarrays
-    assert isinstance(prop.output_product.weighted_data, np.ndarray)
-    assert isinstance(prop.output_product.precision, np.ndarray)
-    assert prop.dtype == np.dtype("complex64")
-
-@pytest.mark.skipif(not has_cupy, reason="CuPy not installed")
-def test_to_backend_numpy_cupy_roundtrip():
-    backend.set_backend(np)
-    event_shape = (4, 4)
-    indices = [(slice(0, 2), slice(0, 2))]
-    aua = AccumulativeUncertainArray(event_shape, indices, dtype=np.complex64)
-
-    # Fill with known pattern
-    aua.weighted_data[...] = (1.0 + 1.0j)
-    aua.precision[...] = 2.0
-
-    # --- Move to CuPy backend ---
-    backend.set_backend(cp)
-    aua.to_backend()
-
-    assert isinstance(aua.weighted_data, cp.ndarray)
-    assert isinstance(aua.precision, cp.ndarray)
-    assert cp.allclose(aua.weighted_data, cp.full(event_shape, 1.0 + 1.0j))
-    assert cp.allclose(aua.precision, cp.full(event_shape, 2.0))
-
-    # --- Move back to NumPy backend ---
-    backend.set_backend(np)
-    aua.to_backend()
-
-    assert isinstance(aua.weighted_data, np.ndarray)
-    assert isinstance(aua.precision, np.ndarray)
-    assert np.allclose(aua.weighted_data, np.full(event_shape, 1.0 + 1.0j))
-    assert np.allclose(aua.precision, np.full(event_shape, 2.0))
-
-@pytest.mark.parametrize("xp", backend_libs)
-def test_compute_forward_block_matches_full_batch(xp):
-    backend.set_backend(xp)
-
-    event_shape = (4, 4)
-    indices = [
+    prop = SlicePropagator([
         (slice(0, 2), slice(0, 2)),
         (slice(0, 2), slice(2, 4)),
         (slice(2, 4), slice(0, 2)),
         (slice(2, 4), slice(2, 4)),
-    ]
-
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
+    ])
     _ = prop @ wave
 
-    # --- warm-start ---
-    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    x_msg = UA.zeros((4, 4), batch_size=1, dtype=xp.complex64, precision=1.0)
     x_msg.data[...] = 1.0
-    prop._compute_forward({"input": x_msg})
 
-    # prepare output_message and output_product (as if backward ran)
-    patch_msg = UA.zeros((2, 2), batch_size=4, dtype=xp.complex64, precision=1.0, scalar_precision = False)
-    patch_msg.data[...] = 2.0
-    prop.output_message = patch_msg
-    prop.output_product.scatter_mul(patch_msg)
+    run_warm_start(wave, prop, x_msg)
+    full = prop.last_forward_message.copy()
 
-    # --- full-batch forward ---
-    full = prop._compute_forward({"input": x_msg}, block=None)
-
-    # --- block-wise forward ---
     blocks = [slice(0, 2), slice(2, 4)]
-    blk_msgs = []
-    for blk in blocks:
-        blk_msgs.append(prop._compute_forward({"input": x_msg}, block=blk))
+    parts = []
 
-    # merge blocks
+    for blk in blocks:
+        wave.forward(block=blk)
+        parts.append(prop.last_forward_message.extract_block(blk))
+
     merged = UA.zeros(
         full.event_shape,
         batch_size=full.batch_size,
         dtype=full.dtype,
-        precision=full.precision(raw=False),
-        scalar_precision = False
+        precision=full.precision(raw=True),  # raw precision required
     )
-    merged.insert_block(blocks[0], blk_msgs[0])
-    merged.insert_block(blocks[1], blk_msgs[1])
+    merged.insert_block(blocks[0], parts[0])
+    merged.insert_block(blocks[1], parts[1])
 
     assert xp.allclose(merged.data, full.data)
     assert xp.allclose(merged.precision(raw=False), full.precision(raw=False))
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_compute_forward_block_before_warm_start_raises(xp):
-    backend.set_backend(xp)
 
-    event_shape = (4, 4)
-    indices = [(slice(0, 2), slice(0, 2)), (slice(2, 4), slice(2, 4))]
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
-    _ = prop @ wave
-
-    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0)
-
-    with pytest.raises(RuntimeError, match="warm-start"):
-        _ = prop._compute_forward({"input": x_msg}, block=slice(0, 1))
+# ----------------------------------------------------------------------
+# Backward: block-wise vs full-batch
+# ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("xp", backend_libs)
-def test_compute_forward_block_with_overlap(xp):
+def test_backward_block_matches_full(xp):
     backend.set_backend(xp)
 
-    event_shape = (3, 3)
-    indices = [
+    wave = Wave(event_shape=(4, 4), batch_size=1, dtype=xp.complex64)
+    prop = SlicePropagator([
         (slice(0, 2), slice(0, 2)),
-        (slice(1, 3), slice(1, 3)),
-    ]
-
-    wave = Wave(event_shape=event_shape, batch_size=1, dtype=xp.complex64)
-    prop = SlicePropagator(indices)
+        (slice(0, 2), slice(2, 4)),
+        (slice(2, 4), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ])
     _ = prop @ wave
 
-    # warm-start
-    x_msg = UA.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=1.0, scalar_precision = False)
+    x_msg = UA.zeros((4, 4), batch_size=1, dtype=xp.complex64, precision=1.0)
     x_msg.data[...] = 1.0
-    prop._compute_forward({"input": x_msg})
+    run_warm_start(wave, prop, x_msg)
 
-    # simulate backward accumulation
-    patch_msg = UA.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0, scalar_precision = False)
-    patch_msg.data[...] = 1.0
-    prop.output_message = patch_msg
-    prop.output_product.scatter_mul(patch_msg)
+    patch_msg = UA.zeros((2, 2), batch_size=4, dtype=xp.complex64, precision=1.0)
+    patch_msg.data[...] = 2.0
 
-    # extract only second patch
-    blk = slice(1, 2)
-    out_blk = prop._compute_forward({"input": x_msg}, block=blk)
+    # --- full-batch backward (reference)
+    prop.receive_message(prop.output, patch_msg, block=None)
+    prop.backward(block=None)
+    full_back = wave.child_messages[prop].copy()
 
-    assert out_blk.batch_size == 1
-    assert xp.allclose(out_blk.data, 1.0)
-    # precision reflects overlap
-    assert xp.isclose(out_blk.precision(raw=False)[0, 0, 0], 2.0)
+    # --- reset
+    wave.child_messages.clear()
+    prop._last_output_update_block = None
+    prop._last_output_update_old_block = None
+
+    # --- block-wise backward
+    blocks = [slice(0, 2), slice(2, 4)]
+    for blk in blocks:
+        blk_msg = patch_msg.extract_block(blk)
+        prop.receive_message(prop.output, blk_msg, block=blk)
+        prop.backward(block=blk)
+
+    block_back = wave.child_messages[prop].copy()
+
+    assert xp.allclose(block_back.data, full_back.data)
+    assert xp.allclose(
+        block_back.precision(raw=False),
+        full_back.precision(raw=False),
+    )

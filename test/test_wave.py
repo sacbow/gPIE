@@ -21,7 +21,7 @@ class DummyFactor:
     def __init__(self):
         self.received = None
 
-    def receive_message(self, wave, msg):
+    def receive_message(self, wave, msg, block):
         self.received = (wave, msg)
 
     def get_input_precision_mode(self, wave):

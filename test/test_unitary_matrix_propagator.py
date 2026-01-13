@@ -67,7 +67,7 @@ def test_unitary_propagator_forward_backward(xp):
     class DummyMeasurement:
         def __init__(self):
             self.received = None
-        def receive_message(self, wave, message):
+        def receive_message(self, wave, message, block):
             self.received = message
 
     dummy_meas = DummyMeasurement()

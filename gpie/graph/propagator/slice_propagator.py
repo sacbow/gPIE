@@ -49,6 +49,80 @@ class SlicePropagator(Propagator):
 
         # AUA will be initialized later, once we know input dtype/event_shape
         self.output_product: Optional[AUA] = None
+
+        # Last output-side block update (for incremental backward)
+        self._last_output_update_block: Optional[slice] = None
+        self._last_output_update_old_block: Optional[UA] = None
+    
+
+    def receive_message(self, wave: Wave, message: UA, block=None):
+        """
+        Receive a message from a connected wave.
+
+        For SlicePropagator, output-side messages may be updated block-wise
+        during sequential scheduling. In that case, we store the previous
+        block content to support incremental backward updates.
+
+        Args:
+            wave (Wave): The sender Wave.
+            message (UncertainArray): The message to store.
+            block (slice or None): Block slice for sequential updates.
+        """
+        # ------------------------------------------------------------
+        # Input-side message: unchanged behavior
+        # ------------------------------------------------------------
+        if wave in self.inputs.values():
+            self.input_messages[wave] = message
+            return
+
+        # ------------------------------------------------------------
+        # Output-side message
+        # ------------------------------------------------------------
+        if wave is self.output:
+            # Full-batch update: overwrite everything
+            if block is None:
+                self.output_message = message
+                self._last_output_update_block = None
+                self._last_output_update_old_block = None
+                return
+
+            # --------------------------------------------------------
+            # Block-wise update
+            # --------------------------------------------------------
+            if not isinstance(block, slice):
+                raise TypeError(f"block must be a slice or None, got {type(block)}")
+
+            if self.output_message is None:
+                raise RuntimeError(
+                    "Block-wise output message received before output_message "
+                    "has been initialized."
+                )
+
+            # Normalize block slice
+            start = 0 if block.start is None else block.start
+            stop = self.output.batch_size if block.stop is None else block.stop
+            if start < 0 or stop > self.output.batch_size or start >= stop:
+                raise ValueError(f"Invalid block slice: {block}")
+
+            blk = slice(start, stop)
+
+            # Cache old block (copy to decouple from later mutation)
+            old_blk = self.output_message.extract_block(blk).copy()
+
+            # Update output_message in-place
+            self.output_message.insert_block(blk, message)
+
+            # Store delta info for backward
+            self._last_output_update_block = blk
+            self._last_output_update_old_block = old_blk
+            return
+
+        # ------------------------------------------------------------
+        # Unknown sender
+        # ------------------------------------------------------------
+        raise ValueError("Received message from unconnected Wave.")
+
+
     
     def to_backend(self) -> None:
         """
@@ -230,37 +304,96 @@ class SlicePropagator(Propagator):
         return msg_blk
 
 
-    def _compute_backward(self, output_msg: UA, exclude: str, block = None) -> UA:
+    def backward(self, block=None) -> None:
         """
-        Compute backward message: patches → input.
+        Block-aware backward pass for SlicePropagator.
 
-        The output message (batched UA over patches) is scattered back into
-        an AccumulativeUncertainArray, reconstructing a full-size UA that
-        matches the input wave.
+        Semantics:
+            - block is None (parallel):
+                Rebuild AUA from scratch using full output_message.
+            - block is not None (sequential):
+                Incrementally update AUA using the difference between
+                new and old output_message blocks.
 
-        Args:
-            output_msg (UA): Batched UncertainArray with batch_size == len(indices).
-            exclude (str): Ignored for SlicePropagator (single input only).
-
-        Returns:
-            UA: Reconstructed input UncertainArray (batch_size=1).
-
-        Raises:
-            ValueError: if output_msg batch_size != len(indices).
-            RuntimeError: if forward has not been run before backward.
+        The backward message sent to the input wave is always a full-size
+        UncertainArray with batch_size = 1.
         """
+        out_msg = self.output_message
+        if out_msg is None:
+            raise RuntimeError("Missing output message for backward.")
 
-        if output_msg.batch_size != len(self.indices):
-            raise ValueError("Output message batch size mismatch.")
+        # SlicePropagator has exactly one input wave
+        input_wave = next(iter(self.inputs.values()))
+        if input_wave is None:
+            raise RuntimeError("Input wave not connected.")
 
-        if self.output_product is None:
-            raise RuntimeError("Forward pass must be run before backward.")
+        # ------------------------------------------------------------
+        # Full-batch / parallel backward
+        # ------------------------------------------------------------
+        if block is None:
+            # Sanity check
+            if out_msg.batch_size != len(self.indices):
+                raise ValueError("Output message batch size mismatch.")
 
-        # Reset AUA
-        self.output_product.clear()
+            if self.output_product is None:
+                raise RuntimeError("Forward pass must be run before backward.")
 
-        # Scatter patches back into full-size AUA
-        self.output_product.scatter_mul(output_msg)
+            # Rebuild AUA from scratch
+            self.output_product.clear()
+            self.output_product.scatter_mul(out_msg)
 
-        # Return reconstructed UA for input
-        return self.output_product.as_uncertain_array()
+            # Full backward message (batch_size=1)
+            msg_in = self.output_product.as_uncertain_array()
+
+            # Send to input wave
+            input_wave.receive_message(self, msg_in)
+
+            # Cache outgoing backward message
+            self._store_backward_message(input_wave, msg_in)
+
+            return
+
+        # ------------------------------------------------------------
+        # Block-wise / sequential backward
+        # ------------------------------------------------------------
+        if not isinstance(block, slice):
+            raise TypeError(f"block must be a slice or None, got {type(block)}")
+
+        if self._last_output_update_block is None:
+            raise RuntimeError(
+                "Block-wise backward called without a preceding block-wise "
+                "output message update."
+            )
+
+        # Normalize and check block consistency
+        blk = self._last_output_update_block
+        if blk != block:
+            raise RuntimeError(
+                f"Backward block {block} does not match last output update block {blk}."
+            )
+
+        old_blk = self._last_output_update_old_block
+        if old_blk is None:
+            raise RuntimeError("Missing cached old output block for incremental backward.")
+
+        # New block is already in output_message
+        new_blk = out_msg.extract_block(blk)
+
+        # Incremental update of AUA
+        self.output_product.scatter_add_ua(new_blk, block=blk)
+        self.output_product.scatter_sub_ua(old_blk, block=blk)
+
+        # Full backward message (batch_size=1)
+        msg_in = self.output_product.as_uncertain_array()
+
+        # Send to input wave
+        input_wave.receive_message(self, msg_in)
+
+        # Cache outgoing backward message
+        self._store_backward_message(input_wave, msg_in)
+
+        # Reset incremental cache
+        self._last_output_update_block = None
+        self._last_output_update_old_block = None
+
+        return

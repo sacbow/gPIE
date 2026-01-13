@@ -342,12 +342,12 @@ class Wave:
             raise RuntimeError("Cannot forward without parent message.")
 
         if len(self.children) == 1:
-            self.children[0].receive_message(self, self.parent_message)
+            self.children[0].receive_message(self, self.parent_message, block)
         else:
             belief = self.compute_belief()
             for factor in self.children:
                 msg = belief / self.child_messages[factor]
-                factor.receive_message(self, msg)
+                factor.receive_message(self, msg, block)
 
     def backward(self, block = None) -> None:
         """
@@ -363,7 +363,7 @@ class Wave:
         else:
             msg = self.combine_child_messages()
 
-        self.parent.receive_message(self, msg)
+        self.parent.receive_message(self, msg, block)
 
 
     def set_init_rng(self, rng) -> None:

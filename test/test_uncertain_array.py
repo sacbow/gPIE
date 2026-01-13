@@ -382,3 +382,21 @@ def test_insert_block_mismatch_errors(xp):
     )
     with pytest.raises(ValueError):
         ua.insert_block(slice(1, 4), sub_wrong_prec)
+
+
+@pytest.mark.parametrize("xp", backend_libs)
+def test_ua_copy_is_deep(xp):
+    backend.set_backend(xp)
+
+    ua = UncertainArray.zeros((2, 2), batch_size=2, dtype=xp.complex64, precision=1.0)
+    ua.data[...] = 3.0
+
+    ua_copy = ua.copy()
+
+    # Modify original
+    ua.data[...] = 5.0
+    ua.precision(raw=True)[...] = 7.0
+
+    # Copy must remain unchanged
+    assert xp.allclose(ua_copy.data, 3.0)
+    assert xp.allclose(ua_copy.precision(raw=False), 1.0)

@@ -185,7 +185,7 @@ class Factor(ABC):
         wave.set_parent(self)
         self.batch_size = wave.batch_size
 
-    def receive_message(self, wave: Wave, message: UncertainArray):
+    def receive_message(self, wave: Wave, message: UncertainArray, block = None):
         """
         Receive a message from a connected wave.
 

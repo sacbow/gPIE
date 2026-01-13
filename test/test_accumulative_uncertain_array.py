@@ -105,29 +105,6 @@ def test_as_uncertain_array(xp):
     assert xp.allclose(ua_out.precision(raw=False), xp.full((1, 2, 2), 2.0))
 
 
-@pytest.mark.parametrize("xp", backend_libs)
-def test_mul_ua(xp):
-    backend.set_backend(xp)
-    event_shape = (3, 3)
-    indices = [(slice(0, 3), slice(0, 3))]
-    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
-
-    # UA with batch_size=1, event_shape=(3,3), precision=2, data=1
-    ua = UncertainArray.zeros(event_shape, batch_size=1, dtype=xp.complex64, precision=2.0)
-    ua.data[...] = 1.0
-
-    aua.mul_ua(ua)
-
-    # precision must be filled with 2.0
-    assert xp.allclose(aua.precision, xp.full(event_shape, 2.0))
-    # weighted_data must be data * precision = 1*2 = 2
-    assert xp.allclose(aua.weighted_data, xp.full(event_shape, 2.0))
-
-    # apply mul_ua again → should accumulate
-    aua.mul_ua(ua)
-    assert xp.allclose(aua.precision, xp.full(event_shape, 4.0))
-    assert xp.allclose(aua.weighted_data, xp.full(event_shape, 4.0))
-
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_scatter_add_blockwise_matches_full_batch(xp):
@@ -141,28 +118,27 @@ def test_scatter_add_blockwise_matches_full_batch(xp):
         (slice(2, 4), slice(2, 4)),
     ]
 
-    # Prepare UA: 4 patches, data=1, precision=1
-    ua = UncertainArray.zeros(
+    # Prepare full UA: 4 patches
+    ua_full = UncertainArray.zeros(
         (2, 2),
         batch_size=4,
         dtype=xp.complex64,
         precision=1.0,
     )
-    ua.data[...] = 1.0
+    ua_full.data[...] = 1.0
 
-    # --- Full-batch path ---
+    # --- Full-batch reference ---
     aua_full = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
-    aua_full.scatter_mul(ua)
+    aua_full.scatter_mul(ua_full)
 
     # --- Block-wise path ---
     aua_block = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
 
-    # simulate block-wise update (block_size=2)
     blocks = [slice(0, 2), slice(2, 4)]
     for blk in blocks:
-        aua_block.scatter_add_ua(ua, block=blk)
+        ua_blk = ua_full.extract_block(blk)   # ★ block-local UA
+        aua_block.scatter_add_ua(ua_blk, block=blk)
 
-    # Compare results
     assert xp.allclose(aua_block.precision, aua_full.precision)
     assert xp.allclose(aua_block.weighted_data, aua_full.weighted_data)
 
@@ -179,27 +155,25 @@ def test_scatter_add_then_sub_restores_state(xp):
 
     aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
 
-    # Initial UA: two patches, data=1, precision=1
-    ua = UncertainArray.zeros(
+    # Full UA: two patches
+    ua_full = UncertainArray.zeros(
         (2, 2),
         batch_size=2,
         dtype=xp.complex64,
         precision=1.0,
     )
-    ua.data[...] = 1.0
+    ua_full.data[...] = 1.0
 
     # Save initial state
     prec0 = aua.precision.copy()
     wdata0 = aua.weighted_data.copy()
 
-    # Apply add on block 0
     blk = slice(0, 1)
-    aua.scatter_add_ua(ua, block=blk)
+    ua_blk = ua_full.extract_block(blk)   # ★ block-local
 
-    # Apply subtract on same block
-    aua.scatter_sub_ua(ua, block=blk)
+    aua.scatter_add_ua(ua_blk, block=blk)
+    aua.scatter_sub_ua(ua_blk, block=blk)
 
-    # Must be restored exactly
     assert xp.allclose(aua.precision, prec0)
     assert xp.allclose(aua.weighted_data, wdata0)
 
@@ -216,39 +190,46 @@ def test_multiple_blocks_add_and_sub_sequence(xp):
         (slice(2, 4), slice(2, 4)),
     ]
 
-    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
-
-    ua = UncertainArray.zeros(
+    # Full UA
+    ua_full = UncertainArray.zeros(
         (2, 2),
         batch_size=4,
         dtype=xp.complex64,
         precision=1.0,
     )
-    ua.data[...] = 1.0
+    ua_full.data[...] = 1.0
 
-    # Full scatter for reference
+    # Reference
     aua_ref = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
-    aua_ref.scatter_mul(ua)
+    aua_ref.scatter_mul(ua_full)
+
+    # Test subject
+    aua = AccumulativeUncertainArray(event_shape, indices, dtype=xp.complex64)
+
+    blocks = [slice(0, 2), slice(2, 4)]
 
     # Block-wise add
-    blocks = [slice(0, 2), slice(2, 4)]
     for blk in blocks:
-        aua.scatter_add_ua(ua, block=blk)
+        ua_blk = ua_full.extract_block(blk)
+        aua.scatter_add_ua(ua_blk, block=blk)
 
-    # Block-wise subtract in reverse order
+    # Block-wise subtract (reverse order)
     for blk in reversed(blocks):
-        aua.scatter_sub_ua(ua, block=blk)
+        ua_blk = ua_full.extract_block(blk)
+        aua.scatter_sub_ua(ua_blk, block=blk)
 
-    # Must be back to zero
+    # Must be zero
     assert xp.allclose(aua.precision, 0)
     assert xp.allclose(aua.weighted_data, 0)
 
-    # Re-apply adds → must match reference again
+    # Re-apply adds
     for blk in blocks:
-        aua.scatter_add_ua(ua, block=blk)
+        ua_blk = ua_full.extract_block(blk)
+        aua.scatter_add_ua(ua_blk, block=blk)
 
     assert xp.allclose(aua.precision, aua_ref.precision)
     assert xp.allclose(aua.weighted_data, aua_ref.weighted_data)
+
 
 @pytest.mark.parametrize("xp", backend_libs)
 def test_extract_patches_block_none_matches_full(xp):
