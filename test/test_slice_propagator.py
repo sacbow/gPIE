@@ -250,7 +250,7 @@ def test_backward_block_matches_full(xp):
     # --- block-wise backward
     blocks = [slice(0, 2), slice(2, 4)]
     for blk in blocks:
-        blk_msg = patch_msg.extract_block(blk)
+        blk_msg = patch_msg.copy()
         prop.receive_message(prop.output, blk_msg, block=blk)
         prop.backward(block=blk)
 

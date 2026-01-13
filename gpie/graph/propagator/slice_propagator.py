@@ -30,10 +30,11 @@ class SlicePropagator(Propagator):
     """
 
     def __init__(self, indices):
-        super().__init__(input_names=("input",), precision_mode = UnaryPropagatorPrecisionMode.ARRAY)
+        super().__init__(input_names=("input",), precision_mode=UnaryPropagatorPrecisionMode.ARRAY)
+
         # normalize indices to a list of tuples of slices
         if isinstance(indices, tuple) and all(isinstance(s, slice) for s in indices):
-            self.indices = [indices]  # single slice → list
+            self.indices = [indices]
         elif isinstance(indices, list):
             if not all(isinstance(idx, tuple) and all(isinstance(s, slice) for s in idx) for idx in indices):
                 raise TypeError("indices must be a tuple of slices or a list of tuples of slices.")
@@ -47,81 +48,18 @@ class SlicePropagator(Propagator):
             raise ValueError("All slice indices must produce patches of the same shape.")
         self.patch_shape = shapes[0]
 
-        # AUA will be initialized later, once we know input dtype/event_shape
+        # AUA will be initialized later
         self.output_product: Optional[AUA] = None
 
-        # Last output-side block update (for incremental backward)
-        self._last_output_update_block: Optional[slice] = None
-        self._last_output_update_old_block: Optional[UA] = None
-    
-
-    def receive_message(self, wave: Wave, message: UA, block=None):
-        """
-        Receive a message from a connected wave.
-
-        For SlicePropagator, output-side messages may be updated block-wise
-        during sequential scheduling. In that case, we store the previous
-        block content to support incremental backward updates.
-
-        Args:
-            wave (Wave): The sender Wave.
-            message (UncertainArray): The message to store.
-            block (slice or None): Block slice for sequential updates.
-        """
-        # ------------------------------------------------------------
-        # Input-side message: unchanged behavior
-        # ------------------------------------------------------------
-        if wave in self.inputs.values():
-            self.input_messages[wave] = message
-            return
-
-        # ------------------------------------------------------------
-        # Output-side message
-        # ------------------------------------------------------------
-        if wave is self.output:
-            # Full-batch update: overwrite everything
-            if block is None:
-                self.output_message = message
-                self._last_output_update_block = None
-                self._last_output_update_old_block = None
-                return
-
-            # --------------------------------------------------------
-            # Block-wise update
-            # --------------------------------------------------------
-            if not isinstance(block, slice):
-                raise TypeError(f"block must be a slice or None, got {type(block)}")
-
-            if self.output_message is None:
-                raise RuntimeError(
-                    "Block-wise output message received before output_message "
-                    "has been initialized."
-                )
-
-            # Normalize block slice
-            start = 0 if block.start is None else block.start
-            stop = self.output.batch_size if block.stop is None else block.stop
-            if start < 0 or stop > self.output.batch_size or start >= stop:
-                raise ValueError(f"Invalid block slice: {block}")
-
-            blk = slice(start, stop)
-
-            # Cache old block (copy to decouple from later mutation)
-            old_blk = self.output_message.extract_block(blk).copy()
-
-            # Update output_message in-place
-            self.output_message.insert_block(blk, message)
-
-            # Store delta info for backward
-            self._last_output_update_block = blk
-            self._last_output_update_old_block = old_blk
-            return
-
-        # ------------------------------------------------------------
-        # Unknown sender
-        # ------------------------------------------------------------
-        raise ValueError("Received message from unconnected Wave.")
-
+        # ------------------------------------------------------------------
+        # Speculative cache for block-wise backward
+        #
+        # We cache the "old" message for the *next expected block*,
+        # because receive_message may observe already-mutated objects.
+        # ------------------------------------------------------------------
+        self._spec_block: Optional[slice] = None
+        self._spec_old_block: Optional[UA] = None
+        self._spec_block_size: Optional[int] = None
 
     
     def to_backend(self) -> None:
@@ -308,49 +246,40 @@ class SlicePropagator(Propagator):
         """
         Block-aware backward pass for SlicePropagator.
 
-        Semantics:
-            - block is None (parallel):
-                Rebuild AUA from scratch using full output_message.
-            - block is not None (sequential):
-                Incrementally update AUA using the difference between
-                new and old output_message blocks.
-
-        The backward message sent to the input wave is always a full-size
-        UncertainArray with batch_size = 1.
+        Design note:
+            We do NOT cache "old blocks" in receive_message, because the UA object
+            may already be mutated/shared by downstream factors by the time we receive it.
+            Instead, we speculatively snapshot the *next expected block* at the end of backward().
         """
         out_msg = self.output_message
         if out_msg is None:
             raise RuntimeError("Missing output message for backward.")
 
-        # SlicePropagator has exactly one input wave
         input_wave = next(iter(self.inputs.values()))
         if input_wave is None:
             raise RuntimeError("Input wave not connected.")
+
+        if self.output_product is None:
+            raise RuntimeError("Forward pass must be run before backward.")
 
         # ------------------------------------------------------------
         # Full-batch / parallel backward
         # ------------------------------------------------------------
         if block is None:
-            # Sanity check
             if out_msg.batch_size != len(self.indices):
                 raise ValueError("Output message batch size mismatch.")
 
-            if self.output_product is None:
-                raise RuntimeError("Forward pass must be run before backward.")
-
-            # Rebuild AUA from scratch
             self.output_product.clear()
             self.output_product.scatter_mul(out_msg)
 
-            # Full backward message (batch_size=1)
             msg_in = self.output_product.as_uncertain_array()
-
-            # Send to input wave
             input_wave.receive_message(self, msg_in)
-
-            # Cache outgoing backward message
             self._store_backward_message(input_wave, msg_in)
 
+            # Reset speculative cache
+            self._spec_block = None
+            self._spec_old_block = None
+            self._spec_block_size = None
             return
 
         # ------------------------------------------------------------
@@ -359,41 +288,62 @@ class SlicePropagator(Propagator):
         if not isinstance(block, slice):
             raise TypeError(f"block must be a slice or None, got {type(block)}")
 
-        if self._last_output_update_block is None:
-            raise RuntimeError(
-                "Block-wise backward called without a preceding block-wise "
-                "output message update."
-            )
+        # Normalize block
+        start = 0 if block.start is None else block.start
+        stop = block.stop
+        if stop is None:
+            raise ValueError("block.stop must not be None for block-wise backward.")
+        blk = slice(start, stop)
 
-        # Normalize and check block consistency
-        blk = self._last_output_update_block
-        if blk != block:
-            raise RuntimeError(
-                f"Backward block {block} does not match last output update block {blk}."
-            )
+        block_size = stop - start
+        if block_size <= 0:
+            raise ValueError(f"Invalid block slice: {block}")
 
-        old_blk = self._last_output_update_old_block
-        if old_blk is None:
-            raise RuntimeError("Missing cached old output block for incremental backward.")
+        # Record block size for predicting next block
+        if self._spec_block_size is None:
+            self._spec_block_size = block_size
 
-        # New block is already in output_message
-        new_blk = out_msg.extract_block(blk)
+        # ------------------------------------------------------------
+        # Fast path: speculative cache hit
+        # ------------------------------------------------------------
+        did_incremental = False
+        if self._spec_block is not None and self._spec_old_block is not None:
+            if (self._spec_block.start, self._spec_block.stop) == (blk.start, blk.stop):
+                new_blk = out_msg.extract_block(blk)
+                old_blk = self._spec_old_block  # already a deep copy (snapshot)
 
-        # Incremental update of AUA
-        self.output_product.scatter_add_ua(new_blk, block=blk)
-        self.output_product.scatter_sub_ua(old_blk, block=blk)
+                # AUA scatter_* expects block-local UA and global block range
+                self.output_product.scatter_add_ua(new_blk, block=blk)
+                self.output_product.scatter_sub_ua(old_blk, block=blk)
+                did_incremental = True
 
-        # Full backward message (batch_size=1)
+        # ------------------------------------------------------------
+        # Slow path: speculation miss -> rebuild AUA from scratch
+        # ------------------------------------------------------------
+        if not did_incremental:
+            self.output_product.clear()
+            self.output_product.scatter_mul(out_msg)
+
+        # Send backward message (always full-size UA with batch_size=1)
         msg_in = self.output_product.as_uncertain_array()
-
-        # Send to input wave
         input_wave.receive_message(self, msg_in)
-
-        # Cache outgoing backward message
         self._store_backward_message(input_wave, msg_in)
 
-        # Reset incremental cache
-        self._last_output_update_block = None
-        self._last_output_update_old_block = None
+        # ------------------------------------------------------------
+        # Speculatively snapshot the *next expected block*
+        # ------------------------------------------------------------
+        B = len(self.indices)
+        bsz = self._spec_block_size
+
+        # Predict next block in contiguous order (BlockGenerator semantics)
+        next_start = stop
+        if next_start >= B:
+            next_start = 0
+        next_stop = min(next_start + bsz, B)
+        next_blk = slice(next_start, next_stop)
+
+        # Snapshot "old" value for next_blk (deep copy to detach from mutation)
+        self._spec_block = next_blk
+        self._spec_old_block = out_msg.extract_block(next_blk).copy()
 
         return
