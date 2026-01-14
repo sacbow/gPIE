@@ -1,5 +1,40 @@
 # Changelog
 
+## [v0.3.0] — 2026-01-14
+
+### Added
+- **Explicit and flexible message scheduling for Expectation Propagation (EP)**
+  - Parallel (Jacobi-style) scheduling
+  - Sequential (Gauss–Seidel-style) scheduling
+  - Block-wise asynchronous scheduling
+  - Scheduling can be selected *at runtime* without modifying model definitions
+
+- **Block-wise scheduling utilities**
+  - New scheduling logic in `gpie/core/blocks.py`
+  - Enables asynchronous and partially-updated EP execution
+
+- **Integration tests for scheduling behavior**
+  - Added end-to-end reconstruction tests covering parallel and sequential schedules
+  - Improved coverage of graph execution, propagators, and measurement updates
+
+### Changed
+- **Project structure cleanup**
+  - Imaging-specific utilities (e.g., ptychography datasets and simulators) removed from the core package
+  - Core `gpie` package now focuses exclusively on generic EP inference infrastructure
+
+- **Examples and benchmarks updated**
+  - Benchmark scripts extended to compare scheduling strategies
+
+### Improved
+- Test coverage increased to ~91%, including integration-level EP convergence tests
+
+### Notes
+- This release represents a **major architectural update** rather than a change in inference algorithms.
+- While the underlying EP / AMP-style updates remain similar to previous versions, the new scheduling framework enables systematic experimentation with synchronous and asynchronous execution strategies.
+- Imaging-specific extensions (e.g., ptychography datasets and simulators) are now developed in separate repositories to keep the core engine lightweight and modular.
+
+
+
 ## [v0.2.2] — 2025-11-06
 
 ### Added 

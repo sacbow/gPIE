@@ -36,7 +36,7 @@ We benchmarked four representative computational imaging models implemented in g
 
 ### CPU (NumPy, default FFT):
 ```bash
-python gpie/profile/benchmark_ptychography.py --backend numpy
+python gpie/profile/benchmark_holography.py --backend numpy
 ```
 
 ---
@@ -47,7 +47,6 @@ python gpie/profile/benchmark_ptychography.py --backend numpy
 python gpie/profile/benchmark_holography.py --backend numpy
 python gpie/profile/benchmark_random_cdi.py --backend numpy
 python gpie/profile/benchmark_coded_diffraction_pattern.py --backend numpy
-python gpie/profile/benchmark_ptychography.py --backend numpy
 ```
 
 ### CPU (NumPy + FFTW)
@@ -63,7 +62,6 @@ python gpie/profile/benchmark_holography.py --backend numpy --fftw --threads 8 -
 python gpie/profile/benchmark_holography.py --backend cupy
 python gpie/profile/benchmark_random_cdi.py --backend cupy
 python gpie/profile/benchmark_coded_diffraction_pattern.py --backend cupy
-python gpie/profile/benchmark_ptychography.py --backend cupy
 ```
 
 ### Profiling(cProfile):
@@ -94,7 +92,6 @@ python gpie/profile/benchmark_random_cdi.py --backend cupy --profile
 | **Holography**          | 2.6 s              | 2.6 s                   | 2.4 s                    | 0.5 s             |
 | **Random CDI**          | 6.2 s              | 6.1 s                   | 5.7 s                    | 0.8 s            |
 | **CDP (4 measurements)** | 15.2 s            | 15.3 s                   | 14.2 s                    | 0.7 s              |
-| **Ptychography (40 scans)** | 11.2 s            | 10.6 s                   | 10.6 s                    | 0.8 s              |
 
 ## Profiling Insights
 
