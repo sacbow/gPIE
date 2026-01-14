@@ -2,7 +2,7 @@ import importlib.util
 import pytest
 import numpy as np
 
-from gpie import model, SupportPrior, fft2, AmplitudeMeasurement, mse
+from gpie import model, SupportPrior, ifft2, AmplitudeMeasurement, mse
 from gpie.core import backend
 from gpie.core.linalg_utils import circular_aperture, masked_random_array
 from gpie.core.rng_utils import get_rng
@@ -42,7 +42,7 @@ def holography_model(var, ref_wave, support, batch_size, dtype=np.complex64):
         dtype=dtype,
     )
 
-    AmplitudeMeasurement(var=var) << fft2(ref_wave + obj)
+    AmplitudeMeasurement(var=var) << ifft2(ref_wave + obj)
     return
 
 

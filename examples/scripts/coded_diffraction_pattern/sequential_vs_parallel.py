@@ -7,6 +7,7 @@ from gpie import model, GaussianPrior, fft2, AmplitudeMeasurement, pmse, replica
 from gpie.core.linalg_utils import random_normal_array
 from gpie.core.rng_utils import get_rng
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ------------------------------------------------------------
 # CDP model definition
@@ -116,6 +117,7 @@ def run_experiment(
     damping="auto",
     output_dir="results",
 ):
+    output_dir = os.path.join(SCRIPT_DIR, output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     schedules = ["parallel", "sequential"]
@@ -185,13 +187,13 @@ if __name__ == "__main__":
         description="Sequential vs Parallel scheduling benchmark (CDP)"
     )
 
-    parser.add_argument("--trials", type=int, default=20)
+    parser.add_argument("--trials", type=int, default=10)
     parser.add_argument("--n-iter", type=int, default=200)
     parser.add_argument("--size", type=int, default=256)
-    parser.add_argument("--measurements", type=int, default=4)
-    parser.add_argument("--noise", type=float, default=1e-4)
+    parser.add_argument("--measurements", type=int, default=3)
+    parser.add_argument("--noise", type=float, default=1e-3)
     parser.add_argument("--block-size", type=int, default=1)
-    parser.add_argument("--damping", type=str, default="auto")
+    parser.add_argument("--damping", type=str, default=0.5)
     parser.add_argument("--output-dir", type=str, default="results")
 
     args = parser.parse_args()

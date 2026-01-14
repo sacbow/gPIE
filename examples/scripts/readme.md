@@ -51,7 +51,7 @@ CDP performs phase retrieval from multiple masked FFT amplitude observations.
 ### 🔧 Script
 
 ```bash
-python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 3 --save-graph
+python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py --n-iter 200 --size 256 --measurements 4 --save-graph
 ```
 
 | Option           | Description                                      |
@@ -67,6 +67,26 @@ python examples/scripts/coded_diffraction_pattern/coded_diffraction_pattern.py -
 - `reconstructed_amp.png`, `reconstructed_phase.png`
 - `convergence.png`
 - `graph.html`
+
+### 🔬 Scheduling Benchmark (Sequential vs Parallel)
+
+In addition to single-run reconstructions, this example includes a benchmark
+comparing **sequential** and **parallel** scheduling strategies in EP.
+
+The benchmark repeatedly solves the same CDP instance with different random seeds
+and visualizes the distribution of reconstruction error over iterations.
+
+#### 🔧 Script
+
+```bash
+python examples/scripts/coded_diffraction_pattern/scheduling_benchmark.py \
+    --trials 10 \
+    --n-iter 200 \
+    --size 256 \
+    --measurements 3 \
+    --noise 1e-3 \
+    --damping 0.5
+
 
 ### 📖 Reference
 
@@ -86,7 +106,7 @@ Structured CDI applies multiple phase layers before amplitude detection.
 ### 🔧 Script
 
 ```bash
-python examples/scripts/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 3 --support-radius 0.3 --save-graph
+python examples/scripts/random_structured_cdi/random_structured_cdi.py --n-iter 200 --size 256 --layers 2 --support-radius 0.3 --save-graph
 ```
 
 | Option         | Description                                      |
@@ -139,79 +159,6 @@ python examples/scripts/compressed_sensing/compressed_sensing.py --n-iter 100 --
 - `reconstructed.png`
 - `convergence.png`
 - `graph.html`
-
----
-
-## 5. Ptychography
-
-Reconstruction of unknown object image from diffraction measurements with overlapping probe illuminations.
-
-- The probe is scanned across the object following a Fermat spiral trajectory.
-
-- Each probe position yields one diffraction pattern (Fourier amplitude).
-
-- The inverse problem recovers the complex object from all diffraction data.
-
-### 🔧 Script
-```bash
-    python examples/scripts/ptychography/ptychography.py --n-iter 100 --size 256 --noise 1e-4 --save-graph
-```
-
-| Option         | Description                                    |
-| -------------- | ---------------------------------------------- |
-| `--n-iter`     | Number of EP iterations                        |
-| `--size`       | Object size (H=W)                              |
-| `--noise`      | Measurement noise variance (σ²)                |
-| `--save-graph` | Save factor graph visualization (`graph.html`) |
-
-### 💾 Outputs (`examples/scripts/ptychography/results/`)
-- `reconstructed_amp.png`, `reconstructed_phase.png` — Reconstructed object
-
-- `reconstructed_composite.png` — Side-by-side amplitude/phase visualization
-
-- `graph.html` — Factor graph visualization (optional)
-
-### 📖 Reference
-
-Ueda, H., Katakami, S., & Okada, M. (2025).
-**A Message-Passing Perspective on Ptychographic Phase Retrieval**,
-IEEE Transactions on Computational Imaging (in press).
-[arXiv](https://arxiv.org/abs/2504.05668)
-
-Rodenburg, J. M., & Faulkner, H. M. L. (2004).
-**A phase retrieval algorithm for shifting illumination**,
-Applied Physics Letters, 85(20), 4795–4797.
-
-
-## 6. Blind Ptychography with Phase Observation (Bilinear Reconstruction)
-
-A simplified ptychographic reconstruction problem where both the object and probe are unknown, but the diffraction field (including phase) is directly observed.
-This example isolates the bilinear aspect of ptychography  — providing a minimal setting for testing EP/VMP hybrid inference.
-
-### 🔧 Script
-```bash
-    python examples/scripts/blind_ptychography_with_phase.py --n-iter 100 --size 256 --noise 1e-3 --save-graph
-```
-
-| Option         | Description                                    |
-| -------------- | ---------------------------------------------- |
-| `--n-iter`     | Number of EP iterations                        |
-| `--size`       | Object size (H=W)                              |
-| `--noise`      | Measurement noise variance (σ²)                |
-| `--save-graph` | Save factor graph visualization (`graph.html`) |
-
-### 💾 Outputs (`examples/scripts/results/`)
-- `object_amplitude.png`, `object_phase.png`, `object_precision.png` — Reconstructed object
-
-- `probe_amplitude.png`, `probe_phase.png`, `probe_precision.png` — Reconstructed probe
-
-- `blind_ptychography_summary.png` — Combined amplitude/precision visualization
-
-- `graph.html` — Factor graph visualization (optional)
-
-
-
-
 
 ## 📁 Data
 

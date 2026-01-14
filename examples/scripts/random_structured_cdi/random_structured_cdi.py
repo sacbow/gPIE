@@ -14,9 +14,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from io_utils import load_sample_image
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULTS_DIR = os.path.join(CURRENT_DIR, "results")
-os.makedirs(RESULTS_DIR, exist_ok=True)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 @model
@@ -47,6 +45,9 @@ def build_random_cdi_graph(H=256, W=256, var=1e-4, support_radius=0.3, n_layers=
 
 
 def run_random_cdi(n_iter=100, size=256, n_layers=2, support_radius=0.3, save_graph=False):
+    output_dir = os.path.join(SCRIPT_DIR, "results")
+    os.makedirs(output_dir, exist_ok=True)
+
     g, true_obj = build_random_cdi_graph(H=size, W=size, n_layers=n_layers, support_radius=support_radius)
     pse_list = []
 
@@ -63,14 +64,14 @@ def run_random_cdi(n_iter=100, size=256, n_layers=2, support_radius=0.3, save_gr
     amp = np.abs(est)
     phase = np.angle(est) * (np.abs(true_obj) > 1e-5)
 
-    plt.imsave(f"{RESULTS_DIR}/reconstructed_amp.png", amp, cmap="gray")
-    plt.imsave(f"{RESULTS_DIR}/reconstructed_phase.png", phase, cmap="twilight")
+    plt.imsave(os.path.join(output_dir, "reconstructed_amp.png"), amp, cmap="gray")
+    plt.imsave(os.path.join(output_dir, "reconstructed_phase.png"), phase, cmap="twilight")
 
     true_amp = np.abs(true_obj)
     true_phase = np.angle(true_obj) * (true_amp > 1e-5)
 
-    plt.imsave(f"{RESULTS_DIR}/true_amp.png", true_amp, cmap="gray")
-    plt.imsave(f"{RESULTS_DIR}/true_phase.png", true_phase, cmap="twilight")
+    plt.imsave(os.path.join(output_dir, "true_amp.png"), true_amp, cmap="gray")
+    plt.imsave(os.path.join(output_dir, "true_phase.png"), true_phase, cmap="twilight")
 
     plt.figure()
     plt.plot(np.arange(0, len(pse_list) * 10, 10), pse_list, marker="o")
@@ -79,12 +80,12 @@ def run_random_cdi(n_iter=100, size=256, n_layers=2, support_radius=0.3, save_gr
     plt.yscale('log')
     plt.title("Convergence Curve")
     plt.grid(True)
-    plt.savefig(f"{RESULTS_DIR}/convergence.png")
+    plt.savefig(os.path.join(output_dir, "convergence.png"))
     plt.close()
 
     if save_graph:
-        print(f"Saving factor graph visualization to {RESULTS_DIR}/graph.html ...")
-        g.visualize(output_path=os.path.join(RESULTS_DIR, "graph.html"))
+        print(f"Saving factor graph visualization to graph.html ...")
+        g.visualize(output_path=os.path.join(output_dir, "graph.html"))
 
 
 if __name__ == "__main__":
