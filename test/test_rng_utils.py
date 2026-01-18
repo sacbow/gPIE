@@ -13,40 +13,6 @@ has_cupy = cupy_spec is not None
 if has_cupy:
     import cupy as cp
 
-
-def test_sync_cupy_rng_with_numpy(monkeypatch):
-    """Test that _sync_cupy_rng calls cp.random.seed with correct seed."""
-    if not has_cupy:
-        pytest.skip("CuPy not available")
-
-    rng = np.random.default_rng(42)
-    called = {}
-
-    def mock_seed(val):
-        called["seed"] = val
-
-    monkeypatch.setattr(cp.random, "seed", mock_seed)
-    rng_utils._sync_cupy_rng(rng)
-    assert "seed" in called
-    assert isinstance(called["seed"], int)
-
-
-def test_sync_cupy_rng_no_numpy_rng(monkeypatch):
-    """Test _sync_cupy_rng does nothing if RNG has no bit_generator."""
-    if not has_cupy:
-        pytest.skip("CuPy not available")
-
-    class DummyRNG:
-        pass
-
-    # モジュールインポート時にcupyをImportErrorにするようパッチ
-    monkeypatch.setitem(sys.modules, "cupy", None)
-
-    dummy = DummyRNG()
-    # CuPyがインポートできない状態をシミュレート
-    rng_utils._sync_cupy_rng(dummy)  # 何も起きず終了
-
-
 import types
 
 def test_get_rng_cupy_fallback(monkeypatch):

@@ -1,31 +1,7 @@
 import warnings
 from .backend import get_backend
 
-def _sync_cupy_rng(rng):
-    """
-    Sync CuPy's global RNG with NumPy rng state for reproducibility.
-    """
-    try:
-        import cupy as cp
-    except ImportError:
-        return
 
-    # Only sync if NumPy RNG is passed
-    if hasattr(rng, "bit_generator"):
-        state = rng.bit_generator.state
-        if isinstance(state, dict):
-            inner_state = state.get("state")
-            seed_candidate = inner_state.get("state") if isinstance(inner_state, dict) else inner_state
-        else:
-            seed_candidate = getattr(state, "state", None)
-        if isinstance(seed_candidate, (list, tuple)):
-            seed_val = int(seed_candidate[0])
-        elif isinstance(seed_candidate, int):
-            seed_val = seed_candidate
-        else:
-            import numpy as np
-            seed_val = int(np.random.SeedSequence().entropy)
-        cp.random.seed(seed_val % (2**63 - 1))
 
 
 def get_rng(seed=None):
